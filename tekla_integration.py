@@ -1,0 +1,479 @@
+"""
+tekla_integration.py
+
+Sends generated structural members (columns, beams, and bracing) into a
+running Tekla Structures model via the Tekla Open API, bridged through
+pythonnet (clr).
+
+This module only works on a Windows machine that has:
+  - Tekla Structures installed, with a model open in the running instance
+  - the "pythonnet" package installed (`pip install pythonnet`)
+
+It is imported lazily by the API server (see generate_grid.py) only when
+the POST /api/v1/to_tekla endpoint is actually called, so the rest of the
+grid-generation tool works fine on machines without Tekla or pythonnet
+installed.
+"""
+
+import os
+import sys
+from typing import Optional
+
+# ── pythonnet / Tekla Open API ──────────────────────────────────────────
+# 1. Path to your Tekla Structures bin folder (adjust version accordingly,
+#    or set the TEKLA_BIN_PATH environment variable to override it).
+tekla_bin_path = os.environ.get("TEKLA_BIN_PATH", r"C:\TeklaStructures\2025.0\bin")
+sys.path.append(tekla_bin_path)
+
+import clr  # noqa: E402  (pythonnet; must be imported before clr.AddReference)
+
+dlls = [
+    'Tekla.Structures.dll',
+    'Tekla.Structures.Plugins.dll',
+    'Tekla.Structures.Model.dll',
+    'Tekla.Structures.DataType.dll',
+    'Tekla.Structures.Geometry3d.Compatibility.dll',
+    'Tekla.Structures.Dialog.dll',
+    'Tekla.Structures.Analysis.dll',
+    'Tekla.Structures.Catalogs.dll',
+    'Tekla.Structures.Drawing.dll',
+]
+
+# 2. Load Tekla .NET Assemblies
+for dll in dlls:
+    clr.AddReference(os.path.join(tekla_bin_path, dll))
+clr.AddReference("System")
+
+from Tekla.Structures.Model import Model, Beam, Grid, Position  # noqa: E402
+from Tekla.Structures.Model import ModelObjectEnumerator  # noqa: F401,E402
+from Tekla.Structures.Geometry3d import Point  # noqa: E402
+from Tekla.Structures.Catalogs import LibraryProfileItem, ProfileItemParameter  # noqa: F401,E402
+from Tekla.Structures.Model import ModelObject
+from Tekla.Structures.Model.UI import Picker  # noqa: E402
+from Tekla.Structures.Model.UI import ModelObjectSelector
+from System.Collections import Hashtable
+
+# ── Errors ────────────────────────────────────────────────────────────────
+
+class TeklaConnectionError(RuntimeError):
+    """Raised when no running Tekla Structures model can be reached."""
+
+
+class TeklaMemberError(RuntimeError):
+    """Raised when a single member fails to insert into the model."""
+
+
+# ── Internals ────────────────────────────────────────────────────────────
+
+def _get_connected_model() -> Model:
+    model = Model()
+    if not model.GetConnectionStatus():
+        raise TeklaConnectionError(
+            "Could not connect to Tekla Structures. Make sure Tekla "
+            "Structures is running with a model open."
+        )
+    return model
+
+
+# delete all grids
+def delete_all_grids(model: Model):
+    model_object_enumerator = model.GetModelObjectSelector().GetAllObjectsWithType(ModelObject.ModelObjectEnum.GRID)
+    deleted_count = 0
+    while model_object_enumerator.MoveNext():
+        grid = model_object_enumerator.Current
+        if isinstance(grid, Grid):
+            grid_id = grid.Identifier.ID
+            if grid.Delete():
+                print(f'Deleted grid with ID: {grid_id}')
+                deleted_count += 1
+            else:
+                print(f'Failed to delete grid with ID: {grid_id}')
+    if deleted_count >0:
+        model.CommitChanges()
+    else:
+        print(f'No grid deleted')
+
+# create a new grid
+# Sample call
+# model = Model()
+# create_grid(model, '0.00 21*2600.00', '0.00 5*3300.00', '0.0 3600.0 7200.0', '1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22', 'A B C D E F', '+0 +3600 +7200 +8000 ', 2000, 2000, 2000, 2000, 2000, 2000, 0, 0, 0)
+def create_grid(model: Model, X: str, Y: str, Z: str, labelX: str, labelY: str, labelZ: str, extensionLeftX: int, extensionLeftY: int, extensionLeftZ: int, extensionRightX: int, extensionRightY: int,extensionRightZ: int, originX: int, originY: int, originZ: int):
+    grid = Grid()
+    grid.CoordinateX = X
+    grid.CoordinateY = Y
+    grid.CoordinateZ = Z
+    grid.LabelX = labelX
+    grid.LabelY = labelY
+    grid.labelZ = labelZ
+    grid.ExtensionLeftX = extensionLeftX
+    grid.ExtensionLeftY = extensionLeftY
+    grid.ExtensionLeftZ = extensionLeftZ
+    grid.ExtensionRightX = extensionRightX
+    grid.ExtensionRightY = extensionRightY
+    grid.ExtensionRightZ = extensionRightZ
+    grid.Origin.X = originX
+    grid.Origin.Y = originY
+    grid.Origin.Z = originZ
+    if grid.Insert():
+        print(f'Grid created with ID: {grid.Identifier.ID}')
+        model.CommitChanges()
+
+# Find grid instances and modify the first grid found
+# sample call
+# modify_grid(model, '0.00 21*2600.00', '0.00 5*3300.00', '0.0 3600.0 7200.0', '1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22', 'A B C D E F', '+0 +3600 +7200 +8000 ')
+def modify_grid(model: Model, X: str, Y: str, Z: str, labelX: str, labelY: str, labelZ: str):
+    grid = None
+    model_object_enumerator = model.GetModelObjectSelector().GetAllObjectsWithType(ModelObject.ModelObjectEnum.GRID)
+    while model_object_enumerator.MoveNext():
+        gridTemp = model_object_enumerator.Current
+        if isinstance(gridTemp, Grid):
+            grid = gridTemp
+            print(f'Found grid: {grid.Identifier.ID}. It will be modified.')
+            break
+
+    if grid is None:
+        print(f'No grid found to modify...')
+        return
+
+    print(f'Modifying grid with ID: {grid.Identifier.ID}...')
+    grid.CoordinateX = X
+    grid.CoordinateY = Y
+    grid.CoordinateZ = Z
+    grid.LabelX = labelX
+    grid.LabelY = labelY
+    grid.labelZ = labelZ
+    if grid.Modify():
+        print(f'Grid with ID {grid.Identifier.ID} modified.')
+        model.CommitChanges()
+
+def to_tekla_profile(name: str) -> str:
+    """Convert UI section name to Tekla profile string.
+
+    Replaces the Unicode multiplication sign (×, U+00D7) with an
+    ASCII asterisk (*) as required by Tekla profile catalogue.
+
+    Examples
+    --------
+    CFRHS120×120×5  →  CFRHS120*120*5
+    HEA140          →  HEA140  (unchanged)
+    """
+    return name.replace("\u00d7", "X").replace("×", "X")
+
+def _create_beam(member: dict) -> Beam:
+    """
+    Build and insert a single Tekla Beam from one member dict of the form:
+        {"p1": [x, y, z], "p2": [x, y, z], "profile": str,
+         "material": str, "class": str, "type": str, "name": str}
+
+    Columns, beams, and bracing are all represented as Tekla Beam objects
+    (a straight prismatic part between two points); "class" sets the
+    Tekla part Class (e.g. used for numbering/reporting conventions), and
+    "type" only affects the member's name/logging here.
+    """
+    beam = Beam()
+    beam.StartPoint = Point(*member["p1"])
+    beam.EndPoint = Point(*member["p2"])
+    beam.Profile.ProfileString = to_tekla_profile(member["profile"])
+    beam.Material.MaterialString = member["material"]
+    beam.Class = member["class"]
+    beam.Name = member.get("name").split('-')[0].upper()
+    memberType = member.get("type", "unknown").lower()
+    if memberType in ['column', "longitudinal_brace", "transverse_brace"]:
+        beam.Position.Plane = Position.PlaneEnum.MIDDLE
+        beam.Position.Depth = Position.DepthEnum.MIDDLE
+    if not beam.Insert():
+        raise TeklaMemberError(f"Failed to insert member '{beam.Name}' into the model.")
+
+    return beam
+
+
+# ── Public API ───────────────────────────────────────────────────────────
+
+def _get_profile_parameter(profile_name: str, property_name: str) -> Optional[float]:
+    """Shared lookup used by get_profile_height() and get_profile_width()."""
+    profile_item = LibraryProfileItem()
+
+    if profile_item.Select(profile_name):
+        for param in profile_item.aProfileItemParameters:
+            if param.Property.upper() == property_name:
+                return param.Value
+
+    return None
+
+
+def get_profile_height(profile_name: str) -> Optional[float]:
+    """
+    Look up a profile's cross-section height (mm) from the Tekla catalog.
+
+    Used by generate_grid.py to figure out how much clearance a beam's
+    own depth needs when stacking beams on top of one another (and when
+    clamping the total structure height), since that depth isn't known
+    until the actual catalog profile is resolved.
+
+    Parameters
+    ----------
+    profile_name : str
+        The Tekla profile string (e.g. "HEA140", "CFRHS120X120X5").
+
+    Returns
+    -------
+    Optional[float]
+        The profile's HEIGHT catalog parameter, or None if the profile
+        couldn't be found or has no HEIGHT parameter.
+    """
+    return _get_profile_parameter(profile_name, "HEIGHT")
+
+
+def get_profile_width(profile_name: str) -> Optional[float]:
+    """
+    Look up a profile's cross-section width (mm) from the Tekla catalog.
+
+    Used by generate_grid.py to extend continuous beam runs past the
+    grid lines by the width of whatever they land on/against (e.g. a
+    continuous longitudinal beam extended by the column width at each
+    end), since that width isn't known until the actual catalog profile
+    is resolved.
+
+    Parameters
+    ----------
+    profile_name : str
+        The Tekla profile string (e.g. "HEA140", "CFRHS120X120X5").
+
+    Returns
+    -------
+    Optional[float]
+        The profile's WIDTH catalog parameter, or None if the profile
+        couldn't be found or has no WIDTH parameter.
+    """
+    return _get_profile_parameter(profile_name, "WIDTH")
+
+def _index_to_letters(n: int) -> str:
+    """
+    Converts a positive 1-based integer to spreadsheet-style base-26
+    letters: 1->A, 2->B, ..., 26->Z, 27->AA, 28->AB, ..., 52->AZ,
+    53->BA, ... This is "bijective base-26" (digits are 1-26 mapped to
+    A-Z, with no zero), which is what Excel/Tekla-style column/grid
+    labeling actually uses — a naive base-26 conversion breaks at the
+    rollover point (e.g. would produce "A@" instead of "AA"), which is
+    exactly why chr(a + 0x40) alone fails past n=26.
+    """
+    letters = ""
+    while n > 0:
+        n, remainder = divmod(n - 1, 26)
+        letters = chr(0x41 + remainder) + letters
+    return letters
+
+
+def generate_y_axis_labels(n_trans_bays: int) -> list:
+    """
+    Generates Tekla-style grid line labels for the transverse (Y) axis:
+    A, B, C, ..., Z, AA, AB, ... Returns one label per grid line
+    (n_trans_bays + 1 labels total, matching n_trans_bays + 1 grid
+    lines for n_trans_bays bays).
+    """
+    return [_index_to_letters(i) for i in range(1, n_trans_bays + 2)]
+
+def send_to_tekla(data: dict) -> dict:
+    """
+    Send every member in `data["members"]` to the currently running Tekla
+    Structures model.
+
+    Parameters
+    ----------
+    data : dict
+        The same JSON structure produced by generate_members(): must
+        contain a "members" list, where each entry has p1, p2, profile,
+        material, class, type, and name.
+
+    Returns
+    -------
+    dict
+        {
+          "created": <int>,           # members successfully inserted
+          "failed": <int>,            # members that raised an error
+          "errors": [                 # one entry per failed member
+            {"name": <str>, "error": <str>},
+            ...
+          ]
+        }
+
+    Raises
+    ------
+    TeklaConnectionError
+        If Tekla Structures isn't running / reachable. This aborts before
+        any members are created, since nothing could be inserted anyway.
+    """
+    members = data.get("members", [])
+    grid = data.get('grid', {})
+    model = _get_connected_model()
+
+    coordinateX = f'0.00 {grid["n_long_bays"]}*{grid["bay_long_mm"]}'
+    coordinateY = f'0.00 {grid["n_trans_bays"]}*{grid["bay_trans_mm"]}'
+    coordinateZ = f'0.00 3600.00 7200.00'
+    labelX = ' '.join(map(lambda a: str(a), list(range(1, grid["n_long_bays"]+2))))
+    labelY = ' '.join(generate_y_axis_labels(grid["n_trans_bays"]+2))
+    #TODO: How to compute labelZ
+    labelZ = '0.00 3600.00 7200.00'
+    modify_grid(model, coordinateX, coordinateY, coordinateZ, labelX, labelY, labelZ)
+
+    created = 0
+    errors = []
+
+    for member in members:
+        try:
+            _create_beam(member)
+            created += 1
+        except Exception as exc:  # keep going; report this member and move on
+            errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
+
+    model.CommitChanges()
+
+    return {
+        "created": created,
+        "failed": len(errors),
+        "errors": errors,
+    }
+
+
+# ── Diagnostics: dump all attributes of any picked object ────────────────
+#
+# Works for any Tekla model object -- Beam, a vertical Beam acting as a
+# column, Connection/BaseComponent, Plate, BoltArray, Weld, etc. -- since
+# it uses .NET reflection on the object's actual runtime type rather than
+# a type-specific property list. Useful for exploring what a given
+# component actually exposes when you don't already know its exact class.
+#
+# NOTE ON USER-DEFINED ATTRIBUTES (UDAs): Tekla's classic Open API has no
+# generic "get all UDAs" call -- user-defined/report properties are only
+# readable by name via GetUserProperty()/GetReportProperty(), so they are
+# NOT included here unless you already know their names ahead of time.
+# This dumps the object's regular .NET properties only.
+
+def _stringify(value) -> object:
+    """Best-effort conversion of a .NET property value into something printable/JSON-safe."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    try:
+        return str(value)
+    except Exception as exc:
+        return f"<unprintable: {exc}>"
+
+
+def dump_attributes(obj) -> dict:
+    """
+    Generic .NET reflection dump of every readable, non-indexer property
+    on `obj`'s actual runtime type.
+
+    Returns
+    -------
+    dict
+        {"type_name": <full .NET type name>, "attributes": {name: value, ...}}
+    """
+    net_type = obj.GetType()
+    attributes = {}
+    for prop in net_type.GetProperties():
+        if prop.GetIndexParameters():
+            continue  # skip indexer properties (e.g. "Item[key]"); GetValue(obj) with no args would raise
+        try:
+            value = prop.GetValue(obj, None)
+        except Exception as exc:
+            value = f"<error reading property: {exc}>"
+        attributes[prop.Name] = _stringify(value)
+
+    uda = Hashtable()
+    if obj.GetAllUserProperties(uda):
+        for key in sorted([str(x) for x in uda.Keys]):
+            attributes[key] = uda[key]
+
+    return {"type_name": net_type.FullName, "attributes": attributes}
+
+
+def print_attributes(obj) -> None:
+    """Pretty-prints every attribute from dump_attributes(obj), sorted by name."""
+    result = dump_attributes(obj)
+    print(f"=== {result['type_name']} ===")
+    for name in sorted(result["attributes"]):
+        print(f"{name}: {result['attributes'][name]}")
+
+
+def pick_and_print_attributes() -> None:
+    """
+    Prompts the user to click one object in the Tekla Structures UI
+    (beam, column, connection, plate, bolt, weld, ...) and prints every
+    readable attribute on it. Returns the same dict print_attributes()
+    prints, in case you want it programmatically too.
+
+    Must be run with the Tekla Structures desktop UI visible and focused
+    -- this blocks waiting for a click in the 3D view, the same as
+    clicking "Pick" in any Tekla dialog.
+    """
+    print("Select an object in Tekla to retrieve it's attribues ...")
+    # ✅ Get selection
+    selector = ModelObjectSelector()
+    selected = selector.GetSelectedObjects()
+
+    while selected.MoveNext():
+        picked = selected.Current
+        if picked is not None:
+            print_attributes(picked)
+            dump_attributes(picked)
+
+
+# ── Standalone self-test ─────────────────────────────────────────────────
+#
+# Run this file directly (`python tekla_integration.py`) on the machine
+# that has Tekla Structures + pythonnet installed, with a model open, to
+# check that the whole chain — pythonnet import, DLL loading, live model
+# connection, catalog access, and member insertion — actually works,
+# independently of generate_grid.py or the web UI.
+#
+# This creates one real, visible dummy column and prints a pass/fail
+# summary for each step. It does NOT undo the insertion afterward (Tekla
+# Open API has no simple "delete a specific part" call from here), so
+# expect one extra "SELF_TEST_DUMMY_COLUMN" member left in your model —
+# delete it manually once you've confirmed the test passed.
+
+def _self_test() -> None:
+    print("=== tekla_integration.py self-test ===\n")
+
+
+    print(f"1. Connecting to Tekla Structures (bin path: {tekla_bin_path}) ...")
+    try:
+        model = _get_connected_model()
+        print("   PASS: connected to a running Tekla Structures model.\n")
+    except Exception as exc:
+        print(f"   FAIL: {exc}\n")
+        print("Aborting further tests — nothing else can succeed without a connection.")
+        return
+
+    test_profile = "HEA140"
+    print(f"2. Looking up catalog HEIGHT for profile '{test_profile}' ...")
+    try:
+        height = get_profile_height(test_profile)
+        if height is None:
+            print(f"   FAIL: profile '{test_profile}' not found in the catalog (or has no HEIGHT).\n")
+        else:
+            print(f"   PASS: HEIGHT = {height} mm\n")
+    except Exception as exc:
+        print(f"   FAIL: {exc}\n")
+
+    print(f"3. Looking up catalog WIDTH for profile '{test_profile}' ...")
+    try:
+        width = get_profile_width(test_profile)
+        if width is None:
+            print(f"   FAIL: profile '{test_profile}' not found in the catalog (or has no WIDTH).\n")
+        else:
+            print(f"   PASS: WIDTH = {width} mm\n")
+    except Exception as exc:
+        print(f"   FAIL: {exc}\n")
+
+    try:
+        pick_and_print_attributes()
+    except Exception as exc:
+        print(f"   FAIL: {exc}\n")
+
+    print("=== self-test complete ===")
+
+
+if __name__ == "__main__":
+    _self_test()

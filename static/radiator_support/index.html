@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Structural Frame Generator</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy:        #0a2338;
+    --navy-deep:   #071a2b;
+    --line:        #3d6a8f;
+    --line-dim:    #234a67;
+    --bright:      #7ecbe8;
+    --paper-ink:   #dcecf5;
+    --paper-ink-dim: #8fb4cb;
+    --orange:      #e8590c;
+    --orange-dim:  #b9450a;
+    --green:       #4caf6b;
+    --red:         #d64550;
+    --purple:      #a568d6;
+    --blue:        #4a90d9;
+    --font-head:   'IBM Plex Sans', sans-serif;
+    --font-mono:   'IBM Plex Mono', monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--navy-deep);
+    font-family: var(--font-mono);
+    color: var(--paper-ink);
+  }
+
+  #app {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+  }
+
+  /* ---------------- LEFT PANE: blueprint sheet ---------------- */
+
+  #left-pane {
+    width: 420px;
+    min-width: 340px;
+    flex-shrink: 0;
+    background-color: var(--navy);
+    background-image:
+      linear-gradient(var(--line-dim) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line-dim) 1px, transparent 1px);
+    background-size: 24px 24px;
+    border-right: 2px solid var(--line);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .titleblock {
+    padding: 20px 20px 16px 20px;
+    border-bottom: 2px solid var(--line);
+    background: linear-gradient(180deg, rgba(10,35,56,0.9), rgba(10,35,56,0.4));
+  }
+
+  .titleblock .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    color: var(--bright);
+    text-transform: uppercase;
+  }
+
+  .titleblock h1 {
+    font-family: var(--font-head);
+    font-weight: 700;
+    font-size: 21px;
+    margin: 4px 0 6px 0;
+    color: var(--paper-ink);
+    letter-spacing: 0.01em;
+  }
+
+  .titleblock .dwgno {
+    font-size: 11px;
+    color: var(--paper-ink-dim);
+    display: flex;
+    justify-content: space-between;
+    border-top: 1px dashed var(--line);
+    padding-top: 8px;
+    margin-top: 8px;
+  }
+
+  form { padding: 4px 20px 24px 20px; flex: 1; }
+
+  fieldset {
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    margin: 18px 0 0 0;
+    padding: 12px 14px 16px 14px;
+  }
+
+  legend {
+    font-family: var(--font-head);
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--bright);
+    padding: 0 6px;
+  }
+
+  .field-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 8px;
+  }
+
+  .field-row label {
+    font-size: 12px;
+    color: var(--paper-ink-dim);
+    flex: 1;
+  }
+
+  .field-row input[type="number"],
+  .field-row input[type="text"],
+  .field-row select {
+    width: 130px;
+    background: var(--navy-deep);
+    border: 1px solid var(--line);
+    color: var(--paper-ink);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 5px 7px;
+    border-radius: 2px;
+  }
+
+  .field-row input:focus,
+  .field-row select:focus {
+    outline: none;
+    border-color: var(--bright);
+    box-shadow: 0 0 0 2px rgba(126,203,232,0.25);
+  }
+
+  .xyz-row .field-row input { width: 76px; }
+
+  .material-group {
+    border-top: 1px dashed var(--line);
+    padding-top: 8px;
+    margin-top: 10px;
+  }
+  .material-group:first-child { border-top: none; margin-top: 0; }
+  .material-group .group-label {
+    font-size: 11px;
+    color: var(--bright);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 2px;
+  }
+
+  .brace-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    background: rgba(126,203,232,0.05);
+    padding: 6px 8px;
+    border: 1px solid var(--line-dim);
+    border-radius: 2px;
+  }
+  .brace-row label { font-size: 11px; color: var(--paper-ink-dim); }
+  .brace-row input[type="number"] {
+    width: 56px;
+    background: var(--navy-deep);
+    border: 1px solid var(--line);
+    color: var(--paper-ink);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 4px 6px;
+    border-radius: 2px;
+  }
+  .brace-row .spacer { flex: 1; }
+  .brace-row button.remove {
+    background: none;
+    border: 1px solid var(--red);
+    color: var(--red);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .brace-row button.remove:hover { background: rgba(214,69,80,0.15); }
+
+  .add-btn {
+    margin-top: 10px;
+    width: 100%;
+    background: none;
+    border: 1px dashed var(--line);
+    color: var(--bright);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 7px;
+    border-radius: 2px;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+  }
+  .add-btn:hover { border-color: var(--bright); background: rgba(126,203,232,0.06); }
+
+  .load-config-hint {
+    font-size: 10px;
+    color: var(--paper-ink-dim);
+    margin-top: 10px;
+    line-height: 1.4;
+  }
+
+  #generate-btn {
+    margin-top: 22px;
+    width: 100%;
+    background: var(--orange);
+    color: #fff5ee;
+    border: none;
+    font-family: var(--font-head);
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 13px;
+    border-radius: 3px;
+    cursor: pointer;
+    box-shadow: 0 2px 0 var(--orange-dim);
+    transition: transform 0.05s ease;
+  }
+  #generate-btn:active { transform: translateY(2px); box-shadow: none; }
+  #generate-btn:disabled { background: #6b5142; box-shadow: none; cursor: wait; }
+
+  #status-msg {
+    margin-top: 12px;
+    font-size: 12px;
+    min-height: 16px;
+    line-height: 1.5;
+  }
+  #status-msg.error { color: var(--red); white-space: pre-wrap; }
+  #status-msg.ok { color: var(--green); }
+
+  /* ---------------- RIGHT PANE: viewport ---------------- */
+
+  #right-pane {
+    position: relative;
+    flex: 1;
+    background: radial-gradient(ellipse at 50% 40%, #0d2a42 0%, #061420 75%);
+  }
+
+  #viewport { width: 100%; height: 100%; display: block; }
+
+  #hud {
+    position: absolute;
+    top: 18px;
+    right: 18px;
+    background: rgba(7, 26, 43, 0.82);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 12px 16px;
+    min-width: 200px;
+    font-size: 12px;
+    backdrop-filter: blur(3px);
+  }
+  #hud h2 {
+    font-family: var(--font-head);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--bright);
+    margin: 0 0 8px 0;
+    border-bottom: 1px solid var(--line-dim);
+    padding-bottom: 6px;
+  }
+  #hud .total {
+    font-family: var(--font-head);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--paper-ink);
+  }
+  #hud .total span { font-size: 11px; color: var(--paper-ink-dim); font-weight: 400; }
+  .hud-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 6px;
+    color: var(--paper-ink-dim);
+  }
+  .hud-row .swatch {
+    display: inline-block;
+    width: 9px; height: 9px;
+    border-radius: 1px;
+    margin-right: 6px;
+  }
+  .hud-row .name { display: flex; align-items: center; }
+  .hud-row .count { color: var(--paper-ink); font-weight: 600; }
+
+  #legend {
+    position: absolute;
+    bottom: 18px;
+    left: 18px;
+    background: rgba(7, 26, 43, 0.82);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 10px 14px;
+    font-size: 11px;
+    display: flex;
+    gap: 16px;
+  }
+  #legend .item { display: flex; align-items: center; color: var(--paper-ink-dim); }
+  #legend .swatch { display: inline-block; width: 16px; height: 3px; margin-right: 6px; }
+
+  #actions-panel {
+    position: absolute;
+    bottom: 18px;
+    right: 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 14px;
+  }
+
+  .action-block {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+
+  .action-btn {
+    background: var(--navy);
+    color: var(--bright);
+    border: 1px solid var(--bright);
+    font-family: var(--font-head);
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 10px 18px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .action-btn:hover:not(:disabled) { background: rgba(126,203,232,0.12); }
+  .action-btn:disabled {
+    color: var(--paper-ink-dim);
+    border-color: var(--line-dim);
+    cursor: not-allowed;
+  }
+
+  .action-status {
+    font-size: 11px;
+    max-width: 260px;
+    text-align: right;
+    background: rgba(7, 26, 43, 0.82);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 6px 10px;
+    display: none;
+  }
+  .action-status.ok { color: var(--green); border-color: var(--green); display: block; }
+  .action-status.error { color: var(--red); border-color: var(--red); display: block; white-space: pre-wrap; }
+
+  #empty-hint {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--paper-ink-dim);
+    font-size: 13px;
+    text-align: center;
+    letter-spacing: 0.03em;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <div id="left-pane">
+    <div class="titleblock">
+      <div class="eyebrow">Steel Frame Generator</div>
+      <h1>Radiator Support — Grid Config</h1>
+      <div class="dwgno"><span>DWG NO. RS-001</span><span id="dwg-rev">REV —</span></div>
+    </div>
+
+    <form id="grid-form" onsubmit="return false;">
+
+      <fieldset>
+        <legend>Grid Geometry</legend>
+        <div class="field-row"><label for="n_long_bays">Long. bays (count)</label><input type="number" id="n_long_bays" value="21" min="1" step="1"></div>
+        <div class="field-row"><label for="n_trans_bays">Trans. bays (count)</label><input type="number" id="n_trans_bays" value="5" min="1" step="1"></div>
+        <div class="field-row"><label for="bay_long_mm">Bay spacing, long. (mm)</label><input type="number" id="bay_long_mm" value="2600" step="any"></div>
+        <div class="field-row"><label for="bay_trans_mm">Bay spacing, trans. (mm)</label><input type="number" id="bay_trans_mm" value="3300" step="any"></div>
+        <div class="field-row"><label for="col_height_mm">Column height (mm)</label><input type="number" id="col_height_mm" value="5000" step="any"></div>
+        <div class="field-row"><label for="total_structure_height">Total structure height (mm)</label><input type="number" id="total_structure_height" value="5300" step="any"></div>
+        <div class="field-row"><label for="longitudinal_beam_extra_mm">Extra length Longitudinal Beam (mm)</label><input type="number" id="longitudinal_beam_extra_mm" value="60" step="any"></div>
+        <div class="xyz-row">
+          <div class="field-row" style="margin-bottom:0;">
+            <label>Starting point (x, y, z)</label>
+            <div style="display:flex; gap:4px;">
+              <input type="number" id="start_x" value="0" step="any">
+              <input type="number" id="start_y" value="0" step="any">
+              <input type="number" id="start_z" value="0" step="any">
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Plates &amp; Eccentricity</legend>
+        <div class="field-row"><label for="vertical_base_eccentricity_mm">Vertical base eccentricity (mm)</label><input type="number" id="vertical_base_eccentricity_mm" value="38" step="any"></div>
+        <div class="field-row"><label for="gusset_plate_thickness_mm">Gusset plate thickness (mm)</label><input type="number" id="gusset_plate_thickness_mm" value="15" step="any"></div>
+        <div class="field-row"><label for="embedded_plate_thickness_mm">Embedded plate thickness (mm)</label><input type="number" id="embedded_plate_thickness_mm" value="10" step="any"></div>
+        <div class="field-row"><label for="bracing_distance_from_column_mm">Bracing distance from column (mm)</label><input type="number" id="bracing_distance_from_column_mm" value="20" step="any"></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Materials &amp; Profiles</legend>
+
+        <div class="material-group">
+          <div class="group-label">Beam</div>
+          <div class="field-row"><label>Material</label><input type="text" id="beam_material" value="S355JR"></div>
+          <div class="field-row"><label>Profile</label><input type="text" id="beam_profile" value="HEA140"></div>
+          <div class="field-row"><label>Tekla class</label><input type="text" id="beamClass" value="3"></div>
+        </div>
+
+        <div class="material-group">
+          <div class="group-label">Column</div>
+          <div class="field-row"><label>Material</label><input type="text" id="column_material" value="S355JR"></div>
+          <div class="field-row"><label>Profile</label><input type="text" id="column_profile" value="CFRHS120X120X5"></div>
+          <div class="field-row"><label>Tekla class</label><input type="text" id="columnClass" value="11"></div>
+        </div>
+
+        <div class="material-group">
+          <div class="group-label">Longitudinal brace</div>
+          <div class="field-row"><label>Material</label><input type="text" id="longitudinal_brace_material" value="S355JR"></div>
+          <div class="field-row"><label>Profile</label><input type="text" id="longitudinal_brace_profile" value="CFRHS100X100X4"></div>
+          <div class="field-row"><label>Tekla class</label><input type="text" id="longitudinalClass" value="2"></div>
+        </div>
+
+        <div class="material-group">
+          <div class="group-label">Transverse brace</div>
+          <div class="field-row"><label>Material</label><input type="text" id="transverse_brace_material" value="S355JR"></div>
+          <div class="field-row"><label>Profile</label><input type="text" id="transverse_brace_profile" value="CFRHS100X100X4"></div>
+          <div class="field-row"><label>Tekla class</label><input type="text" id="transverseClass" value="7"></div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Longitudinal Brace Bays</legend>
+        <div id="long-brace-list"></div>
+        <button type="button" class="add-btn" id="add-long-brace">+ ADD LONGITUDINAL BRACE BAY</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>Transverse Brace Bays</legend>
+        <div id="trans-brace-list"></div>
+        <button type="button" class="add-btn" id="add-trans-brace">+ ADD TRANSVERSE BRACE BAY</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>Load Configuration (STAAD)</legend>
+
+        <div class="material-group">
+          <div class="group-label">Radiator &amp; Supports</div>
+          <div class="field-row"><label for="radiator_support_type">Support type</label>
+            <select id="radiator_support_type">
+              <option value="support_at_middle" selected>support_at_middle</option>
+              <option value="support_at_ends">support_at_ends</option>
+            </select>
+          </div>
+          <div class="field-row"><label for="total_radiator_weight_including_liquid_kg">Total weight incl. liquid (kg)</label><input type="number" id="total_radiator_weight_including_liquid_kg" value="4380" step="any"></div>
+          <div class="field-row"><label for="number_of_supports_on_one_side">Supports on one side (count)</label><input type="number" id="number_of_supports_on_one_side" value="4" min="1" step="1"></div>
+          <div class="field-row"><label for="support_spacing_mm">Support spacing (mm)</label><input type="number" id="support_spacing_mm" value="2750" step="any"></div>
+          <div class="field-row"><label for="first_support_offset_from_edge_mm">First support offset from edge (mm)</label><input type="number" id="first_support_offset_from_edge_mm" value="10" step="any"></div>
+          <div class="field-row"><label for="height_of_radiator_mm">Radiator height (mm)</label><input type="number" id="height_of_radiator_mm" value="2600" step="any"></div>
+          <div class="field-row"><label for="height_of_fan_mm">Fan height (mm)</label><input type="number" id="height_of_fan_mm" value="200" step="any"></div>
+          <div class="field-row"><label for="diameter_of_fan_mm">Fan diameter (mm)</label><input type="number" id="diameter_of_fan_mm" value="800" step="any"></div>
+        </div>
+
+        <div class="material-group">
+          <div class="group-label">Loads</div>
+          <div class="field-row"><label for="live_load_intensity_kN_per_m2">Live load intensity (kN/m²)</label><input type="number" id="live_load_intensity_kN_per_m2" value="2.87" step="any"></div>
+          <div class="field-row"><label for="connection_weight_addition_percentage">Connection weight addition (%)</label><input type="number" id="connection_weight_addition_percentage" value="10" step="any"></div>
+        </div>
+
+        <div class="material-group">
+          <div class="group-label">Thermal</div>
+          <div class="field-row"><label for="temperature_rise_Tp_C">Temperature rise Tp (°C)</label><input type="number" id="temperature_rise_Tp_C" value="30" step="any"></div>
+          <div class="field-row"><label for="temperature_drop_Tm_C">Temperature drop Tm (°C)</label><input type="number" id="temperature_drop_Tm_C" value="20" step="any"></div>
+          <div class="field-row"><label for="reference_installation_temperature_C">Reference install temp (°C)</label><input type="number" id="reference_installation_temperature_C" value="20" step="any"></div>
+        </div>
+
+        <div class="material-group">
+          <div class="group-label">Wind</div>
+          <div class="field-row"><label for="wind_speed_mph">Wind speed (mph)</label><input type="number" id="wind_speed_mph" value="90" step="any"></div>
+          <div class="field-row"><label for="wind_exposure_category">Exposure category</label>
+            <select id="wind_exposure_category">
+              <option value="A">A</option>
+              <option value="B" selected>B</option>
+              <option value="C">C</option>
+              <option value="D">D</option>
+            </select>
+          </div>
+          <div class="field-row"><label for="frame_pressure_coefficient_Cq">Frame pressure coeff. Cq</label><input type="number" id="frame_pressure_coefficient_Cq" value="1.8" step="any"></div>
+          <div class="field-row"><label for="equipment_pressure_coefficient_Cpe">Equipment pressure coeff. Cpe</label><input type="number" id="equipment_pressure_coefficient_Cpe" value="1.4" step="any"></div>
+        </div>
+
+        <div class="material-group">
+          <div class="group-label">Seismic &amp; Occupancy</div>
+          <div class="field-row"><label for="seismic_zone">Seismic zone</label>
+            <select id="seismic_zone">
+              <option value="1">1</option>
+              <option value="2A" selected>2A</option>
+              <option value="2B">2B</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+            </select>
+          </div>
+          <div class="field-row"><label for="soil_type">Soil type</label>
+            <select id="soil_type">
+              <option value="SA">SA</option>
+              <option value="SB">SB</option>
+              <option value="SC" selected>SC</option>
+              <option value="SD">SD</option>
+              <option value="SE">SE</option>
+              <option value="SF">SF</option>
+            </select>
+          </div>
+          <div class="field-row"><label for="seismic_source_type">Seismic source type</label>
+            <select id="seismic_source_type">
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C" selected>C</option>
+            </select>
+          </div>
+          <div class="field-row"><label for="distance_to_closet_known_seismic_source_km">Distance to nearest source (km)</label><input type="number" id="distance_to_closet_known_seismic_source_km" value="5" step="any"></div>
+          <div class="field-row"><label for="occupancy_category">Occupancy category</label><input type="text" id="occupancy_category" value="standard_occupancy"></div>
+          <div class="field-row"><label for="type_of_structure">Type of structure</label>
+            <select id="type_of_structure">
+              <option value="building">building</option>
+              <option value="non_building_structure" selected>non_building_structure</option>
+            </select>
+          </div>
+          <div class="field-row"><label for="framing_system_x">Framing system (X)</label><input type="text" id="framing_system_x" value="all_other_self_supported_structures"></div>
+          <div class="field-row"><label for="framing_system_z">Framing system (Z)</label><input type="text" id="framing_system_z" value="all_other_self_supported_structures"></div>
+        </div>
+
+        <div class="load-config-hint">Sent to STAAD when you click "Send to STAAD" below (not part of Generate Structure).</div>
+      </fieldset>
+
+      <button id="generate-btn" type="button">Generate Structure</button>
+      <div id="status-msg"></div>
+    </form>
+  </div>
+
+  <div id="right-pane">
+    <canvas id="viewport"></canvas>
+    <div id="empty-hint">NO STRUCTURE LOADED<br>Configure parameters and click Generate Structure</div>
+
+    <div id="hud" style="display:none;">
+      <h2>Summary</h2>
+      <div class="total" id="hud-total">0 <span>members</span></div>
+      <div id="hud-breakdown"></div>
+    </div>
+
+    <div id="legend" style="display:none;">
+      <div class="item"><span class="swatch" style="background:#4a90d9;"></span>Column</div>
+      <div class="item"><span class="swatch" style="background:#4caf6b;"></span>Beam</div>
+      <div class="item"><span class="swatch" style="background:#d64550;"></span>Long. brace</div>
+      <div class="item"><span class="swatch" style="background:#a568d6;"></span>Trans. brace</div>
+    </div>
+
+    <div id="actions-panel">
+      <div class="action-block">
+        <div id="staad-status" class="action-status"></div>
+        <button id="send-staad-btn" class="action-btn" type="button" disabled>Send to STAAD</button>
+      </div>
+      <div class="action-block">
+        <div id="tekla-status" class="action-status"></div>
+        <button id="update-tekla-btn" class="action-btn" type="button" disabled>Update Tekla</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+/* ---------------------------------------------------------------
+   Dynamic brace-bay row management
+--------------------------------------------------------------- */
+
+let braceRowId = 0;
+
+function addBraceRow(containerId, defaults) {
+  const container = document.getElementById(containerId);
+  const rowId = `brace-row-${braceRowId++}`;
+  const row = document.createElement('div');
+  row.className = 'brace-row';
+  row.id = rowId;
+  row.innerHTML = `
+    <label>Bay #</label>
+    <input type="number" class="bay-num" min="1" step="1" value="${defaults?.bay ?? 1}">
+    <label style="display:flex; align-items:center; gap:4px;">
+      <input type="checkbox" class="bay-mirror" ${defaults?.mirror ? 'checked' : ''}> Mirror
+    </label>
+    <span class="spacer"></span>
+    <button type="button" class="remove">✕</button>
+  `;
+  row.querySelector('.remove').addEventListener('click', () => row.remove());
+  container.appendChild(row);
+}
+
+document.getElementById('add-long-brace').addEventListener('click', () => addBraceRow('long-brace-list'));
+document.getElementById('add-trans-brace').addEventListener('click', () => addBraceRow('trans-brace-list'));
+
+// Seed with the same example bracing used elsewhere in this project
+addBraceRow('long-brace-list', { bay: 6, mirror: false });
+addBraceRow('long-brace-list', { bay: 7, mirror: true });
+addBraceRow('trans-brace-list', { bay: 2, mirror: false });
+
+function readBraceList(containerId) {
+  const rows = document.querySelectorAll(`#${containerId} .brace-row`);
+  return Array.from(rows).map(row => ({
+    bay: parseInt(row.querySelector('.bay-num').value, 10),
+    mirror: row.querySelector('.bay-mirror').checked,
+  }));
+}
+
+/* ---------------------------------------------------------------
+   Build request payload from form
+--------------------------------------------------------------- */
+
+function num(id) { return parseFloat(document.getElementById(id).value); }
+function int(id) { return parseInt(document.getElementById(id).value, 10); }
+function str(id) { return document.getElementById(id).value; }
+
+function buildPayload() {
+  return {
+    grid: {
+      n_long_bays: int('n_long_bays'),
+      n_trans_bays: int('n_trans_bays'),
+      bay_long_mm: num('bay_long_mm'),
+      bay_trans_mm: num('bay_trans_mm'),
+      col_height_mm: num('col_height_mm'),
+      total_structure_height: num('total_structure_height'),
+      longitudinal_beam_extra_mm: num('longitudinal_beam_extra_mm'),
+      starting_point: [num('start_x'), num('start_y'), num('start_z')],
+      longitudinal_brace_bays: readBraceList('long-brace-list'),
+      transverse_brace_bays: readBraceList('trans-brace-list'),
+      vertical_base_eccentricity_mm: num('vertical_base_eccentricity_mm'),
+      gusset_plate_thickness_mm: num('gusset_plate_thickness_mm'),
+      embedded_plate_thickness_mm: num('embedded_plate_thickness_mm'),
+      bracing_distance_from_column_mm: num('bracing_distance_from_column_mm'),
+      beam_material: str('beam_material'),
+      column_material: str('column_material'),
+      longitudinal_brace_material: str('longitudinal_brace_material'),
+      transverse_brace_material: str('transverse_brace_material'),
+      beam_profile: str('beam_profile'),
+      column_profile: str('column_profile'),
+      longitudinal_brace_profile: str('longitudinal_brace_profile'),
+      transverse_brace_profile: str('transverse_brace_profile'),
+      beamClass: str('beamClass'),
+      columnClass: str('columnClass'),
+      longitudinalClass: str('longitudinalClass'),
+      transverseClass: str('transverseClass'),
+    }
+  };
+}
+
+/* ---------------------------------------------------------------
+   three.js viewport setup
+--------------------------------------------------------------- */
+
+const rightPane = document.getElementById('right-pane');
+const canvas = document.getElementById('viewport');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+
+// Overlay renderer for crisp HTML/CSS text labels (column indices) that
+// stay correctly positioned in 3D space as the camera orbits.
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.domElement.style.position = 'absolute';
+labelRenderer.domElement.style.top = '0';
+labelRenderer.domElement.style.left = '0';
+labelRenderer.domElement.style.pointerEvents = 'none';
+rightPane.appendChild(labelRenderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 1, 1e7);
+camera.position.set(8000, 6000, 8000);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+let structureGroup = null;
+let labelsGroup = null;
+
+function resizeRenderer() {
+  const w = rightPane.clientWidth;
+  const h = rightPane.clientHeight;
+  renderer.setSize(w, h, false);
+  labelRenderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resizeRenderer);
+resizeRenderer();
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+}
+animate();
+
+function makeIndexLabel(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  div.style.fontFamily = "'IBM Plex Mono', monospace";
+  div.style.fontSize = '11px';
+  div.style.fontWeight = '600';
+  div.style.color = '#dcecf5';
+  div.style.textShadow = '0 0 3px #0a2338, 0 0 3px #0a2338';
+  div.style.pointerEvents = 'none';
+  return new CSS2DObject(div);
+}
+
+// Engineering coords are (x = longitudinal, y = transverse, z = height).
+// Map to three.js (x, y=height-up, z=transverse). Swapping y and z alone
+// would flip handedness (mirroring the whole scene, most visible in the
+// directional bracing), so the transverse axis is negated to keep a
+// proper right-handed system: x_hat × y_hat = z_hat.
+function toThree(p) {
+  return new THREE.Vector3(p[0], p[2], -p[1]);
+}
+
+const TYPE_COLORS = {
+  column: 0x4a90d9,
+  beam: 0x4caf6b,
+  longitudinal_brace: 0xd64550,
+  transverse_brace: 0xa568d6,
+};
+
+function renderStructure(members) {
+  if (structureGroup) {
+    scene.remove(structureGroup);
+    structureGroup.traverse(obj => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) obj.material.dispose();
+    });
+  }
+  if (labelsGroup) {
+    labelsGroup.traverse(obj => {
+      if (obj.isCSS2DObject) obj.element.remove();
+    });
+    scene.remove(labelsGroup);
+  }
+
+  structureGroup = new THREE.Group();
+  labelsGroup = new THREE.Group();
+
+  const pointsByType = {};
+  const bbox = new THREE.Box3();
+
+  // Track the raw engineering-space bounds too (before the axis remap),
+  // since the index labels below are positioned the same way the
+  // matplotlib viewer does: relative to the true x/y extents.
+  let xMinEng = Infinity, xMaxEng = -Infinity;
+  let yMinEng = Infinity, yMaxEng = -Infinity;
+
+  for (const m of members) {
+    const a = toThree(m.p1);
+    const b = toThree(m.p2);
+    bbox.expandByPoint(a);
+    bbox.expandByPoint(b);
+    (pointsByType[m.type] ??= []).push(a, b);
+
+    for (const p of [m.p1, m.p2]) {
+      xMinEng = Math.min(xMinEng, p[0]);
+      xMaxEng = Math.max(xMaxEng, p[0]);
+      yMinEng = Math.min(yMinEng, p[1]);
+      yMaxEng = Math.max(yMaxEng, p[1]);
+    }
+  }
+
+  for (const [type, pts] of Object.entries(pointsByType)) {
+    const geometry = new THREE.BufferGeometry().setFromPoints(pts);
+    const material = new THREE.LineBasicMaterial({ color: TYPE_COLORS[type] ?? 0xaaaaaa });
+    structureGroup.add(new THREE.LineSegments(geometry, material));
+  }
+
+  // Ground grid sized to the structure footprint, sitting at the lowest z.
+  const size = bbox.getSize(new THREE.Vector3());
+  const center = bbox.getCenter(new THREE.Vector3());
+  const gridSize = Math.max(size.x, size.z, 1000) * 1.4;
+  const divisions = Math.max(4, Math.round(gridSize / 2000));
+  const grid = new THREE.GridHelper(gridSize, divisions, 0x3d6a8f, 0x1a3a52);
+  grid.position.set(center.x, bbox.min.y, center.z);
+  structureGroup.add(grid);
+
+  scene.add(structureGroup);
+
+  // Column-index labels (1-based), matching the matplotlib viewer: the
+  // longitudinal index (i) is labeled along the front row (j=0), and the
+  // transverse index (j) is labeled at the far end of the x axis
+  // (i = i_max) rather than the near end.
+  const columns = members.filter(m => m.type === 'column');
+  if (columns.length) {
+    const colBottomZEng = Math.min(...columns.map(m => m.p1[2]));
+    const labelOffsetEng = Math.max(xMaxEng - xMinEng, yMaxEng - yMinEng, 1000) * 0.03;
+    const iMax = Math.max(...columns.map(m => parseInt(m.name.split('-')[2], 10)));
+
+    for (const m of columns) {
+      const [, jStr, iStr] = m.name.split('-');
+      const jIdx = parseInt(jStr, 10);
+      const iIdx = parseInt(iStr, 10);
+      const [x, y] = m.p1;
+
+      if (jIdx === 0) {
+        const label = makeIndexLabel(String(iIdx + 1));
+        label.position.copy(toThree([x, yMinEng - labelOffsetEng, colBottomZEng]));
+        labelsGroup.add(label);
+      }
+      if (iIdx === iMax) {
+        const label = makeIndexLabel(String(jIdx + 1));
+        label.position.copy(toThree([xMaxEng + labelOffsetEng, y, colBottomZEng]));
+        labelsGroup.add(label);
+      }
+    }
+  }
+
+  scene.add(labelsGroup);
+
+  // Fit camera to bounding box.
+  const diag = size.length() || 1000;
+  const dir = new THREE.Vector3(0.6, 0.5, 0.6).normalize();
+  camera.position.copy(center.clone().add(dir.multiplyScalar(diag * 1.3)));
+  camera.near = diag * 0.01;
+  camera.far = diag * 20;
+  camera.updateProjectionMatrix();
+  controls.target.copy(center);
+  controls.update();
+}
+
+/* ---------------------------------------------------------------
+   Summary HUD
+--------------------------------------------------------------- */
+
+const TYPE_LABELS = {
+  column: 'Column',
+  beam: 'Beam',
+  longitudinal_brace: 'Long. brace',
+  transverse_brace: 'Trans. brace',
+};
+
+function renderSummary(summary) {
+  document.getElementById('hud').style.display = 'block';
+  document.getElementById('legend').style.display = 'flex';
+  document.getElementById('hud-total').innerHTML = `${summary.total_members} <span>members</span>`;
+
+  const breakdown = document.getElementById('hud-breakdown');
+  breakdown.innerHTML = '';
+  for (const [type, count] of Object.entries(summary.members_by_type)) {
+    const color = '#' + (TYPE_COLORS[type] ?? 0xaaaaaa).toString(16).padStart(6, '0');
+    const row = document.createElement('div');
+    row.className = 'hud-row';
+    row.innerHTML = `
+      <span class="name"><span class="swatch" style="background:${color};"></span>${TYPE_LABELS[type] ?? type}</span>
+      <span class="count">${count}</span>
+    `;
+    breakdown.appendChild(row);
+  }
+
+  const inputColHeight = parseFloat(document.getElementById('col_height_mm').value);
+  const wasClamped = summary.effective_col_height_mm < inputColHeight - 0.001;
+
+  const heightRow = document.createElement('div');
+  heightRow.className = 'hud-row';
+  heightRow.style.marginTop = '10px';
+  heightRow.style.paddingTop = '8px';
+  heightRow.style.borderTop = '1px dashed #234a67';
+  heightRow.innerHTML = `
+    <span class="name">Column height used</span>
+    <span class="count" style="${wasClamped ? 'color:#e8590c;' : ''}">${summary.effective_col_height_mm} mm</span>
+  `;
+  breakdown.appendChild(heightRow);
+
+  const beamHeightRow = document.createElement('div');
+  beamHeightRow.className = 'hud-row';
+  beamHeightRow.innerHTML = `
+    <span class="name">Beam depth (catalog)</span>
+    <span class="count">${summary.beam_height_mm} mm</span>
+  `;
+  breakdown.appendChild(beamHeightRow);
+
+  if (wasClamped) {
+    const note = document.createElement('div');
+    note.style.marginTop = '6px';
+    note.style.fontSize = '10px';
+    note.style.color = '#e8590c';
+    note.textContent = `Reduced from ${inputColHeight} mm to fit total_structure_height.`;
+    breakdown.appendChild(note);
+  }
+}
+
+/* ---------------------------------------------------------------
+   Generate button
+--------------------------------------------------------------- */
+
+const genBtn = document.getElementById('generate-btn');
+const statusMsg = document.getElementById('status-msg');
+let revCounter = 0;
+let lastGeneratedResult = null;
+
+genBtn.addEventListener('click', async () => {
+  statusMsg.className = '';
+  statusMsg.textContent = '';
+  genBtn.disabled = true;
+  genBtn.textContent = 'Generating…';
+
+  try {
+    const payload = buildPayload();
+    const res = await fetch('/api/v1/generate_radiator_support', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(`Server returned ${res.status}:\n${detail}`);
+    }
+
+    const data = await res.json();
+    document.getElementById('empty-hint').style.display = 'none';
+    renderStructure(data.members);
+    renderSummary(data.summary);
+
+    lastGeneratedResult = data;
+    updateTeklaBtn.disabled = false;
+    sendStaadBtn.disabled = false;
+
+    revCounter += 1;
+    document.getElementById('dwg-rev').textContent = `REV ${revCounter}`;
+
+    statusMsg.className = 'ok';
+    statusMsg.textContent = `Generated ${data.summary.total_members} members successfully.`;
+  } catch (err) {
+    statusMsg.className = 'error';
+    statusMsg.textContent = String(err.message || err);
+  } finally {
+    genBtn.disabled = false;
+    genBtn.textContent = 'Generate Structure';
+  }
+});
+
+/* ---------------------------------------------------------------
+   Update Tekla button
+--------------------------------------------------------------- */
+
+const updateTeklaBtn = document.getElementById('update-tekla-btn');
+const teklaStatus = document.getElementById('tekla-status');
+
+updateTeklaBtn.addEventListener('click', async () => {
+  if (!lastGeneratedResult) return;
+
+  teklaStatus.className = '';
+  teklaStatus.textContent = '';
+  updateTeklaBtn.disabled = true;
+  updateTeklaBtn.textContent = 'Sending…';
+
+  try {
+    const res = await fetch('/api/v1/to_tekla', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(lastGeneratedResult),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(`Server returned ${res.status}:\n${detail}`);
+    }
+
+    const result = await res.json();
+
+    if (result.failed > 0) {
+      teklaStatus.className = 'error';
+      const firstErrors = result.errors.slice(0, 3).map(e => `${e.name}: ${e.error}`).join('\n');
+      teklaStatus.textContent =
+        `Sent ${result.created} of ${result.created + result.failed} members. ` +
+        `${result.failed} failed.\n${firstErrors}`;
+    } else {
+      teklaStatus.className = 'ok';
+      teklaStatus.textContent = `Sent ${result.created} members to Tekla.`;
+    }
+  } catch (err) {
+    teklaStatus.className = 'error';
+    teklaStatus.textContent = String(err.message || err);
+  } finally {
+    updateTeklaBtn.disabled = false;
+    updateTeklaBtn.textContent = 'Update Tekla';
+  }
+});
+
+/* ---------------------------------------------------------------
+   Send to STAAD button
+--------------------------------------------------------------- */
+
+const sendStaadBtn = document.getElementById('send-staad-btn');
+const staadStatus = document.getElementById('staad-status');
+
+// Reads the structured Load Configuration fields into the exact shape
+// STAAD integration expects. Built fresh at send time (rather than
+// baked into lastGeneratedResult at generate time) so these values can
+// be tweaked and re-sent without regenerating the whole structure.
+function buildLoadConfiguration() {
+  return {
+    radiator_support_type: str('radiator_support_type'),
+    total_radiator_weight_including_liquid_kg: num('total_radiator_weight_including_liquid_kg'),
+    number_of_supports_on_one_side: int('number_of_supports_on_one_side'),
+    support_spacing_mm: num('support_spacing_mm'),
+    first_support_offset_from_edge_mm: num('first_support_offset_from_edge_mm'),
+    height_of_radiator_mm: num('height_of_radiator_mm'),
+    height_of_fan_mm: num('height_of_fan_mm'),
+    diameter_of_fan_mm: num('diameter_of_fan_mm'),
+    live_load_intensity_kN_per_m2: num('live_load_intensity_kN_per_m2'),
+    temperature_rise_Tp_C: num('temperature_rise_Tp_C'),
+    temperature_drop_Tm_C: num('temperature_drop_Tm_C'),
+    reference_installation_temperature_C: num('reference_installation_temperature_C'),
+    connection_weight_addition_percentage: num('connection_weight_addition_percentage'),
+    wind_speed_mph: num('wind_speed_mph'),
+    wind_exposure_category: str('wind_exposure_category'),
+    occupancy_category: str('occupancy_category'),
+    frame_pressure_coefficient_Cq: num('frame_pressure_coefficient_Cq'),
+    equipment_pressure_coefficient_Cpe: num('equipment_pressure_coefficient_Cpe'),
+    seismic_zone: str('seismic_zone'),
+    soil_type: str('soil_type'),
+    seismic_source_type: str('seismic_source_type'),
+    distance_to_closet_known_seismic_source_km: num('distance_to_closet_known_seismic_source_km'),
+    type_of_structure: str('type_of_structure'),
+    framing_system_x: str('framing_system_x'),
+    framing_system_z: str('framing_system_z'),
+  };
+}
+
+sendStaadBtn.addEventListener('click', async () => {
+  if (!lastGeneratedResult) return;
+
+  staadStatus.className = '';
+  staadStatus.textContent = '';
+
+  const loadConfiguration = buildLoadConfiguration();
+
+  sendStaadBtn.disabled = true;
+  sendStaadBtn.textContent = 'Sending…';
+
+  try {
+    const payload = {
+      grid: lastGeneratedResult.grid,
+      members_split_beams: lastGeneratedResult.members_split_beams,
+      load_configuration: loadConfiguration,
+    };
+
+    const res = await fetch('/api/v1/to_staad', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(`Server returned ${res.status}:\n${detail}`);
+    }
+
+    const result = await res.json();
+
+    const parts = [];
+    if (result.failed > 0) {
+      const firstErrors = result.errors.slice(0, 3).map(e => `${e.name}: ${e.error}`).join('\n');
+      parts.push(`Members: ${result.created} of ${result.created + result.failed} created. ${result.failed} failed.\n${firstErrors}`);
+    } else {
+      parts.push(`Members: ${result.created} created.`);
+    }
+    if (result.property_assignment_failed > 0) {
+      const firstPropErrors = result.property_errors.slice(0, 3).map(e => `${e.name}: ${e.error}`).join('\n');
+      parts.push(`Profile/material assignment failed on ${result.property_assignment_failed} members (geometry still created).\n${firstPropErrors}`);
+    }
+
+    staadStatus.className = (result.failed > 0 || result.property_assignment_failed > 0) ? 'error' : 'ok';
+    staadStatus.textContent = parts.join('\n');
+  } catch (err) {
+    staadStatus.className = 'error';
+    staadStatus.textContent = String(err.message || err);
+  } finally {
+    sendStaadBtn.disabled = false;
+    sendStaadBtn.textContent = 'Send to STAAD';
+  }
+});
+</script>
+
+</body>
+</html>

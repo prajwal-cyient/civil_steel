@@ -1,0 +1,37 @@
+{
+  "template_project_path": "Transverese bracing conn detail 2.ideaCon",
+  "connection_selector": {"name": "290"},
+  "member_updates": [
+    {
+      "member_name": "M401",
+      "cross_section_mprl_name": "SHS120/120/6.3(RHS120x120)",
+      "material_mprl_name": "S355"
+    },
+    {
+      "member_name": "M363",
+      "cross_section_mprl_name": "SHS120/120/6.3(RHS120x120)",
+      "material_mprl_name": "S355"
+    },
+    {
+      "member_name": "M235",
+      "cross_section_mprl_name": "HEA140",
+      "material_mprl_name": "S355"
+    }
+  ],
+  "load_effect": {
+    "name": "LC1 - generated",
+    "member_loadings": [
+      {
+        "member_name": "M401",
+        "n": -120.0,
+        "vy": 5.0,
+        "vz": 0.0,
+        "mx": 0.0,
+        "my": 12.0,
+        "mz": 0.0
+      }
+    ]
+  },
+  "output_dir": "output_290",
+  "save_project_path": "output_290/290_designed.ideaCon"
+}

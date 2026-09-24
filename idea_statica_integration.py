@@ -416,6 +416,8 @@ def design_joint(data: dict) -> dict:
     with _get_client() as api_client:
         api_client.project.open_project_from_filepath(template_path)
         project_id = api_client.project.active_project_id
+        settings = api_client.settings.get_settings(project_id)
+        print(f"   Retrieved project settings: {to_json_convention_string(settings)}\n")
 
         connection = _resolve_connection(api_client, project_id, connection_selector)
         connection_id = connection.id
@@ -504,6 +506,16 @@ def design_joint(data: dict) -> dict:
             json.dump(check_summary, f, indent=2)
         print(f"Extracted check summary for connection {connection_id}")
 
+        print(f"Extracting IOM connection data for connection {connection_id}")
+        iom_connection_data_file = os.path.join(output_dir, "iom_connection_data.json")
+        start = time.time()
+        connection_data = api_client.export.export_iom_connection_data(project_id, connection_id)
+        print(f"Extracted IOM connection data for connection {connection_id} in {time.time() - start:.2f} seconds")
+        start = time.time()
+        with open(iom_connection_data_file, "w") as f:
+            f.write(json.dumps(connection_data.to_dict(), indent=2))
+        print(f"Extracted and saved IOM connection data for connection {connection_id} in {time.time() - start:.2f} seconds")
+
         # ---- Extract results ----
         print(f"Extracting raw results for connection {connection_id}")
         start = time.time()
@@ -518,17 +530,6 @@ def design_joint(data: dict) -> dict:
         start = time.time()
         api_client.report.save_report_pdf(project_id, connection_id, report_pdf_file)
         print(f"Generated report PDF for connection {connection_id} in {time.time() - start:.2f} seconds")
-
-        print(f"Extracting IOM connection data for connection {connection_id}")
-        iom_connection_data_file = os.path.join(output_dir, "iom_connection_data.json")
-        start = time.time()
-        connection_data = api_client.export.export_iom_connection_data(project_id, connection_id)
-        print(f"Extracted IOM connection data for connection {connection_id} in {time.time() - start:.2f} seconds")
-        start = time.time()
-        with open(iom_connection_data_file, "w") as f:
-            f.write(json.dumps(connection_data.to_dict(), indent=2))
-        print(f"Extracted and saved IOM connection data for connection {connection_id} in {time.time() - start:.2f} seconds")
-
     return {
         "connection_id": connection_id,
         "passed": result.passed,
@@ -580,6 +581,8 @@ def _self_test(template_path: str) -> None:
             api_client.project.open_project_from_filepath(template_path)
             project_id = api_client.project.active_project_id
             print(f"   PASS: opened, project_id={project_id}\n")
+            settings = api_client.settings.get_settings(project_id)
+            print(f"   Retrieved project settings: {to_json_convention_string(settings)}\n")
         except Exception as exc:
             print(f"   FAIL: {exc}\n")
             return

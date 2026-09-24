@@ -110,6 +110,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from typing import Any, Dict, List, Optional
 
 from pydantic import StrictStr
@@ -125,9 +126,15 @@ try:
         ConMprlCrossSection,
         ConMprlElement,
     )
+    from ideastatica_connection_api.models.con_operation_common_properties import ConOperationCommonProperties
     from ideastatica_connection_api.connection_api_client import ConnectionApiClient
     from ideastatica_connection_api.models.con_connection import ConConnection
     from ideastatica_connection_api.models.con_member import ConMember
+    from ideastatica_connection_api.models.con_operation import ConOperation
+    from ideastatica_connection_api.models.idea_parameter import IdeaParameter
+    from ideastatica_connection_api.models.idea_parameter_update import IdeaParameterUpdate
+    from ideastatica_connection_api.models.parameter_update_response import ParameterUpdateResponse
+    from ideastatica_connection_api.models.connection_data import ConnectionData
     from typing import List
 except ImportError:  # pragma: no cover - only available where the SDK is installed
     ConnectionApiServiceAttacher = None
@@ -312,6 +319,43 @@ def _resolve_cross_section_id(api_client: ConnectionApiClient, project_id: Stric
     )
 
 
+def _list_operations(api_client: ConnectionApiClient, project_id: StrictStr, connection_id: int) -> List[ConOperation]:
+    """Lists the connection's manufacturing operations (plates, bolts, welds, cuts, ...)."""
+    return api_client.operation.get_operations(project_id, connection_id)
+
+def _list_operations_properties(api_client: ConnectionApiClient, project_id: StrictStr, connection_id: int) -> ConOperationCommonProperties:
+    """Lists the connection's common operation properties (plates, bolts, welds, cuts, ...)."""
+    return api_client.operation.get_common_operation_properties(project_id, connection_id)
+
+def _get_parameters(
+    api_client: ConnectionApiClient, project_id: StrictStr, connection_id: int, include_hidden: bool = False
+) -> List[IdeaParameter]:
+    """
+    Lists the connection's editable design parameters (e.g. plate
+    thickness, bolt diameter, weld size) — these are what get_operations()
+    itself does NOT expose; each ConOperation is just an id/name/type,
+    while the actual dimensions live here, keyed by parameter `key`
+    (whatever name the template author gave it in the desktop app).
+    """
+    return api_client.parameter.get_parameters(project_id, connection_id, include_hidden)
+
+
+def _set_parameters(
+    api_client: ConnectionApiClient, project_id: StrictStr, connection_id: int, updates: List[Dict[str, str]]
+) -> "ParameterUpdateResponse":
+    """
+    Sets one or more design parameters by key, each to a new expression
+    (e.g. a plain number as a string, or a formula per IDEA StatiCa's
+    parameter expression syntax). Raises if the service reports any
+    failed validations (e.g. a value outside lower_bound/upper_bound).
+    """
+    param_updates = [IdeaParameterUpdate(key=u["key"], expression=str(u["expression"])) for u in updates]
+    response = api_client.parameter.update(project_id, connection_id, param_updates)
+    if response.failed_validations:
+        raise IdeaStaticaJointError(f"Parameter update failed validation: {response.failed_validations}")
+    return response
+
+
 # ── Public API ───────────────────────────────────────────────────────────
 
 def design_joint(data: dict) -> dict:
@@ -332,6 +376,20 @@ def design_joint(data: dict) -> dict:
     the changes only exist for the lifetime of this call (results/exports
     are still written to output_dir regardless).
 
+    OPERATION PARAMETERS (plates/bolts/welds)
+    ------------------------------------------
+    The manufacturing operations themselves (which plates/bolts/welds
+    exist) come from the template and can't be created here — see the
+    module docstring. What CAN be changed is their design parameters
+    (e.g. plate thickness, bolt diameter, weld size), via the optional
+    "operation_parameters" input:
+        "operation_parameters": [{"key": "Plate1.Thickness", "expression": "12"}]
+    Parameter `key` names are whatever the template author named them in
+    the desktop app — list them first with list_operation_parameters()
+    (or run this module's self-test) to find the actual keys for your
+    template. The resolved parameters (after any updates) are returned
+    under "operation_parameters" in the result.
+
     Returns
     -------
     dict
@@ -343,12 +401,14 @@ def design_joint(data: dict) -> dict:
           "iom_connection_data_file": <str>,
           "report_pdf_file": <str>,
           "saved_project_path": <str or None>,
+          "operation_parameters": [{"key":..., "value":..., "unit":..., "description":...}, ...],
         }
     """
     template_path = data["template_project_path"]
     connection_selector = data["connection_selector"]
     member_updates = data.get("member_updates", [])
     load_effect_spec = data.get("load_effect")
+    operation_parameter_updates = data.get("operation_parameters", [])
     output_dir = data["output_dir"]
     save_project_path = data.get("save_project_path")
     os.makedirs(output_dir, exist_ok=True)
@@ -399,6 +459,22 @@ def design_joint(data: dict) -> dict:
                 ),
             )
             print(f"Applied load effect for connection {connection_id}")
+
+        # ---- Operation parameters (plate/bolt/weld dimensions) ----
+        if operation_parameter_updates:
+            print(f"Setting operation parameters for connection {connection_id}")
+            _set_parameters(api_client, project_id, connection_id, operation_parameter_updates)
+            print(f"Set operation parameters for connection {connection_id}")
+        operation_parameters = [
+            {
+                "key": p.key,
+                "value": p.value,
+                "unit": p.unit,
+                "description": p.description,
+            }
+            for p in _get_parameters(api_client, project_id, connection_id)
+        ]
+
         # ---- Persist the modified project (member/load changes) to disk ----
         # Must happen before the client's __exit__ calls close_project().
         if save_project_path:
@@ -408,10 +484,11 @@ def design_joint(data: dict) -> dict:
             print(f"Saved project to {save_project_path}")
 
         print(f"Calculating results for connection {connection_id}")
+        start = time.time()
         # ---- Calculate ----
         results = api_client.calculation.calculate(project_id, [connection_id])
         result = results[0]
-        print(f"Calculation completed for connection {connection_id}")
+        print(f"Calculation completed for connection {connection_id} in {time.time() - start:.2f} seconds")
         print(f"Extracting check summary for connection {connection_id}")
         check_summary = [
             {
@@ -422,36 +499,46 @@ def design_joint(data: dict) -> dict:
             }
             for c in (result.result_summary or [])
         ]
+        summary_file = os.path.join(output_dir, "check_summary.json")
+        with open(summary_file, "w") as f:
+            json.dump(check_summary, f, indent=2)
         print(f"Extracted check summary for connection {connection_id}")
 
         # ---- Extract results ----
         print(f"Extracting raw results for connection {connection_id}")
+        start = time.time()
         raw_results_file = os.path.join(output_dir, "raw_cbfem_results.json")
         raw_json_list = api_client.calculation.get_raw_json_results(project_id, [connection_id])
         with open(raw_results_file, "w") as f:
             f.write(raw_json_list[0])
-        print(f"Extracted raw results for connection {connection_id}")
-
-        print(f"Extracting IOM connection data for connection {connection_id}")
-        iom_connection_data_file = os.path.join(output_dir, "iom_connection_data.json")
-        connection_data = api_client.export.export_iom_connection_data(project_id, connection_id)
-        with open(iom_connection_data_file, "w") as f:
-            json.dump(_to_jsonable(connection_data), f, indent=2)
-        print(f"Extracted IOM connection data for connection {connection_id}")
+        print(f"Extracted raw results for connection {connection_id} in {time.time() - start:.2f} seconds")
 
         print(f"Generating report PDF for connection {connection_id}")
         report_pdf_file = os.path.join(output_dir, "report.pdf")
+        start = time.time()
         api_client.report.save_report_pdf(project_id, connection_id, report_pdf_file)
-        print(f"Generated report PDF for connection {connection_id}")
+        print(f"Generated report PDF for connection {connection_id} in {time.time() - start:.2f} seconds")
+
+        print(f"Extracting IOM connection data for connection {connection_id}")
+        iom_connection_data_file = os.path.join(output_dir, "iom_connection_data.json")
+        start = time.time()
+        connection_data = api_client.export.export_iom_connection_data(project_id, connection_id)
+        print(f"Extracted IOM connection data for connection {connection_id} in {time.time() - start:.2f} seconds")
+        start = time.time()
+        with open(iom_connection_data_file, "w") as f:
+            f.write(json.dumps(connection_data.to_dict(), indent=2))
+        print(f"Extracted and saved IOM connection data for connection {connection_id} in {time.time() - start:.2f} seconds")
 
     return {
         "connection_id": connection_id,
         "passed": result.passed,
         "check_summary": check_summary,
+        "check_summary_file": summary_file,
         "raw_results_file": raw_results_file,
         "iom_connection_data_file": iom_connection_data_file,
         "report_pdf_file": report_pdf_file,
         "saved_project_path": save_project_path,
+        "operation_parameters": operation_parameters,
     }
 
 def to_json_convention_string(obj: Any) -> str:
@@ -534,9 +621,29 @@ def _self_test(template_path: str) -> None:
         except Exception as exc:
             print(f"   FAIL: {exc}\n")
 
-    print("=== self-test complete (no changes were made) ===")
-    print("Use the member names/ids above to build design_joint()'s input JSON.")
+        print("5. Listing operations (plates/bolts/welds/cuts) and their parameters ...")
+        try:
+            for con in connections:
+                operations = _list_operations(api_client, project_id, con.id)
+                print(f"   Connection id={con.id} name={con.name!r} operations:")
+                for op in operations:
+                    print(f"     operation id={op.id} name={op.name!r} type={op.operation_type} active={op.active}")
+                properties = _list_operations_properties(api_client, project_id, con.id)
+                print(f"   Connection id={con.id} common operation properties:")
+                print(f"     {properties.to_dict()}")
+                parameters = _get_parameters(api_client, project_id, con.id, include_hidden=True)
+                print(f"   Connection id={con.id} parameters:")
+                for p in parameters:
+                    print(
+                        f"     key={p.key!r} value={p.value} unit={p.unit} "
+                        f"expression={p.expression!r} description={p.description!r}"
+                    )
+            print()
+        except Exception as exc:
+            print(f"   FAIL: {exc}\n")
 
+    print("=== self-test complete (no changes were made) ===")
+    print("Use the member names/ids and parameter keys above to build design_joint()'s input JSON.")
 
 def _main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)

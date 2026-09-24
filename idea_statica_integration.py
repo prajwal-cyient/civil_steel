@@ -488,7 +488,7 @@ def design_joint(data: dict) -> dict:
         # ---- Calculate ----
         results = api_client.calculation.calculate(project_id, [connection_id])
         result = results[0]
-        print(f"Calculation completed for connection {connection_id} in {time.time() - start:.2f} seconds")
+        print(f"Calculation completed for connection {connection_id} in {time.time() - start:.2f} seconds. Number of results: {len(results)}")
         print(f"Extracting check summary for connection {connection_id}")
         check_summary = [
             {
@@ -511,7 +511,7 @@ def design_joint(data: dict) -> dict:
         raw_json_list = api_client.calculation.get_raw_json_results(project_id, [connection_id])
         with open(raw_results_file, "w") as f:
             f.write(raw_json_list[0])
-        print(f"Extracted raw results for connection {connection_id} in {time.time() - start:.2f} seconds")
+        print(f"Extracted raw results for connection {connection_id} in {time.time() - start:.2f} seconds. Number of raw results: {len(raw_json_list)}")
 
         print(f"Generating report PDF for connection {connection_id}")
         report_pdf_file = os.path.join(output_dir, "report.pdf")

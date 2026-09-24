@@ -22,7 +22,7 @@ dist/
 htmlcov/
 
 # Editor / IDE settings
-.vscode/
+#.vscode/
 .idea/
 *.swp
 *.swo

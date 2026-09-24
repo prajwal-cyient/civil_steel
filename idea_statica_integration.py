@@ -365,6 +365,28 @@ def _find_parameters(
     ]
 
 
+def _quote_expression_if_needed(expression: str) -> str:
+    """
+    IDEA StatiCa's expression parser treats a bare non-numeric token
+    (e.g. bolt.type's "16 8.8") as a formula/identifier and fails to
+    parse it — silently leaving the old `value` in place while still
+    echoing the bad string back as `expression`. String-valued
+    parameters must be quoted (e.g. '"16 8.8"'); numeric expressions
+    must NOT be quoted, so only wrap it if it isn't already quoted and
+    doesn't parse as a plain number.
+    """
+    expression = expression.strip()
+    if not expression:
+        return expression
+    if (expression[0] == expression[-1] == '"') or (expression[0] == expression[-1] == "'"):
+        return expression
+    try:
+        float(expression)
+        return expression
+    except ValueError:
+        return f'"{expression}"'
+
+
 def _set_parameters(
     api_client: ConnectionApiClient, project_id: StrictStr, connection_id: int, updates: List[Dict[str, str]]
 ) -> "ParameterUpdateResponse":
@@ -374,8 +396,12 @@ def _set_parameters(
     parameter expression syntax). Raises if the service reports any
     failed validations (e.g. a value outside lower_bound/upper_bound).
     """
-    param_updates = [IdeaParameterUpdate(key=u["key"], expression=str(u["expression"])) for u in updates]
+    param_updates = [
+        IdeaParameterUpdate(key=u["key"], expression=_quote_expression_if_needed(str(u["expression"])))
+        for u in updates
+    ]
     response = api_client.parameter.update(project_id, connection_id, param_updates)
+    print(f"parameter.update response: {to_json_convention_string(response)}")  # TODO: remove after debugging
     if response.failed_validations:
         raise IdeaStaticaJointError(f"Parameter update failed validation: {response.failed_validations}")
     return response
@@ -668,10 +694,7 @@ def _self_test(template_path: str) -> None:
                 parameters = _get_parameters(api_client, project_id, con.id, include_hidden=True)
                 print(f"   Connection id={con.id} parameters:")
                 for p in parameters:
-                    print(
-                        f"     key={p.key!r} value={p.value!r} unit={p.unit} "
-                        f"expression={p.expression!r} description={p.description!r}"
-                    )
+                    print(f'Parameter: {p.to_json()}')
             print()
         except Exception as exc:
             print(f"   FAIL: {exc}\n")

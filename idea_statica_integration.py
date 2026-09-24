@@ -336,8 +336,33 @@ def _get_parameters(
     itself does NOT expose; each ConOperation is just an id/name/type,
     while the actual dimensions live here, keyed by parameter `key`
     (whatever name the template author gave it in the desktop app).
+
+    PREREQUISITE (per IDEA StatiCa's own docs): a GUI field like the
+    "Thickness" box on a connecting plate is NOT automatically a
+    parameter just because it's editable in the UI. The template author
+    must open Developer Mode in the desktop app and explicitly link that
+    field (a "Model property") to a named Parameter first. Only fields
+    linked this way show up here / can be set via _set_parameters(); a
+    field the template author didn't expose has no API-visible key at
+    all, editable only by hand in the desktop app.
     """
     return api_client.parameter.get_parameters(project_id, connection_id, include_hidden)
+
+
+def _find_parameters(
+    api_client: ConnectionApiClient, project_id: StrictStr, connection_id: int, name_contains: str, include_hidden: bool = True
+) -> List[IdeaParameter]:
+    """
+    Convenience filter over _get_parameters(): matches `name_contains`
+    case-insensitively against each parameter's key OR description —
+    useful for finding the parameter(s) belonging to one operation (e.g.
+    "CPL3") without having to eyeball the full unfiltered list.
+    """
+    needle = name_contains.lower()
+    return [
+        p for p in _get_parameters(api_client, project_id, connection_id, include_hidden)
+        if needle in (p.key or "").lower() or needle in (p.description or "").lower()
+    ]
 
 
 def _set_parameters(
@@ -380,13 +405,18 @@ def design_joint(data: dict) -> dict:
     ------------------------------------------
     The manufacturing operations themselves (which plates/bolts/welds
     exist) come from the template and can't be created here — see the
-    module docstring. What CAN be changed is their design parameters
-    (e.g. plate thickness, bolt diameter, weld size), via the optional
-    "operation_parameters" input:
-        "operation_parameters": [{"key": "Plate1.Thickness", "expression": "12"}]
-    Parameter `key` names are whatever the template author named them in
-    the desktop app — list them first with list_operation_parameters()
-    (or run this module's self-test) to find the actual keys for your
+    module docstring. Their design values (plate thickness, bolt type,
+    weld size, etc. — what you'd edit in the operation's property panel
+    in the desktop app) CAN be changed, but only for fields the template
+    author has explicitly exposed as a Parameter via Developer Mode in
+    the desktop app first (IDEA StatiCa's Parameters feature does not
+    auto-expose every GUI field — see
+    https://developer.ideastatica.com/docs/api/api_parameters_getting_started.html).
+    Once exposed, use the optional "operation_parameters" input:
+        "operation_parameters": [{"key": "CPL3_Thickness", "expression": "12"}]
+    Parameter `key` names are whatever the template author chose when
+    linking the field in Developer Mode — list them first with this
+    module's self-test (step 5) to find the actual keys for your
     template. The resolved parameters (after any updates) are returned
     under "operation_parameters" in the result.
 
@@ -501,6 +531,7 @@ def design_joint(data: dict) -> dict:
             }
             for c in (result.result_summary or [])
         ]
+        check_summary = {"summary": check_summary, "operation_parameters": operation_parameters}
         summary_file = os.path.join(output_dir, "check_summary.json")
         with open(summary_file, "w") as f:
             json.dump(check_summary, f, indent=2)
@@ -539,7 +570,6 @@ def design_joint(data: dict) -> dict:
         "iom_connection_data_file": iom_connection_data_file,
         "report_pdf_file": report_pdf_file,
         "saved_project_path": save_project_path,
-        "operation_parameters": operation_parameters,
     }
 
 def to_json_convention_string(obj: Any) -> str:

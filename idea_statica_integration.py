@@ -502,6 +502,7 @@ def design_joint(data: dict) -> dict:
                 "key": p.key,
                 "value": p.value,
                 "unit": p.unit,
+                "expression": p.expression,
                 "description": p.description,
             }
             for p in _get_parameters(api_client, project_id, connection_id)
@@ -668,7 +669,7 @@ def _self_test(template_path: str) -> None:
                 print(f"   Connection id={con.id} parameters:")
                 for p in parameters:
                     print(
-                        f"     key={p.key!r} value={p.value} unit={p.unit} "
+                        f"     key={p.key!r} value={p.value!r} unit={p.unit} "
                         f"expression={p.expression!r} description={p.description!r}"
                     )
             print()

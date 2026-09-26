@@ -108,6 +108,7 @@ because the API rejects loads placed at the joint-attached end.
 
 import argparse
 import json
+from math import pi
 import os
 import sys
 import time
@@ -489,6 +490,8 @@ def design_joint(data: dict) -> dict:
                 update["cross_section_mprl_name"], update["material_mprl_name"],
             )
             member.cross_section_id = cross_section_id
+            if "gama_pitch" in update:
+                member.position.gama_pitch = float(update["gama_pitch"])*pi/180 # convert degrees to radians
             api_client.member.update_member(project_id, connection_id, member)
         print(f"Updated members for connection {connection_id}")
         print(f"Applying load effect for connection {connection_id}")

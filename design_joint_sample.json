@@ -1,11 +1,18 @@
 {
-  "template_project_path": "Transverese bracing conn detail 2.ideaCon",
+  "template_project_path": "sample_projects/Transverese_bracing_conn_detail.ideaCon",
   "connection_selector": {"name": "290"},
   "member_updates": [
     {
       "member_name": "M401",
       "cross_section_mprl_name": "SHS120/120/6.3(RHS120x120)",
-      "material_mprl_name": "S355"
+      "material_mprl_name": "S355",
+      "gama_pitch": 60
+    },
+    {
+      "member_name": "M388",
+      "cross_section_mprl_name": "SHS120/120/6.3(RHS120x120)",
+      "material_mprl_name": "S355",
+      "gama_pitch": 50
     },
     {
       "member_name": "M363",
@@ -35,10 +42,11 @@
   "output_dir": "output_290",
   "save_project_path": "output_290/290_designed.ideaCon",
   "operation_parameters": [
-    {"key": "EP1.plate.thickness", "expression": "0.05"},
-    {"key": "CPL3.connection.thickness", "expression": "0.008"},
+    {"key": "EP1.plate.thickness", "expression": "0.020"},
+    {"key": "CPL.connection.thickness", "expression": "0.008"},
     {"key": "EP1.bolt.type", "expression": "16 8.8"},
-    {"key": "CPL3.bolt.type", "expression": "24 8.8"}
+    {"key": "GRD1.bolt.type", "expression": "20 8.8"},
+    {"key": "CPL.bolt.type", "expression": "20 8.8"}
 
   ]
 }

@@ -182,6 +182,10 @@ def _create_beam(member: dict) -> Beam:
     if memberType in ['column', "longitudinal_brace", "transverse_brace"]:
         beam.Position.Plane = Position.PlaneEnum.MIDDLE
         beam.Position.Depth = Position.DepthEnum.MIDDLE
+
+    if memberType in ['longitudinal_brace', 'transverse_brace']:
+        beam.Position.Rotation = Position.RotationEnum.BACK
+
     if not beam.Insert():
         raise TeklaMemberError(f"Failed to insert member '{beam.Name}' into the model.")
 
@@ -317,7 +321,7 @@ def add_base_connection(model: Model, column: Beam, connection_number: int, deta
         print("❌ Failed to create base plate")
     model.CommitChanges()
 
-def add_column2beam_connection(model: Model, column: Beam, beam: Beam, connection_number: int, detail_name: str, design_code: str, grid_specs: dict, attribute_file: str = "column_longitudinal_beam"):
+def add_column2beam_connection(model: Model, secondary: Beam, primary: Beam, connection_number: int, detail_name: str, design_code: str, grid_specs: dict, classCode: int, attribute_file: str = "column_longitudinal_beam", upVector: Vector = Vector(1000, 0, 0)):
     """
     Adds a column-to-beam connection to the currently running Tekla Structures model.
 
@@ -325,10 +329,10 @@ def add_column2beam_connection(model: Model, column: Beam, beam: Beam, connectio
     ----------
     model : Model
         The currently running Tekla Structures model.
-    column : Beam
-        The column involved in the connection.
-    beam : Beam
-        The beam involved in the connection.
+    secondary : Beam
+        The secondary beam involved in the connection.
+    primary : Beam
+        The primary beam involved in the connection.
     connection_number : int
         The number to assign to the connection detail.
     detail_name : str
@@ -339,6 +343,8 @@ def add_column2beam_connection(model: Model, column: Beam, beam: Beam, connectio
         The grid specifications, including any necessary offsets.
     attribute_file : str, optional
         The attribute file to load for the connection detail, by default "column2beam_1004"
+    upVector : Vector, optional
+        The connection up vector, defaulting to the standard X direction.
     """
 
     # ✅ Create Connection
@@ -349,11 +355,11 @@ def add_column2beam_connection(model: Model, column: Beam, beam: Beam, connectio
     ConnectionObj.LoadAttributesFromFile(attribute_file)
     #ConnectionObj.SetAttribute("cut_beam", 0)
     #ConnectionObj.SetAttribute("beam_cont", 1)
-    ConnectionObj.Class = 6
+    ConnectionObj.Class = classCode
     ConnectionObj.Code = design_code
 
     # ✅ Direction
-    ConnectionObj.UpVector = Vector(1000, 0, 0)
+    ConnectionObj.UpVector = upVector
 
     # ✅ Positioning
     #ConnectionObj.PositionType = PositionTypeEnum.COLLISION_PLANE
@@ -363,14 +369,14 @@ def add_column2beam_connection(model: Model, column: Beam, beam: Beam, connectio
     #ConnectionObj.AutoDirectionType = AutoDirectionTypeEnum.AUTODIR_BASIC
 
     # ✅ Primary
-    ConnectionObj.set_PrimaryObject(beam)
+    ConnectionObj.set_PrimaryObject(primary)
 
     #ConnectionObj.SetAttribute("stiffener_type", 1)
     #ConnectionObj.SetAttribute("t_stiffener", 10.0)
     #ConnectionObj.SetAttribute("plane_rotation", 1)
     # ✅ ✅ Secondary (ALWAYS ArrayList)
     secondaries = ArrayList()
-    secondaries.Add(column)
+    secondaries.Add(secondary)
     ConnectionObj.set_SecondaryObjects(secondaries)
 
     if ConnectionObj.Insert():
@@ -427,6 +433,7 @@ def send_to_tekla(data: dict) -> dict:
     errors = []
     columns = []
     longitudinal_beams = {}
+    braces = {}
 
     for member in members:
         try:
@@ -438,6 +445,8 @@ def send_to_tekla(data: dict) -> dict:
                 columns.append((member, beam))
             elif member_type == "beam" and member_name.startswith("beam-x-"):
                 longitudinal_beams[member_name] = beam
+            elif member_type in ("longitudinal_brace", "transverse_brace"):
+                braces[member_name] = beam
         except Exception as exc:  # keep going; report this member and move on
             errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
 
@@ -468,6 +477,34 @@ def send_to_tekla(data: dict) -> dict:
                         f"{member_name} longitudinal beam connection",
                         "144",
                         grid,
+                        6
+                    )
+                except Exception as exc:
+                    errors.append({"name": member_name, "error": str(exc)})
+
+        if len(name_parts) >= 3:
+            column_j, column_i = map(int, name_parts[1:3])
+            adjacent_brace_names = (
+                f"bracing-long-{column_j}-{column_i}",
+                f"bracing-long-{column_j}-{column_i + 1}",
+                f"bracing-trans-{column_i}-{column_j}",
+                f"bracing-trans-{column_i}-{column_j + 1}",
+            )
+            for brace_name in adjacent_brace_names:
+                brace = braces.get(brace_name)
+                if brace is None:
+                    continue
+                try:
+                    add_column2beam_connection(
+                        model,
+                        brace,
+                        column,
+                        20,
+                        f"{member_name} {brace_name} connection",
+                        "20",
+                        grid,
+                        1,
+                        "bracing_column",
                     )
                 except Exception as exc:
                     errors.append({"name": member_name, "error": str(exc)})

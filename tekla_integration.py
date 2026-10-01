@@ -44,7 +44,7 @@ for dll in dlls:
     clr.AddReference(os.path.join(tekla_bin_path, dll))
 clr.AddReference("System")
 
-from Tekla.Structures.Model import Detail, Model, Beam, Grid, Position  # noqa: E402
+from Tekla.Structures.Model import Detail, Model, Beam, Grid, Position, Connection  # noqa: E402
 from Tekla.Structures.Model import ModelObjectEnumerator  # noqa: F401,E402
 from Tekla.Structures.Geometry3d import Point, Vector  # noqa: E402
 from Tekla.Structures.Catalogs import LibraryProfileItem, ProfileItemParameter  # noqa: F401,E402
@@ -52,7 +52,7 @@ from Tekla.Structures.Model import ModelObject
 from Tekla.Structures.Model.UI import Picker  # noqa: E402
 from Tekla.Structures.Model.UI import ModelObjectSelector
 from Tekla.Structures import AutoDirectionTypeEnum, DetailTypeEnum, DetailTypeEnum, PositionTypeEnum
-from System.Collections import Hashtable
+from System.Collections import Hashtable, ArrayList
 
 # ── Errors ────────────────────────────────────────────────────────────────
 
@@ -274,7 +274,7 @@ def generate_y_axis_labels(n_trans_bays: int) -> list:
     """
     return [_index_to_letters(i) for i in range(1, n_trans_bays + 2)]
 
-def add_base_connection(model: Model, column: Beam, connection_number: int, detail_name: str, design_code: str, attribute_file: str = "baseplate_1004"):
+def add_base_connection(model: Model, column: Beam, connection_number: int, detail_name: str, design_code: str, grid_specs: dict, attribute_file: str = "baseplate_1004"):
     """
     Adds a base connection (base plate) to the given column in the currently running Tekla Structures model.
 
@@ -288,6 +288,8 @@ def add_base_connection(model: Model, column: Beam, connection_number: int, deta
         The name to assign to the base connection detail.
     design_code : str
         The design code to assign to the base connection detail.
+    grid_specs : dict
+        The grid specifications, including base plate offset above column base.
     attribute_file : str, optional
         The attribute file to load for the base connection detail, by default "baseplate_1004"
     """
@@ -305,13 +307,77 @@ def add_base_connection(model: Model, column: Beam, connection_number: int, deta
     detailObj.Code = design_code
     detailObj.set_PrimaryObject(column)
     base_point = column.StartPoint
-    base_point = base_point + Vector(0, 0, 30)  # offset the base point slightly above the column base
+    base_point = base_point + Vector(0, 0, grid_specs.get('base_plate_offset_above_column_base_mm', 30))  # offset the base point slightly above the column base
     detailObj.SetReferencePoint(base_point)
 
     if detailObj.Insert():
-        print("✅ Base plate created")
+        #print("✅ Base plate created")
+        pass
     else:
         print("❌ Failed to create base plate")
+    model.CommitChanges()
+
+def add_column2beam_connection(model: Model, column: Beam, beam: Beam, connection_number: int, detail_name: str, design_code: str, grid_specs: dict, attribute_file: str = "column_longitudinal_beam"):
+    """
+    Adds a column-to-beam connection to the currently running Tekla Structures model.
+
+    Parameters
+    ----------
+    model : Model
+        The currently running Tekla Structures model.
+    column : Beam
+        The column involved in the connection.
+    beam : Beam
+        The beam involved in the connection.
+    connection_number : int
+        The number to assign to the connection detail.
+    detail_name : str
+        The name to assign to the connection detail.
+    design_code : str
+        The design code to assign to the connection detail.
+    grid_specs : dict
+        The grid specifications, including any necessary offsets.
+    attribute_file : str, optional
+        The attribute file to load for the connection detail, by default "column2beam_1004"
+    """
+
+    # ✅ Create Connection
+    ConnectionObj = Connection()
+    ConnectionObj.Name = detail_name
+    ConnectionObj.Number = connection_number
+    # ✅ Load attributes
+    ConnectionObj.LoadAttributesFromFile(attribute_file)
+    #ConnectionObj.SetAttribute("cut_beam", 0)
+    #ConnectionObj.SetAttribute("beam_cont", 1)
+    ConnectionObj.Class = 6
+    ConnectionObj.Code = design_code
+
+    # ✅ Direction
+    ConnectionObj.UpVector = Vector(1000, 0, 0)
+
+    # ✅ Positioning
+    #ConnectionObj.PositionType = PositionTypeEnum.COLLISION_PLANE
+
+    # ✅ Auto direction
+    #ConnectionObj.AutoDirectionType = AutoDirectionTypeEnum.AUTODIR_FROM_ATTRIBUTE_FILE
+    #ConnectionObj.AutoDirectionType = AutoDirectionTypeEnum.AUTODIR_BASIC
+
+    # ✅ Primary
+    ConnectionObj.set_PrimaryObject(beam)
+
+    #ConnectionObj.SetAttribute("stiffener_type", 1)
+    #ConnectionObj.SetAttribute("t_stiffener", 10.0)
+    #ConnectionObj.SetAttribute("plane_rotation", 1)
+    # ✅ ✅ Secondary (ALWAYS ArrayList)
+    secondaries = ArrayList()
+    secondaries.Add(column)
+    ConnectionObj.set_SecondaryObjects(secondaries)
+
+    if ConnectionObj.Insert():
+        #print("✅ Column-to-beam connection created")
+        pass
+    else:
+        print("❌ Failed to create column-to-beam connection")
     model.CommitChanges()
 
 def send_to_tekla(data: dict) -> dict:
@@ -360,13 +426,18 @@ def send_to_tekla(data: dict) -> dict:
     created = 0
     errors = []
     columns = []
+    longitudinal_beams = {}
 
     for member in members:
         try:
             beam = _create_beam(member)
             created += 1
-            if member.get("type", "").lower() == "column":
+            member_type = member.get("type", "").lower()
+            member_name = member.get("name", "")
+            if member_type == "column":
                 columns.append((member, beam))
+            elif member_type == "beam" and member_name.startswith("beam-x-"):
+                longitudinal_beams[member_name] = beam
         except Exception as exc:  # keep going; report this member and move on
             errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
 
@@ -378,9 +449,28 @@ def send_to_tekla(data: dict) -> dict:
                 1004,
                 f"{member.get('name', 'Column')} base plate",
                 "1004",
+                grid,
             )
         except Exception as exc:
             errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
+
+        member_name = member.get("name", "")
+        name_parts = member_name.split("-")
+        if len(name_parts) >= 2:
+            longitudinal_beam = longitudinal_beams.get(f"beam-x-{name_parts[1]}")
+            if longitudinal_beam is not None:
+                try:
+                    add_column2beam_connection(
+                        model,
+                        column,
+                        longitudinal_beam,
+                        144,
+                        f"{member_name} longitudinal beam connection",
+                        "144",
+                        grid,
+                    )
+                except Exception as exc:
+                    errors.append({"name": member_name, "error": str(exc)})
 
     model.CommitChanges()
 

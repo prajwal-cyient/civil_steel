@@ -9,6 +9,7 @@
 		"longitudinal_brace_bays": [{"bay": 6, "mirror": false}, {"bay": 7, "mirror": true}, {"bay": 16, "mirror": false}, {"bay": 17, "mirror": true}],
 		"transverse_brace_bays": [{"bay": 4, "mirror": true}],
 		"vertical_base_eccentricity_mm": 38,
+		"base_plate_offset_above_column_base_mm": 30,
 		"gusset_plate_thickness_mm": 15,
 		"embedded_plate_thickness_mm": 20,
 		"bracing_distance_from_column_mm": 20,

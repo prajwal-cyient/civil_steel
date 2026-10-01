@@ -44,13 +44,14 @@ for dll in dlls:
     clr.AddReference(os.path.join(tekla_bin_path, dll))
 clr.AddReference("System")
 
-from Tekla.Structures.Model import Model, Beam, Grid, Position  # noqa: E402
+from Tekla.Structures.Model import Detail, Model, Beam, Grid, Position  # noqa: E402
 from Tekla.Structures.Model import ModelObjectEnumerator  # noqa: F401,E402
-from Tekla.Structures.Geometry3d import Point  # noqa: E402
+from Tekla.Structures.Geometry3d import Point, Vector  # noqa: E402
 from Tekla.Structures.Catalogs import LibraryProfileItem, ProfileItemParameter  # noqa: F401,E402
 from Tekla.Structures.Model import ModelObject
 from Tekla.Structures.Model.UI import Picker  # noqa: E402
 from Tekla.Structures.Model.UI import ModelObjectSelector
+from Tekla.Structures import AutoDirectionTypeEnum, DetailTypeEnum, DetailTypeEnum, PositionTypeEnum
 from System.Collections import Hashtable
 
 # ── Errors ────────────────────────────────────────────────────────────────
@@ -273,6 +274,46 @@ def generate_y_axis_labels(n_trans_bays: int) -> list:
     """
     return [_index_to_letters(i) for i in range(1, n_trans_bays + 2)]
 
+def add_base_connection(model: Model, column: Beam, connection_number: int, detail_name: str, design_code: str, attribute_file: str = "baseplate_1004"):
+    """
+    Adds a base connection (base plate) to the given column in the currently running Tekla Structures model.
+
+    Parameters
+    ----------
+    column : Beam
+        The column to which the base connection will be added.
+    connection_number : int
+        The number to assign to the base connection detail.
+    detail_name : str
+        The name to assign to the base connection detail.
+    design_code : str
+        The design code to assign to the base connection detail.
+    attribute_file : str, optional
+        The attribute file to load for the base connection detail, by default "baseplate_1004"
+    """
+
+    detailObj = Detail()
+    detailObj.Name = detail_name
+    detailObj.Number = connection_number
+    detailObj.LoadAttributesFromFile(attribute_file)
+    detailObj.PositionType = PositionTypeEnum.MIDDLE_PLANE
+    detailObj.AutoDirectionType = AutoDirectionTypeEnum.AUTODIR_DETAIL
+    detailObj.UpVector = Vector(1000, 0, 0) # OR 1000, this does not seem to matter for base plate
+    detailObj.DetailType = DetailTypeEnum.END
+    detailObj.ExactPositioning = False
+    detailObj.Class = 5
+    detailObj.Code = design_code
+    detailObj.set_PrimaryObject(column)
+    base_point = column.StartPoint
+    base_point = base_point + Vector(0, 0, 30)  # offset the base point slightly above the column base
+    detailObj.SetReferencePoint(base_point)
+
+    if detailObj.Insert():
+        print("✅ Base plate created")
+    else:
+        print("❌ Failed to create base plate")
+    model.CommitChanges()
+
 def send_to_tekla(data: dict) -> dict:
     """
     Send every member in `data["members"]` to the currently running Tekla
@@ -318,12 +359,27 @@ def send_to_tekla(data: dict) -> dict:
 
     created = 0
     errors = []
+    columns = []
 
     for member in members:
         try:
-            _create_beam(member)
+            beam = _create_beam(member)
             created += 1
+            if member.get("type", "").lower() == "column":
+                columns.append((member, beam))
         except Exception as exc:  # keep going; report this member and move on
+            errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
+
+    for member, column in columns:
+        try:
+            add_base_connection(
+                model,
+                column,
+                1004,
+                f"{member.get('name', 'Column')} base plate",
+                "1004",
+            )
+        except Exception as exc:
             errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
 
     model.CommitChanges()

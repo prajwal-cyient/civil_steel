@@ -633,6 +633,7 @@ def create_app():
         longitudinal_brace_bays: List[BraceBay] = Field(default_factory=list)
         transverse_brace_bays: List[BraceBay] = Field(default_factory=list)
         vertical_base_eccentricity_mm: float = 0
+        base_plate_offset_above_column_base_mm: float = 0
         gusset_plate_thickness_mm: float = 0
         embedded_plate_thickness_mm: float = 0
         bracing_distance_from_column_mm: float = 0

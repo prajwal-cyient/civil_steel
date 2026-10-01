@@ -413,6 +413,7 @@
       <fieldset>
         <legend>Plates &amp; Eccentricity</legend>
         <div class="field-row"><label for="vertical_base_eccentricity_mm">Vertical base eccentricity (mm)</label><input type="number" id="vertical_base_eccentricity_mm" value="38" step="any"></div>
+        <div class="field-row"><label for="base_plate_offset_above_column_base_mm">Base plate offset above column base (mm)</label><input type="number" id="base_plate_offset_above_column_base_mm" value="30" step="any"></div>
         <div class="field-row"><label for="gusset_plate_thickness_mm">Gusset plate thickness (mm)</label><input type="number" id="gusset_plate_thickness_mm" value="15" step="any"></div>
         <div class="field-row"><label for="embedded_plate_thickness_mm">Embedded plate thickness (mm)</label><input type="number" id="embedded_plate_thickness_mm" value="10" step="any"></div>
         <div class="field-row"><label for="bracing_distance_from_column_mm">Bracing distance from column (mm)</label><input type="number" id="bracing_distance_from_column_mm" value="20" step="any"></div>
@@ -666,6 +667,7 @@ function buildPayload() {
       longitudinal_brace_bays: readBraceList('long-brace-list'),
       transverse_brace_bays: readBraceList('trans-brace-list'),
       vertical_base_eccentricity_mm: num('vertical_base_eccentricity_mm'),
+      base_plate_offset_above_column_base_mm: num('base_plate_offset_above_column_base_mm'),
       gusset_plate_thickness_mm: num('gusset_plate_thickness_mm'),
       embedded_plate_thickness_mm: num('embedded_plate_thickness_mm'),
       bracing_distance_from_column_mm: num('bracing_distance_from_column_mm'),

@@ -185,6 +185,19 @@ def _create_beam(member: dict) -> Beam:
 
     if memberType in ['longitudinal_brace', 'transverse_brace']:
         beam.Position.Rotation = Position.RotationEnum.BACK
+    '''
+    #TODO: Consider handling rotation for different member types more comprehensively.
+    if memberType in ['column']:
+        beam.Position.Rotation = Position.RotationEnum.BELOW
+    if memberType in ['beam'] and member.get("name").startswith("beam-x-"):
+        beam.Position.Plane = Position.PlaneEnum.MIDDLE
+        beam.Position.Rotation = Position.RotationEnum.TOP
+        beam.Position.Depth = Position.DepthEnum.MIDDLE
+    if memberType in ['beam'] and member.get("name").startswith("beam-y-"):
+        beam.Position.Plane = Position.PlaneEnum.MIDDLE
+        beam.Position.Rotation = Position.RotationEnum.TOP
+        beam.Position.Depth = Position.DepthEnum.FRONT
+    '''
 
     if not beam.Insert():
         raise TeklaMemberError(f"Failed to insert member '{beam.Name}' into the model.")
@@ -319,7 +332,7 @@ def add_base_connection(model: Model, column: Beam, connection_number: int, deta
         pass
     else:
         print("❌ Failed to create base plate")
-    model.CommitChanges()
+    #model.CommitChanges()
 
 def add_column2beam_connection(model: Model, secondary: Beam, primary: Beam, connection_number: int, detail_name: str, design_code: str, grid_specs: dict, classCode: int, attribute_file: str = "column_longitudinal_beam", upVector: Vector = Vector(1000, 0, 0)):
     """
@@ -348,43 +361,43 @@ def add_column2beam_connection(model: Model, secondary: Beam, primary: Beam, con
     """
 
     # ✅ Create Connection
-    ConnectionObj = Connection()
-    ConnectionObj.Name = detail_name
-    ConnectionObj.Number = connection_number
+    connectionObj = Connection()
+    connectionObj.Name = detail_name
+    connectionObj.Number = connection_number
     # ✅ Load attributes
-    ConnectionObj.LoadAttributesFromFile(attribute_file)
-    #ConnectionObj.SetAttribute("cut_beam", 0)
-    #ConnectionObj.SetAttribute("beam_cont", 1)
-    ConnectionObj.Class = classCode
-    ConnectionObj.Code = design_code
+    connectionObj.LoadAttributesFromFile(attribute_file)
+    #connectionObj.SetAttribute("cut_beam", 0)
+    #connectionObj.SetAttribute("beam_cont", 1)
+    connectionObj.Class = classCode
+    connectionObj.Code = design_code
 
     # ✅ Direction
-    ConnectionObj.UpVector = upVector
+    connectionObj.UpVector = upVector
 
     # ✅ Positioning
-    #ConnectionObj.PositionType = PositionTypeEnum.COLLISION_PLANE
+    #connectionObj.PositionType = PositionTypeEnum.COLLISION_PLANE
 
     # ✅ Auto direction
-    #ConnectionObj.AutoDirectionType = AutoDirectionTypeEnum.AUTODIR_FROM_ATTRIBUTE_FILE
-    #ConnectionObj.AutoDirectionType = AutoDirectionTypeEnum.AUTODIR_BASIC
+    #connectionObj.AutoDirectionType = AutoDirectionTypeEnum.AUTODIR_FROM_ATTRIBUTE_FILE
+    #connectionObj.AutoDirectionType = AutoDirectionTypeEnum.AUTODIR_BASIC
 
     # ✅ Primary
-    ConnectionObj.set_PrimaryObject(primary)
+    connectionObj.set_PrimaryObject(primary)
 
-    #ConnectionObj.SetAttribute("stiffener_type", 1)
-    #ConnectionObj.SetAttribute("t_stiffener", 10.0)
-    #ConnectionObj.SetAttribute("plane_rotation", 1)
+    #connectionObj.SetAttribute("stiffener_type", 1)
+    #connectionObj.SetAttribute("t_stiffener", 10.0)
+    #connectionObj.SetAttribute("plane_rotation", 1)
     # ✅ ✅ Secondary (ALWAYS ArrayList)
     secondaries = ArrayList()
     secondaries.Add(secondary)
-    ConnectionObj.set_SecondaryObjects(secondaries)
+    connectionObj.set_SecondaryObjects(secondaries)
 
-    if ConnectionObj.Insert():
+    if connectionObj.Insert():
         #print("✅ Column-to-beam connection created")
         pass
     else:
         print("❌ Failed to create column-to-beam connection")
-    model.CommitChanges()
+    #model.CommitChanges()
 
 def send_to_tekla(data: dict) -> dict:
     """
@@ -433,6 +446,7 @@ def send_to_tekla(data: dict) -> dict:
     errors = []
     columns = []
     longitudinal_beams = {}
+    transverse_beams = {}
     braces = {}
 
     for member in members:
@@ -445,6 +459,8 @@ def send_to_tekla(data: dict) -> dict:
                 columns.append((member, beam))
             elif member_type == "beam" and member_name.startswith("beam-x-"):
                 longitudinal_beams[member_name] = beam
+            elif member_type == "beam" and member_name.startswith("beam-y-"):
+                transverse_beams[member_name] = beam
             elif member_type in ("longitudinal_brace", "transverse_brace"):
                 braces[member_name] = beam
         except Exception as exc:  # keep going; report this member and move on
@@ -508,6 +524,32 @@ def send_to_tekla(data: dict) -> dict:
                     )
                 except Exception as exc:
                     errors.append({"name": member_name, "error": str(exc)})
+
+    for longitudinal_index in range(grid["n_long_bays"] + 1):
+        transverse_beam = transverse_beams.get(f"beam-y-{longitudinal_index}")
+        if transverse_beam is None:
+            continue
+        for transverse_index in range(grid["n_trans_bays"] + 1):
+            longitudinal_beam = longitudinal_beams.get(f"beam-x-{transverse_index}")
+            if longitudinal_beam is None:
+                continue
+            try:
+                add_column2beam_connection(
+                    model,
+                    transverse_beam,
+                    longitudinal_beam,
+                    30,
+                    f"beam-x-{transverse_index} beam-y-{longitudinal_index} connection",
+                    "30",
+                    grid,
+                    1,
+                    "longitudinal_beam_transverse_beam",
+                )
+            except Exception as exc:
+                errors.append({
+                    "name": f"beam-x-{transverse_index} beam-y-{longitudinal_index}",
+                    "error": str(exc),
+                })
 
     model.CommitChanges()
 

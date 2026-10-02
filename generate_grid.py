@@ -410,8 +410,8 @@ def generate_members(cfg):
     # Tekla: one continuous beam per transverse grid line, full length,
     # with p2 extended past the last column by the column width.
     for j in range(n_trans + 1):
-        p1 = point(0, j, long_beam_z)
-        p2 = point(n_long, j, long_beam_z)
+        p1 = point(0, j, long_beam_z) #  col_top_z #TODO: If tekla_integration has different handling for beam heights, adjust accordingly.
+        p2 = point(n_long, j, long_beam_z) #  col_top_z
         p1[0] -= longitudinal_beam_extra_mm + column_width / 2
         p2[0] += longitudinal_beam_extra_mm + column_width / 2
         beams_tekla.append({
@@ -441,8 +441,8 @@ def generate_members(cfg):
     # ---- Transverse (y-direction) beams, sitting on top of the longitudinal beams ----
     # Tekla: one continuous beam per longitudinal grid line, full length.
     for i in range(n_long + 1):
-        p1 = point(i, 0, trans_beam_z)
-        p2 = point(i, n_trans, trans_beam_z)
+        p1 = point(i, 0, trans_beam_z) #  col_top_z + beam_height/2 #TODO: If tekla_integration has different handling for beam heights, adjust accordingly.
+        p2 = point(i, n_trans, trans_beam_z) #  col_top_z + beam_height/2
         #p1[0] += column_section_height / 2
         #p2[0] += column_section_height / 2
         p1[1] -= beam_width / 2

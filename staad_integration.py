@@ -846,7 +846,8 @@ async def send_to_staad(data: dict) -> dict:
     top_nodes = list(set(node_cache.values()) - set(support_nodes))
     longitudinal_beams = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "beam" and m.get("name", "").startswith("beam-x"), members)))
     transverse_beams = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "beam" and m.get("name", "").startswith("beam-y"), members)))
-    columns = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "column", members)))
+    columnObjs = list(filter(lambda m: m.get("type", "").lower() == "column", members))
+    columns = list(map(lambda m: m["id"], columnObjs))
     longitudinal_bracings = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "longitudinal_brace", members)))
     transverse_bracings = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "transverse_brace", members)))
     print(f'Longitudinal beams: {len(longitudinal_beams)}, Transverse beams: {len(transverse_beams)}, Columns: {len(columns)}, Longitudinal bracings: {len(longitudinal_bracings)}, Transverse bracings: {len(transverse_bracings)}')
@@ -1016,7 +1017,7 @@ async def send_to_staad(data: dict) -> dict:
     isOpenStructure = 1 if isOpenStructure else 0
     windDirection = WIND_DIRECTION_MAP["Global X"]
     dyMin = 0
-    dyMax = grid_spec.get("col_height_mm", 3500)/1000.0
+    dyMax = (columnObjs[0]["p2"][1] - columnObjs[0]["p1"][1])/1000.0
     dzMin = 0
     dzMax = grid_spec.get("bay_long_mm", 3500)*grid_spec.get("n_long_bays", 1)/2000.0
     dxMin = 0
@@ -1040,7 +1041,7 @@ async def send_to_staad(data: dict) -> dict:
     isOpenStructure = 1 if isOpenStructure else 0
     windDirection = WIND_DIRECTION_MAP["Global X"]
     dyMin = 0
-    dyMax = grid_spec.get("col_height_mm", 3500)/1000.0
+    dyMax = (columnObjs[0]["p2"][1] - columnObjs[0]["p1"][1])/1000.0
     dzMin = grid_spec.get("bay_long_mm", 3500)*grid_spec.get("n_long_bays", 1)/2000.0
     dzMax = grid_spec.get("bay_long_mm", 3500)*grid_spec.get("n_long_bays", 1)/1000.0
     dxMin = grid_spec.get("bay_long_mm", 3500)*grid_spec.get("n_long_bays", 1)/2000.0

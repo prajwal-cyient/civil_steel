@@ -88,43 +88,6 @@ fields build):
   "framing_system_z": "all_other_self_supported_structures"
 }
 
-*** NOT YET IMPLEMENTED: _apply_load_configuration() does not compute
-actual loads from these parameters. Doing so correctly requires
-implementing the specific design code's formulas (the field names here
-look like they follow UBC-97 — "seismic_zone": "2A", "soil_type": "SC",
-"seismic_source_type" are UBC-97 terms — but that's inferred, not
-confirmed) for: distributing self-weight + connection weight addition
-across the supports, live load, wind pressure (via wind_speed_mph /
-exposure category / Cq / Cpe), seismic force (via zone / soil type /
-source type / distance / occupancy / framing system), and thermal
-expansion effects (Tp / Tm / reference temperature). Given a
-structural load calculation has real safety consequences if wrong,
-this should be implemented from your domain expert's exact
-code/version/formulas rather than guessed at. Right now, passing this
-schema in returns a clear "not implemented" error (via
-send_to_staad()'s load_cases_failed / load_errors) rather than silently
-applying nothing while looking like it succeeded.
-
-Once that calculation exists (wherever you decide to implement it — in
-this module, or upstream before it gets here), it can emit the older,
-lower-level schema below, which _apply_load_configuration() does know
-how to walk and push into OpenSTAAD's Load interface:
-
-{
-  "load_cases": [
-    {
-      "title": "Dead Load",
-      "self_weight": {"factor": 1.0, "direction": "Y"},
-      "nodal_loads": [
-        {"point": [0, 0, 5000], "fx": 0, "fy": -10000, "fz": 0}
-      ],
-      "member_uniform_loads": [
-        {"member_names": ["beam-x-0-0"], "direction": "GY", "magnitude": -5.0}
-      ]
-    }
-  ]
-}
-
 All keys are optional except "title". "member_names" refers to the
 "name" field of entries in "members_split_beams".
 """
@@ -640,11 +603,12 @@ def _assign_property(property: OSProperty, beam_no: int, member: dict, property_
 # ── Internals: loads (best-effort, minimal schema) ─────────────────────
 
 def _apply_load_configuration(
-    geometry, load,
+    load: OSLoad,
     node_cache: Dict[tuple, int],
-    node_ids: "_SequentialIdAllocator",
-    beam_by_name: Dict[str, int],
     load_configuration: Dict[str, Any],
+    members: List[Dict[str, Any]],
+    support_nodes: List[int],
+    grid_spec: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
     Applies load_configuration to the model, if it's in a shape this
@@ -667,182 +631,13 @@ def _apply_load_configuration(
     the older ad-hoc schema below), this returns an explicit error
     rather than silently applying nothing.
 
-    The older "load_cases" schema (self_weight / nodal_loads /
-    member_uniform_loads) is still supported as a lower-level mechanism,
-    for whenever the actual design-code calculation gets implemented and
-    needs to emit real loads through this function.
-
     Returns
     -------
     dict
         {"applied": <int>, "errors": [{"title": ..., "error": ...}, ...]}
     """
-    if "load_cases" not in load_configuration:
-        return {
-            "applied": 0,
-            "errors": [{
-                "title": "<all>",
-                "error": (
-                    "load_configuration contains radiator/wind/seismic design "
-                    "parameters, not ready-made STAAD load cases. Converting "
-                    "them into actual loads (self-weight distribution, live "
-                    "load, wind pressure, seismic force) per the applicable "
-                    "design code is not yet implemented — no loads were "
-                    "applied. See _apply_load_configuration()'s docstring."
-                ),
-            }],
-        }
-
     errors = []
-    cases = load_configuration.get("load_cases", [])
 
-    for case in cases:
-        title = case.get("title", "<untitled>")
-        try:
-            load.CreatePrimaryLoad(title)
-
-            self_weight = case.get("self_weight")
-            if self_weight:
-                factor = self_weight.get("factor", 1.0)
-                direction = self_weight.get("direction", "Y")
-                load.AddSelfWeightInGlobalDirection(direction, factor)
-
-            for nodal in case.get("nodal_loads", []):
-                node_no = _get_or_create_node(geometry, node_cache, node_ids, nodal["point"])
-                load.AddNodalLoad(
-                    node_no,
-                    nodal.get("fx", 0), nodal.get("fy", 0), nodal.get("fz", 0),
-                    nodal.get("mx", 0), nodal.get("my", 0), nodal.get("mz", 0),
-                )
-
-            for uniform in case.get("member_uniform_loads", []):
-                direction = uniform.get("direction", "GY")
-                magnitude = uniform.get("magnitude", 0)
-                for member_name in uniform.get("member_names", []):
-                    beam_no = beam_by_name.get(member_name)
-                    if beam_no is None:
-                        raise StaadMemberError(
-                            f"Unknown member name '{member_name}' in member_uniform_loads."
-                        )
-                    load.AddMemberUniformForce(beam_no, direction, magnitude)
-
-        except Exception as exc:
-            errors.append({"title": title, "error": str(exc)})
-
-    return {"applied": len(cases) - len(errors), "errors": errors}
-
-
-# ── Public API ───────────────────────────────────────────────────────────
-
-async def send_to_staad(data: dict) -> dict:
-    """
-    Send every member in data["members_split_beams"] to the currently
-    running STAAD.Pro model, then apply data.get("load_configuration")
-    if present.
-
-    Parameters
-    ----------
-    data : dict
-        Expected to contain "members_split_beams" (a list of member
-        dicts, each with p1, p2, profile, material, type, name — the
-        same shape generate_grid.py produces) and optionally
-        "load_configuration" (see the module docstring's LOAD
-        CONFIGURATION SCHEMA).
-
-    Returns
-    -------
-    dict
-        {
-          "created": <int>,               # members with geometry (node+beam) successfully created
-          "failed": <int>,                 # members whose geometry creation itself failed
-          "errors": [{"name": ..., "error": ...}, ...],
-          "property_assignment_failed": <int>,  # created members whose profile/material assignment failed
-          "property_errors": [{"name": ..., "error": ...}, ...],
-          "load_cases_applied": <int>,     # load cases that succeeded
-          "load_cases_failed": <int>,
-          "load_errors": [{"title": ..., "error": ...}, ...],
-        }
-
-    Note: geometry creation and property/material assignment are
-    tracked separately on purpose. A member whose beam+nodes were
-    created successfully but whose profile/material assignment then
-    failed still counts toward "created" (the geometry is genuinely
-    there) — it's only flagged in "property_errors", not "errors". Prior
-    to this, a property-assignment failure incorrectly marked the whole
-    member as failed even when its geometry had already landed.
-    """
-    members = data.get("members_split_beams", [])
-    load_configuration = data.get("load_configuration")
-    grid_spec = data.get("grid")
-
-    openstaad = _get_openstaad()
-    openstaad.SetInputUnitForLength(length_unit_meter)
-    openstaad.SetInputUnitForForce(force_unit_kilonewton)
-    geometry = openstaad.Geometry
-    property = openstaad.Property
-    load = openstaad.Load
-    support = openstaad.Support
-    command = openstaad.Command
-
-    end_my_mz_release_spec_id = property.CreateMemberReleaseSpec(1, [0, 0, 0, 0, 1, 1], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    truss_spec_id = property.CreateMemberTrussSpec()
-    #property.AssignMemberSpecToBeam([900001, 900002, 900003], end_my_mz_release_spec_id)
-    #property.AssignMemberSpecToBeam([900148, 900154, 900160, 900166], truss_spec_id)
-
-    node_cache: Dict[tuple, int] = {}
-    node_ids = _SequentialIdAllocator(STARTING_NODE_ID)
-    beam_ids = _SequentialIdAllocator(STARTING_BEAM_ID)
-    beam_by_name: Dict[str, int] = {}
-    support_nodes: Set[int] = set()
-    member_ids_by_type: Dict[str, List[int]] = {}
-
-    created = 0
-    beam_no = 0
-    errors = []
-    property_errors = []
-    property_id_cache: Dict[str, int] = {}
-    country = load_configuration.get("country", "EUROPE")
-
-    fixed_support_id = support.CreateSupportFixed()
-    for member in members:
-        try:
-            beam_no, n1, n2 = _create_beam(geometry, node_cache, node_ids, beam_ids, member)
-            beam_by_name[member.get("name", "")] = beam_no
-            member["id"] = beam_no
-            created += 1
-        except Exception as exc:  # keep going; report this member and move on
-            errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
-            continue  # nothing to assign a property to if geometry creation failed
-
-        try:
-            #TODO: Remove this if False during and testing and when done
-            if True:
-                _assign_property(property, beam_no, member, property_id_cache, country)
-        except Exception as exc:
-            property_errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
-
-        memberType = member.get("type", "unknown").lower()
-        if memberType not in member_ids_by_type:
-            member_ids_by_type[memberType] = []
-        member_ids_by_type[memberType].append(beam_no)
-
-        if memberType == "column":
-            property.AssignMemberSpecToBeam([beam_no], end_my_mz_release_spec_id)
-            if n1 not in support_nodes:
-                support._support.AssignSupportToNode(int(n1), fixed_support_id)
-                support_nodes.add(n1)
-        elif memberType in ["longitudinal_brace", "transverse_brace"]:
-            property.AssignMemberSpecToBeam([beam_no], truss_spec_id)
-
-    load_applied = 0
-    load_errors: List[Dict[str, str]] = []
-    #TODO: Load config send fails. Remove False when testing and when done
-    if False and load_configuration:
-        load_result = _apply_load_configuration(
-            geometry, load, node_cache, node_ids, beam_by_name, load_configuration
-        )
-        load_applied = load_result["applied"]
-        load_errors = load_result["errors"]
     top_nodes = list(set(node_cache.values()) - set(support_nodes))
     longitudinal_beams = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "beam" and m.get("name", "").startswith("beam-x"), members)))
     transverse_beams = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "beam" and m.get("name", "").startswith("beam-y"), members)))
@@ -1014,10 +809,12 @@ async def send_to_staad(data: dict) -> dict:
     windLoadFraction_nx = load_configuration.get("wind_load_fraction_nx", 0.25)
     windLoadFraction_nz = load_configuration.get("wind_load_fraction_nz", 0.25)
     isOpenStructure = load_configuration.get("is_open_structure", True)
+    total_structure_height = grid_spec.get("total_structure_height", 0)
+    column_height = columnObjs[0]["p2"][1] - columnObjs[0]["p1"][1]
     isOpenStructure = 1 if isOpenStructure else 0
     windDirection = WIND_DIRECTION_MAP["Global X"]
     dyMin = 0
-    dyMax = (columnObjs[0]["p2"][1] - columnObjs[0]["p1"][1])/1000.0
+    dyMax = max(total_structure_height, column_height)/1000.0
     dzMin = 0
     dzMax = grid_spec.get("bay_long_mm", 3500)*grid_spec.get("n_long_bays", 1)/2000.0
     dxMin = 0
@@ -1041,7 +838,7 @@ async def send_to_staad(data: dict) -> dict:
     isOpenStructure = 1 if isOpenStructure else 0
     windDirection = WIND_DIRECTION_MAP["Global X"]
     dyMin = 0
-    dyMax = (columnObjs[0]["p2"][1] - columnObjs[0]["p1"][1])/1000.0
+    dyMax = max(total_structure_height, column_height)/1000.0
     dzMin = grid_spec.get("bay_long_mm", 3500)*grid_spec.get("n_long_bays", 1)/2000.0
     dzMax = grid_spec.get("bay_long_mm", 3500)*grid_spec.get("n_long_bays", 1)/1000.0
     dxMin = grid_spec.get("bay_long_mm", 3500)*grid_spec.get("n_long_bays", 1)/2000.0
@@ -1087,6 +884,118 @@ async def send_to_staad(data: dict) -> dict:
     load.AddLoadAndFactorToCombination(combo4, seismic_case_5, 1.1)
     load.AddLoadAndFactorToCombination(combo4, temperature_case1, 1.5)
     load.AddLoadAndFactorToCombination(combo4, temperature_case2, 1.5)
+
+    return {"applied": currentLoadCaseId - 1 - len(errors), "errors": errors}
+
+
+# ── Public API ───────────────────────────────────────────────────────────
+
+async def send_to_staad(data: dict) -> dict:
+    """
+    Send every member in data["members_split_beams"] to the currently
+    running STAAD.Pro model, then apply data.get("load_configuration")
+    if present.
+
+    Parameters
+    ----------
+    data : dict
+        Expected to contain "members_split_beams" (a list of member
+        dicts, each with p1, p2, profile, material, type, name — the
+        same shape generate_grid.py produces) and optionally
+        "load_configuration" (see the module docstring's LOAD
+        CONFIGURATION SCHEMA).
+
+    Returns
+    -------
+    dict
+        {
+          "created": <int>,               # members with geometry (node+beam) successfully created
+          "failed": <int>,                 # members whose geometry creation itself failed
+          "errors": [{"name": ..., "error": ...}, ...],
+          "property_assignment_failed": <int>,  # created members whose profile/material assignment failed
+          "property_errors": [{"name": ..., "error": ...}, ...],
+          "load_cases_applied": <int>,     # load cases that succeeded
+          "load_cases_failed": <int>,
+          "load_errors": [{"title": ..., "error": ...}, ...],
+        }
+
+    Note: geometry creation and property/material assignment are
+    tracked separately on purpose. A member whose beam+nodes were
+    created successfully but whose profile/material assignment then
+    failed still counts toward "created" (the geometry is genuinely
+    there) — it's only flagged in "property_errors", not "errors". Prior
+    to this, a property-assignment failure incorrectly marked the whole
+    member as failed even when its geometry had already landed.
+    """
+    members = data.get("members_split_beams", [])
+    load_configuration = data.get("load_configuration")
+    grid_spec = data.get("grid")
+
+    openstaad = _get_openstaad()
+    openstaad.SetInputUnitForLength(length_unit_meter)
+    openstaad.SetInputUnitForForce(force_unit_kilonewton)
+    geometry = openstaad.Geometry
+    property = openstaad.Property
+    load = openstaad.Load
+    support = openstaad.Support
+    command = openstaad.Command
+
+    end_my_mz_release_spec_id = property.CreateMemberReleaseSpec(1, [0, 0, 0, 0, 1, 1], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    truss_spec_id = property.CreateMemberTrussSpec()
+    #property.AssignMemberSpecToBeam([900001, 900002, 900003], end_my_mz_release_spec_id)
+    #property.AssignMemberSpecToBeam([900148, 900154, 900160, 900166], truss_spec_id)
+
+    node_cache: Dict[tuple, int] = {}
+    node_ids = _SequentialIdAllocator(STARTING_NODE_ID)
+    beam_ids = _SequentialIdAllocator(STARTING_BEAM_ID)
+    beam_by_name: Dict[str, int] = {}
+    support_nodes: Set[int] = set()
+    member_ids_by_type: Dict[str, List[int]] = {}
+
+    created = 0
+    beam_no = 0
+    errors = []
+    property_errors = []
+    property_id_cache: Dict[str, int] = {}
+    country = load_configuration.get("country", "EUROPE")
+
+    fixed_support_id = support.CreateSupportFixed()
+    for member in members:
+        try:
+            beam_no, n1, n2 = _create_beam(geometry, node_cache, node_ids, beam_ids, member)
+            beam_by_name[member.get("name", "")] = beam_no
+            member["id"] = beam_no
+            created += 1
+        except Exception as exc:  # keep going; report this member and move on
+            errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
+            continue  # nothing to assign a property to if geometry creation failed
+
+        try:
+            _assign_property(property, beam_no, member, property_id_cache, country)
+        except Exception as exc:
+            property_errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
+
+        memberType = member.get("type", "unknown").lower()
+        if memberType not in member_ids_by_type:
+            member_ids_by_type[memberType] = []
+        member_ids_by_type[memberType].append(beam_no)
+
+        if memberType == "column":
+            property.AssignMemberSpecToBeam([beam_no], end_my_mz_release_spec_id)
+            if n1 not in support_nodes:
+                support._support.AssignSupportToNode(int(n1), fixed_support_id)
+                support_nodes.add(n1)
+        elif memberType in ["longitudinal_brace", "transverse_brace"]:
+            property.AssignMemberSpecToBeam([beam_no], truss_spec_id)
+
+    load_applied = 0
+    load_errors: List[Dict[str, str]] = []
+    if load_configuration:
+        load_result = _apply_load_configuration(
+            load, node_cache, load_configuration, members, support_nodes, grid_spec
+        )
+        load_applied = load_result["applied"]
+        load_errors = load_result["errors"]
 
     # Update structure before analysis
     openstaad.UpdateStructure()

@@ -357,7 +357,7 @@ def generate_members(cfg):
     #brace_bottom_z = col_bottom_z + gusset_t
     #brace_top_z = col_top_z - gusset_t
     brace_bottom_z = col_bottom_z + vertical_base_eccentricity
-    brace_top_z = col_top_z  + beam_height/2
+    brace_top_z = col_top_z # + beam_height/2
     brace_bottom_z_staad = col_bottom_z
 
     def point(i, j, z):
@@ -387,7 +387,7 @@ def generate_members(cfg):
         for i in range(n_long + 1):
             columns.append({
                 "p1": point(i, j, col_bottom_z),
-                "p2": point(i, j, col_top_z + beam_height/2),
+                "p2": point(i, j, col_top_z), # col_top_z or col_top_z + beam_height/2
                 "profile": column_profile,
                 "material": column_material,
                 "class": column_class,
@@ -410,10 +410,10 @@ def generate_members(cfg):
     # Tekla: one continuous beam per transverse grid line, full length,
     # with p2 extended past the last column by the column width.
     for j in range(n_trans + 1):
-        p1 = point(0, j, long_beam_z) #  col_top_z #TODO: If tekla_integration has different handling for beam heights, adjust accordingly.
-        p2 = point(n_long, j, long_beam_z) #  col_top_z
-        p1[0] -= longitudinal_beam_extra_mm + column_width / 2
-        p2[0] += longitudinal_beam_extra_mm + column_width / 2
+        p1 = point(0, j, col_top_z) # long_beam_z or col_top_z
+        p2 = point(n_long, j, col_top_z) # long_beam_z or col_top_z
+        p1[0] -= longitudinal_beam_extra_mm #+ column_width / 2
+        p2[0] += longitudinal_beam_extra_mm #+ column_width / 2
         beams_tekla.append({
             "p1": p1,
             "p2": p2,
@@ -441,12 +441,12 @@ def generate_members(cfg):
     # ---- Transverse (y-direction) beams, sitting on top of the longitudinal beams ----
     # Tekla: one continuous beam per longitudinal grid line, full length.
     for i in range(n_long + 1):
-        p1 = point(i, 0, trans_beam_z) #  col_top_z + beam_height/2 #TODO: If tekla_integration has different handling for beam heights, adjust accordingly.
-        p2 = point(i, n_trans, trans_beam_z) #  col_top_z + beam_height/2
+        p1 = point(i, 0, col_top_z) # trans_beam_z or col_top_z + beam_height/2
+        p2 = point(i, n_trans, col_top_z) # trans_beam_z or col_top_z + beam_height/2
         #p1[0] += column_section_height / 2
         #p2[0] += column_section_height / 2
-        p1[1] -= beam_width / 2
-        p2[1] += beam_width / 2
+        #p1[1] -= beam_width / 2
+        #p2[1] += beam_width / 2
         beams_tekla.append({
             "p1": p1,
             "p2": p2,

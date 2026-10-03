@@ -212,8 +212,7 @@ def _create_beam(member: dict) -> Beam:
 
     if memberType in ['longitudinal_brace', 'transverse_brace']:
         beam.Position.Rotation = Position.RotationEnum.BACK
-    '''
-    #TODO: Consider handling rotation for different member types more comprehensively.
+
     if memberType in ['column']:
         beam.Position.Rotation = Position.RotationEnum.BELOW
     if memberType in ['beam'] and member.get("name").startswith("beam-x-"):
@@ -224,7 +223,9 @@ def _create_beam(member: dict) -> Beam:
         beam.Position.Plane = Position.PlaneEnum.MIDDLE
         beam.Position.Rotation = Position.RotationEnum.TOP
         beam.Position.Depth = Position.DepthEnum.FRONT
-    '''
+        #TODO: this should be height of the longitudinal beam on which this transverse beam sits
+        # Does not matter as there is a single beam_profile in the frame specs of the model.
+        beam.Position.DepthOffset = get_profile_height(member["profile"])/2.0
 
     if not beam.Insert():
         raise TeklaMemberError(f"Failed to insert member '{beam.Name}' into the model.")
@@ -477,6 +478,7 @@ def send_to_tekla(data: dict) -> dict:
     transverse_beams = {}
     braces = {}
 
+    # Add members to the Tekla model
     for member in members:
         try:
             beam = _create_beam(member)
@@ -494,8 +496,11 @@ def send_to_tekla(data: dict) -> dict:
         except Exception as exc:  # keep going; report this member and move on
             errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
 
+    model.CommitChanges()
+    # Add base connections and column-to-beam connections for the columns
     for member, column in columns:
         try:
+            # Base connection for the column (BN)
             add_base_connection(
                 model,
                 column,
@@ -513,6 +518,7 @@ def send_to_tekla(data: dict) -> dict:
             longitudinal_beam = longitudinal_beams.get(f"beam-x-{name_parts[1]}")
             if longitudinal_beam is not None:
                 try:
+                    # Add connection between column and longitudinal beam
                     add_column2beam_connection(
                         model,
                         column,
@@ -539,6 +545,7 @@ def send_to_tekla(data: dict) -> dict:
                 if brace is None:
                     continue
                 try:
+                    # Add connection between column and adjacent brace
                     add_column2beam_connection(
                         model,
                         brace,
@@ -552,7 +559,8 @@ def send_to_tekla(data: dict) -> dict:
                     )
                 except Exception as exc:
                     errors.append({"name": member_name, "error": str(exc)})
-
+    model.CommitChanges()
+    # Add connections between longitudinal and transverse beams
     for longitudinal_index in range(grid["n_long_bays"] + 1):
         transverse_beam = transverse_beams.get(f"beam-y-{longitudinal_index}")
         if transverse_beam is None:

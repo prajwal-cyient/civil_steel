@@ -333,6 +333,7 @@ def generate_members(cfg):
     col_top_z = col_bottom_z + col_height_eff
 
     # Angles of inclination of bracings used to calculate x and y offsets for bracings to aling their center lines with column center lines to meet at the center endpoint of the column
+    '''
     tan_theta_longitudinal_bracing = col_height_eff / bay_long
     sin_theta_longitudinal_bracing = col_height_eff / sqrt(col_height_eff*col_height_eff + bay_long*bay_long)
     long_brace_width = _lookup_profile_width(long_brace_profile)
@@ -344,7 +345,7 @@ def generate_members(cfg):
     trans_brace_width = _lookup_profile_width(trans_brace_profile)
     z_offset_transverse_bracing = (column_section_height + trans_brace_width*sin_theta_transverse_bracing + 2*bracing_distance_from_column_mm)*tan_theta_transverse_bracing/2
     y_offset_transverse_bracing = (column_section_height + trans_brace_width*sin_theta_transverse_bracing + 2*bracing_distance_from_column_mm)/2
-
+    '''
     # Beam-on-beam stacking: the longitudinal beam sits on top of the
     # column, and the transverse beam sits on top of the longitudinal
     # beam.

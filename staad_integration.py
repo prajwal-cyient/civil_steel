@@ -890,6 +890,55 @@ def _apply_load_configuration(
 
 # ── Public API ───────────────────────────────────────────────────────────
 
+def _joint_force_maxima(joint_member_ends: dict, start_forces: list, end_forces: list) -> dict:
+    """Return componentwise absolute member-end maxima grouped by joint degree.
+
+    Forces retain the requested STAAD coordinate system (local or global).
+    Each component is an independent envelope, not a simultaneous force vector.
+    """
+    forces_by_end = {
+        start_end: {entry["beam"]: entry["forces"] for entry in start_forces},
+        final_end: {entry["beam"]: entry["forces"] for entry in end_forces},
+    }
+    components = ("Fx", "Fy", "Fz", "Mx", "My", "Mz")
+    groups = {}
+    for node_id, member_ends in sorted(joint_member_ends.items()):
+        member_count = len({beam_id for beam_id, _ in member_ends})
+        group = groups.setdefault(str(member_count), {
+            "member_count": member_count,
+            "joints": [],
+            "max_abs_forces": {component: 0.0 for component in components},
+            "max_force_sources": {},
+        })
+        group["joints"].append({
+            "node": node_id,
+            "members": [
+                {
+                    "beam": beam_id,
+                    "end": "start" if member_end == start_end else "end",
+                    "forces": dict(zip(components, forces_by_end[member_end][beam_id])),
+                }
+                for beam_id, member_end in member_ends
+            ],
+        })
+        for beam_id, member_end in member_ends:
+            forces = forces_by_end[member_end][beam_id]
+            for index, component in enumerate(components):
+                signed_value = forces[index]
+                magnitude = abs(signed_value)
+                if (component not in group["max_force_sources"]
+                        or magnitude > group["max_abs_forces"][component]):
+                    group["max_abs_forces"][component] = magnitude
+                    group["max_force_sources"][component] = {
+                        "node": node_id,
+                        "beam": beam_id,
+                        "end": "start" if member_end == start_end else "end",
+                        "signed_value": signed_value,
+                        "forces": dict(zip(components, forces)),
+                    }
+    return groups
+
+
 async def send_to_staad(data: dict) -> dict:
     """
     Send every member in data["members_split_beams"] to the currently
@@ -951,6 +1000,7 @@ async def send_to_staad(data: dict) -> dict:
     beam_by_name: Dict[str, int] = {}
     support_nodes: Set[int] = set()
     member_ids_by_type: Dict[str, List[int]] = {}
+    joint_member_ends = {}
 
     created = 0
     beam_no = 0
@@ -966,6 +1016,8 @@ async def send_to_staad(data: dict) -> dict:
             beam_by_name[member.get("name", "")] = beam_no
             member["id"] = beam_no
             created += 1
+            joint_member_ends.setdefault(n1, []).append((beam_no, start_end))
+            joint_member_ends.setdefault(n2, []).append((beam_no, final_end))
         except Exception as exc:  # keep going; report this member and move on
             errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
             continue  # nothing to assign a property to if geometry creation failed
@@ -1062,6 +1114,11 @@ async def send_to_staad(data: dict) -> dict:
 
     # Extract results
     output = openstaad.Output
+    base_unit = openstaad.GetBaseUnit()
+    if base_unit not in ("English", "Metric"):
+        raise ValueError(f"Unsupported STAAD base unit system: {base_unit}")
+    force_factor = 4.4482216152605 if base_unit == "English" else 1.0
+    moments_factor = force_factor * 0.0254 if base_unit == "English" else 1.0
 
     # GetMemberEndForces returns FX, FY, FZ, MX, MY, and MZ (in order)
     results_local = load_configuration.get("results_local_or_global", 0)
@@ -1084,10 +1141,23 @@ async def send_to_staad(data: dict) -> dict:
             for support_id in support_nodes
         ]
 
+        for force_entries in (start_forces, end_forces, support_reactions):
+            for entry in force_entries:
+                entry["forces"] = [
+                    value * (force_factor if index < 3 else moments_factor)
+                    for index, value in enumerate(entry["forces"])
+                ]
+
         staad_update_status[lc_title] = {}
+        staad_update_status[lc_title]["units"] = {"force": "kN", "moment": "kN-m"}
+        staad_update_status[lc_title]["load_case_id"] = int(lc)
+        staad_update_status[lc_title]["results_local_or_global"] = results_local
         staad_update_status[lc_title]["end_forces"] = end_forces
         staad_update_status[lc_title]["start_forces"] = start_forces
         staad_update_status[lc_title]["support_reactions"] = support_reactions
+        staad_update_status[lc_title]["joint_force_maxima"] = _joint_force_maxima(
+            joint_member_ends, start_forces, end_forces
+        )
         staad_update_status[lc_title]["analysis_status"] = analysis_status
         staad_update_status[lc_title]["analysis_complete"] = True
         print("Analysis results extracted and status updated.")

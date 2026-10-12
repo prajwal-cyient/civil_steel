@@ -795,7 +795,7 @@ def _apply_load_configuration(
         seismic_code = load_configuration.get("seismic_code", "UBC 1997")  # Default to UBC 1997 if not specified. Earlier versions might use "IBC 2018"
         seismicCode = SEISMIC_LOAD_CODE_TYPE_MAP[seismic_code] # "UBC 1985"
         isAccidental = load_configuration.get("is_seismic_accidental", 0)  # 1 or 0 depending on whether the seismic load is accidental
-        seismicLoadFactor = load_configuration.get("seismic_load_factor", 0.3)  # Default to 0.3 if not specified
+        seismicLoadFactor = load_configuration.get("seismic_load_factor", 1)  # Default to 1 if not specified
         isSeismicLoadDefCreated = load.AddSeismicDefinition(seismicCode, isAccidental)
         print(f"Seismic definition created: {isSeismicLoadDefCreated} for seismic code: {seismicCode} {seismic_code} and load factor {seismicLoadFactor}")
         # UBC 1985
@@ -905,8 +905,8 @@ def _apply_load_configuration(
     transverse_beam_length_m = grid_spec["bay_trans_mm"] / 1000.0
     # Load direction (1 to 9 for LocalX, LocalY, LocalZ, GlobalX, GlobalY, GlobalZ, ProjectedX, ProjectedY, ProjectedZ respectively)
     # For uniform load in the global Y direction (downwards), use direction 6 (GlobalY)
-    load.AddMemberUniformForce(longitudinal_beams, DIRECTION_TYPE_MAP["GlobalY"], -live_load_intensity_kN_per_m2 * longitudinal_beam_length_m, 0.0, longitudinal_beam_length_m, 0.0)
-    load.AddMemberUniformForce(transverse_beams, DIRECTION_TYPE_MAP["GlobalY"], -live_load_intensity_kN_per_m2 * transverse_beam_length_m, 0.0, transverse_beam_length_m, 0.0)
+    #load.AddMemberUniformForce(longitudinal_beams, DIRECTION_TYPE_MAP["GlobalY"], -live_load_intensity_kN_per_m2 * longitudinal_beam_length_m, 0.0, longitudinal_beam_length_m, 0.0)
+    #load.AddMemberUniformForce(transverse_beams, DIRECTION_TYPE_MAP["GlobalY"], -live_load_intensity_kN_per_m2 * transverse_beam_length_m, 0.0, transverse_beam_length_m, 0.0)
 
     temperature_case1 = load.CreateNewPrimaryLoadEx2("T+VE", LOAD_TYPE_MAP["Live"], currentLoadCaseId)
     currentLoadCaseId += 1

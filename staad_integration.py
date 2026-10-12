@@ -602,6 +602,111 @@ def _assign_property(property: OSProperty, beam_no: int, member: dict, property_
 
 # ── Internals: loads (best-effort, minimal schema) ─────────────────────
 
+def _get_top_node_coordinates(
+    node_cache: Dict[tuple, int],
+    top_nodes: List[int],
+) -> Dict[tuple, int]:
+    top_node_ids = set(top_nodes)
+    top_node_coordinates = {
+        point: node_id for point, node_id in node_cache.items()
+        if node_id in top_node_ids
+    }
+    if not top_node_coordinates:
+        raise ValueError("Node classification requires top nodes.")
+    return top_node_coordinates
+
+
+def _get_boundary_nodes(node_cache: Dict[tuple, int], top_nodes: List[int], boundary_count: int) -> List[int]:
+    top_node_coordinates = _get_top_node_coordinates(node_cache, top_nodes)
+
+    min_x = min(point[0] for point in top_node_coordinates)
+    max_x = max(point[0] for point in top_node_coordinates)
+    min_z = min(point[2] for point in top_node_coordinates)
+    max_z = max(point[2] for point in top_node_coordinates)
+    return sorted(
+        node_id for point, node_id in top_node_coordinates.items()
+        if int(point[0] in (min_x, max_x)) + int(point[2] in (min_z, max_z)) == boundary_count
+    )
+
+
+def _get_corner_nodes(node_cache: Dict[tuple, int], top_nodes: List[int]) -> List[int]:
+    return _get_boundary_nodes(node_cache, top_nodes, 2)
+
+
+def _get_edge_nodes(node_cache: Dict[tuple, int], top_nodes: List[int]) -> List[int]:
+    return _get_boundary_nodes(node_cache, top_nodes, 1)
+
+
+def _get_inner_nodes(node_cache: Dict[tuple, int], top_nodes: List[int]) -> List[int]:
+    return _get_boundary_nodes(node_cache, top_nodes, 0)
+
+
+def _get_edge_members(members: List[Dict[str, Any]], node_cache: Dict[tuple, int], top_nodes: List[int]) -> List[int]:
+    top_node_coordinates = _get_top_node_coordinates(node_cache, top_nodes)
+    min_x = min(point[0] for point in top_node_coordinates)
+    max_x = max(point[0] for point in top_node_coordinates)
+    min_z = min(point[2] for point in top_node_coordinates)
+    max_z = max(point[2] for point in top_node_coordinates)
+    edge_members = []
+    for member in members:
+        if member.get("type", "").lower() != "beam":
+            continue
+        start_point = _node_key(member["p1"])
+        end_point = _node_key(member["p2"])
+        if start_point not in top_node_coordinates or end_point not in top_node_coordinates:
+            continue
+        on_x_boundary = start_point[0] == end_point[0] and start_point[0] in (min_x, max_x)
+        on_z_boundary = start_point[2] == end_point[2] and start_point[2] in (min_z, max_z)
+        if on_x_boundary or on_z_boundary:
+            edge_members.append(member["id"])
+    return sorted(edge_members)
+
+
+def _apply_distributed_nodal_load(
+    load: OSLoad,
+    corner_nodes: List[int],
+    edge_nodes: List[int],
+    inner_nodes: List[int],
+    mass_kg: float,
+) -> None:
+    node_groups = {1: corner_nodes, 2: edge_nodes, 4: inner_nodes}
+
+    total_multiplier = sum(multiplier * len(nodes) for multiplier, nodes in node_groups.items())
+    if not total_multiplier:
+        raise ValueError("Distributed nodal load requires top nodes.")
+    base_value_kN = float(mass_kg) * 9.81 / 1000.0 / total_multiplier
+    for multiplier, nodes in node_groups.items():
+        if nodes:
+            load.AddNodalLoad(sorted(nodes), 0.0, -multiplier * base_value_kN, 0.0, 0.0, 0.0, 0.0)
+
+
+def _apply_distributed_seismic_joint_weight(
+    load: OSLoad,
+    corner_nodes: List[int],
+    edge_nodes: List[int],
+    inner_nodes: List[int],
+    mass_kg: float,
+) -> None:
+    node_groups = {1: corner_nodes, 2: edge_nodes, 4: inner_nodes}
+    total_multiplier = sum(multiplier * len(nodes) for multiplier, nodes in node_groups.items())
+    if not total_multiplier:
+        raise ValueError("Seismic joint weight requires top nodes.")
+    base_value_kN = float(mass_kg) * 9.81 / 1000.0 / total_multiplier
+    for multiplier, nodes in node_groups.items():
+        if nodes:
+            load.AddSeismicDefJointWeight(multiplier * base_value_kN, sorted(nodes))
+
+
+def _apply_radiator_installation_load(
+    load: OSLoad,
+    corner_nodes: List[int],
+    edge_nodes: List[int],
+    inner_nodes: List[int],
+    radiator_mass_kg: float,
+) -> None:
+    _apply_distributed_nodal_load(load, corner_nodes, edge_nodes, inner_nodes, radiator_mass_kg)
+
+
 def _apply_load_configuration(
     load: OSLoad,
     node_cache: Dict[tuple, int],
@@ -639,13 +744,23 @@ def _apply_load_configuration(
     errors = []
 
     top_nodes = list(set(node_cache.values()) - set(support_nodes))
+    corner_nodes = _get_corner_nodes(node_cache, top_nodes)
+    edge_nodes = _get_edge_nodes(node_cache, top_nodes)
+    inner_nodes = _get_inner_nodes(node_cache, top_nodes)
+    edge_members = _get_edge_members(members, node_cache, top_nodes)
     longitudinal_beams = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "beam" and m.get("name", "").startswith("beam-x"), members)))
     transverse_beams = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "beam" and m.get("name", "").startswith("beam-y"), members)))
+    longitudinal_edge_members = sorted(set(longitudinal_beams) & set(edge_members))
+    transverse_edge_members = sorted(set(transverse_beams) & set(edge_members))
+    dead_load_intensity_kN_per_m2 = load_configuration.get("dead_load_intensity_kN_per_m2", 0.5)
+    longitudinal_beam_length_m = grid_spec["bay_long_mm"] / 1000.0
+    transverse_beam_length_m = grid_spec["bay_trans_mm"] / 1000.0
     columnObjs = list(filter(lambda m: m.get("type", "").lower() == "column", members))
     columns = list(map(lambda m: m["id"], columnObjs))
     longitudinal_bracings = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "longitudinal_brace", members)))
     transverse_bracings = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "transverse_brace", members)))
     print(f'Longitudinal beams: {len(longitudinal_beams)}, Transverse beams: {len(transverse_beams)}, Columns: {len(columns)}, Longitudinal bracings: {len(longitudinal_bracings)}, Transverse bracings: {len(transverse_bracings)}')
+    print(f'Longitudinal beam length: {longitudinal_beam_length_m} m, Transverse beam length: {transverse_beam_length_m} m')
 
     windDefId = 1
     #windExposure = load_configuration.get("wind_exposure", 1.0)
@@ -692,30 +807,34 @@ def _apply_load_configuration(
         print(f"Seismic parameters: {seismicParams}")
         for param, value in seismicParams.items():
             load.ModifySeismicDefinitionParams(param, value)
-        # Definne seismic load cases first, then others
+        # Define seismic load cases first, then others
         # IBC LOAD CASES MUST BE DEFINED BEFORE ANY OTHER LOAD CASE.
         seismic_self_weight_factor = load_configuration.get("seismic_self_weight_factor", 1.1)
-        seismicLoadApplied = load.AddSelfWeightInXYZ(self_weight_direction_global_y, seismic_self_weight_factor)
-        print(f"Seismic self weight factor with AddSelfWeightInXYZ: {seismic_self_weight_factor}, load applied: {seismicLoadApplied}")
-        seismicLoadApplied = load.AddSeismicDefSelfWeight(seismic_self_weight_factor)
+        # FIXME: there is a bug in openstaadpy's implementation of OSLoad.AddSeismicDefSelfWeight
+        # It calls self._load.AddSeismicDefMemberWeight(varWeightFactor) instead of self._load.AddSeismicDefSelfWeight and that was the reason SELFWEIGHT wasn't getting added under seismic definition.
+        seismicLoadApplied = load._load.AddSeismicDefSelfWeight(float(seismic_self_weight_factor))
         print(f"Seismic self weight factor with AddSeismicDefSelfWeight: {seismic_self_weight_factor}, load applied: {seismicLoadApplied}")
         #seismic_code = "AUTO DETECT"
         seismicCode = searchDictByKeyStart(SEISMIC_LOAD_CODE_TYPE_MAP_AddSeismicDefMemberWeight, seismic_code)
         print(f"Seismic code for member weight: {seismicCode}")
-        uni_start_dist = load_configuration.get("seismic_member_uniform_weight_start_dist", 0.1)  # Example default value, adjust as needed
-        uni_end_dist = load_configuration.get("seismic_member_uniform_weight_end_dist", 1.6)  # Example default value, adjust as needed
         conc_start_dist = load_configuration.get("seismic_member_concentrated_weight_start_dist", 0.2)  # Example default value, adjust as needed
         conc_end_dist = load_configuration.get("seismic_member_concentrated_weight_end_dist", 0.6)  # Example default value, adjust as needed
-        seismicLoadApplied = load.AddSeismicDefMemberWeight(seismicCode, SEISMIC_LOAD_TYPE["UNIFORM"], load_configuration.get("seismic_member_uniform_weight", 5.5), uni_start_dist, uni_end_dist, longitudinal_beams + transverse_beams)
-        print(f"Seismic load applied for member weight: {seismicLoadApplied}")
-        seismicLoadApplied = load.AddSeismicDefJointWeight(load_configuration.get("seismic_joint_weight_top_nodes", 1.96), top_nodes)  # Example weight, adjust as needed
-        print(f"Seismic load applied for top nodes: {seismicLoadApplied}")
-        seismicLoadApplied = load.AddSeismicDefJointWeight(load_configuration.get("seismic_joint_weight_bottom_nodes", 3.92), support_nodes)  # Example weight, adjust as needed
-        print(f"Seismic load applied for bottom nodes: {seismicLoadApplied}")
-        seismicLoadApplied = load.AddSeismicDefMemberWeight(seismicCode, SEISMIC_LOAD_TYPE["CONCENTRATED"], load_configuration.get("seismic_longitudinal_brace_concentrated_weight", 17.5), conc_start_dist, conc_end_dist, longitudinal_bracings)
-        print(f"Seismic load applied for longitudinal bracings: {seismicLoadApplied}")
-        seismicLoadApplied = load.AddSeismicDefMemberWeight(seismicCode, SEISMIC_LOAD_TYPE["CONCENTRATED"], load_configuration.get("seismic_transverse_brace__concentrated_weight", 15.5), conc_start_dist, conc_end_dist, transverse_bracings)
-        print(f"Seismic load applied for transverse bracings: {seismicLoadApplied}")
+        if longitudinal_edge_members:
+            seismicLoadApplied = load.AddSeismicDefMemberWeight(seismicCode, SEISMIC_LOAD_TYPE["UNIFORM"], dead_load_intensity_kN_per_m2 * longitudinal_beam_length_m, 0.0, 0.0, longitudinal_edge_members)
+            print(f"Seismic load applied for longitudinal edge member weight: {seismicLoadApplied}")
+        if transverse_edge_members:
+            seismicLoadApplied = load.AddSeismicDefMemberWeight(seismicCode, SEISMIC_LOAD_TYPE["UNIFORM"], dead_load_intensity_kN_per_m2 * transverse_beam_length_m, 0.0, 0.0, transverse_edge_members)
+            print(f"Seismic load applied for transverse edge member weight: {seismicLoadApplied}")
+        _apply_distributed_seismic_joint_weight(
+            load, corner_nodes, edge_nodes, inner_nodes,
+            load_configuration["total_radiator_weight_including_liquid_kg"],
+        )
+        #seismicLoadApplied = load.AddSeismicDefJointWeight(load_configuration.get("seismic_joint_weight_bottom_nodes", 3.92), support_nodes)  # Example weight, adjust as needed
+        #print(f"Seismic load applied for bottom nodes: {seismicLoadApplied}")
+        # seismicLoadApplied = load.AddSeismicDefMemberWeight(seismicCode, SEISMIC_LOAD_TYPE["CONCENTRATED"], load_configuration.get("seismic_longitudinal_brace_concentrated_weight", 17.5), conc_start_dist, conc_end_dist, longitudinal_bracings)
+        # print(f"Seismic load applied for longitudinal bracings: {seismicLoadApplied}")
+        # seismicLoadApplied = load.AddSeismicDefMemberWeight(seismicCode, SEISMIC_LOAD_TYPE["CONCENTRATED"], load_configuration.get("seismic_transverse_brace__concentrated_weight", 15.5), conc_start_dist, conc_end_dist, transverse_bracings)
+        # print(f"Seismic load applied for transverse bracings: {seismicLoadApplied}")
 
         #seismicLoadApplied = load.AddSeismicLoad(SEISMIC_DIRECTION_TYPE_MAP["GlobalX"], seismicLoadFactor)
     # Create load case and add self-weight
@@ -755,38 +874,35 @@ def _apply_load_configuration(
     currentLoadCaseId += 1
     load.SetLoadActive(load_case)
     load.AddSelfWeightInXYZ(self_weight_direction_global_y, -1.0)
-    # Joint loads
-    #TODO: Does the radiator weight need to be distributed differently on beams or should it remain as nodal loads?
-    radiatgor_weight = load_configuration["total_radiator_weight_including_liquid_kg"]
-    # Apply radiator weight as nodal loads to top nodes
-    load.AddNodalLoad(top_nodes, 0.0, -radiatgor_weight/len(top_nodes), 0.0, 0.0, 0.0, 0.0)
     # Member loads
     #TODO: Apply live load to beams based on their orientation and length
     #print(f'Grid Spec {grid_spec}, load configuration {load_configuration}')
-    dead_load_intensity_kN_per_m2 = load_configuration.get("dead_load_intensity_kN_per_m2", 2.0)
-    longitudinal_beam_length_m = grid_spec["bay_long_mm"] / 1000.0
-    transverse_beam_length_m = grid_spec["bay_trans_mm"] / 1000.0
-    print(f'Longitudinal beam length: {longitudinal_beam_length_m} m, Transverse beam length: {transverse_beam_length_m} m')
     # Load direction (1 to 9 for LocalX, LocalY, LocalZ, GlobalX, GlobalY, GlobalZ, ProjectedX, ProjectedY, ProjectedZ respectively)
     # For uniform load in the global Y direction (downwards), use direction 6 (GlobalY)
-    load.AddMemberUniformForce(longitudinal_beams, DIRECTION_TYPE_MAP["GlobalY"], -dead_load_intensity_kN_per_m2 * longitudinal_beam_length_m, 0.0, longitudinal_beam_length_m, 0.0)
-    load.AddMemberUniformForce(transverse_beams, DIRECTION_TYPE_MAP["GlobalY"], -dead_load_intensity_kN_per_m2 * transverse_beam_length_m, 0.0, transverse_beam_length_m, 0.0)
+    if longitudinal_edge_members:
+        load.AddMemberUniformForce(longitudinal_edge_members, DIRECTION_TYPE_MAP["GlobalY"], -dead_load_intensity_kN_per_m2 * longitudinal_beam_length_m, 0.0, longitudinal_beam_length_m, 0.0)
+    if transverse_edge_members:
+        load.AddMemberUniformForce(transverse_edge_members, DIRECTION_TYPE_MAP["GlobalY"], -dead_load_intensity_kN_per_m2 * transverse_beam_length_m, 0.0, transverse_beam_length_m, 0.0)
+
+    installation_case = load.CreateNewPrimaryLoadEx2("INST", LOAD_TYPE_MAP["Dead"], currentLoadCaseId)
+    currentLoadCaseId += 1
+    load.SetLoadActive(installation_case)
+    _apply_radiator_installation_load(
+        load, corner_nodes, edge_nodes, inner_nodes,
+        load_configuration["total_radiator_weight_including_liquid_kg"],
+    )
 
     load_case_2 = load.CreateNewPrimaryLoadEx2("LL LIVE LOAD", LOAD_TYPE_MAP["Live"], currentLoadCaseId)
     currentLoadCaseId += 1
     load.SetLoadActive(load_case_2)
-    # Joint loads
-    #TODO: Does the radiator weight need to be distributed differently on beams or should it remain as nodal loads?
     live_weight = load_configuration.get("total_live_weight_including_liquid_kg", 30.0)
-    # Apply radiator weight as nodal loads to top nodes
-    load.AddNodalLoad(top_nodes, 0.0, -live_weight/len(top_nodes), 0.0, 0.0, 0.0, 0.0)
+    _apply_distributed_nodal_load(load, corner_nodes, edge_nodes, inner_nodes, live_weight)
     # Member loads
     #TODO: Apply live load to beams based on their orientation and length
     #print(f'Grid Spec {grid_spec}, load configuration {load_configuration}')
     live_load_intensity_kN_per_m2 = load_configuration["live_load_intensity_kN_per_m2"]
     longitudinal_beam_length_m = grid_spec["bay_long_mm"] / 1000.0
     transverse_beam_length_m = grid_spec["bay_trans_mm"] / 1000.0
-    print(f'Longitudinal beam length: {longitudinal_beam_length_m} m, Transverse beam length: {transverse_beam_length_m} m')
     # Load direction (1 to 9 for LocalX, LocalY, LocalZ, GlobalX, GlobalY, GlobalZ, ProjectedX, ProjectedY, ProjectedZ respectively)
     # For uniform load in the global Y direction (downwards), use direction 6 (GlobalY)
     load.AddMemberUniformForce(longitudinal_beams, DIRECTION_TYPE_MAP["GlobalY"], -live_load_intensity_kN_per_m2 * longitudinal_beam_length_m, 0.0, longitudinal_beam_length_m, 0.0)
@@ -863,6 +979,7 @@ def _apply_load_configuration(
     currentLoadCaseId += 1
     #TODO: Add the two load cases (DL and LL) with appropriate factors to the combination
     load.AddLoadAndFactorToCombination(combo3, load_case, 1)
+    load.AddLoadAndFactorToCombination(combo3, installation_case, 1)
     load.AddLoadAndFactorToCombination(combo3, load_case_2, 0.80)
     load.AddLoadAndFactorToCombination(combo3, wind_case, 0.75)
     load.AddLoadAndFactorToCombination(combo3, wind_case_2, 0.75)
@@ -878,6 +995,7 @@ def _apply_load_configuration(
     currentLoadCaseId += 1
     #TODO: Add the two load cases (DL and LL) with appropriate factors to the combination
     load.AddLoadAndFactorToCombination(combo4, load_case, 1)
+    load.AddLoadAndFactorToCombination(combo4, installation_case, 1)
     load.AddLoadAndFactorToCombination(combo4, load_case_2, 0.95)
     load.AddLoadAndFactorToCombination(combo4, wind_case, 1.2)
     load.AddLoadAndFactorToCombination(combo4, wind_case_2, 1.2)

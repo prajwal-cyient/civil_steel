@@ -686,7 +686,7 @@ def _apply_load_configuration(
         # UBC 1985
         #seismicParams = load_configuration.get("seismic_params", {"ZONE": 0.095, "K": 1.01, "I": 1.02, "TS": 0.5})
         # UBC 1997
-        seismicParams = load_configuration.get("seismic_params", {"ZONE": 0.075, "I": 1, "RWX": 2.9, "RWZ": 2.9, "STYP": 4, "CT": 0.0488, "NA": 1, "NV": 1})
+        seismicParams = load_configuration.get("seismic_params", {"ZONE": 0.075, "I": 1, "RWX": 2.9, "RWZ": 2.9, "STYPE": 4, "CT": 0.0488, "NA": 1, "NV": 1}) # GUI Name STYP for STYPE
         # IBC 2018
         #seismicParams = load_configuration.get("seismic_params", {"SS": 0.679, "S1": 0.241, "I": 1.25, "RX": 1.5, "RZ": 1.5, "SCLASS": 3, "CTX": 0.426, "CTZ": 0.426, "TL": 8, "FA": 1.128, "FV": 1.559, "XX": 0.75, "XZ": 0.75})
         print(f"Seismic parameters: {seismicParams}")

@@ -648,26 +648,26 @@ def _apply_load_configuration(
     print(f'Longitudinal beams: {len(longitudinal_beams)}, Transverse beams: {len(transverse_beams)}, Columns: {len(columns)}, Longitudinal bracings: {len(longitudinal_bracings)}, Transverse bracings: {len(transverse_bracings)}')
 
     windDefId = 1
-    windExposure = load_configuration.get("wind_exposure", 1.0)
+    #windExposure = load_configuration.get("wind_exposure", 1.0)
     windDefCreated = load.AddWindDefinition(windDefId, "Wind 1")
     print(f'Wind definition created: {windDefCreated}, wind definition id {windDefId}')
-    intensity_kN_per_m2 = load_configuration.get("wind_intensity_kN_per_m2", [10.0, 11.0, 12.0, 14.5, 15.0, 17.5, 19.3, 22.7])
-    height_list = load_configuration.get("wind_height_list", [5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0])
+    intensity_kN_per_m2 = load_configuration.get("wind_intensity_kN_per_m2", [2.19551, 2.32465, 2.42797, 2.53129, 2.68627, 2.81541, 2.91873, 3.02205, 3.12537, 3.20286, 3.25452, 3.38366, 3.51281, 3.5903, 3.69362, 3.77111, 3.95191, 4.10689, 4.23604, 4.36518, 4.4685, 4.57182])
+    height_list = load_configuration.get("wind_height_list", [4.6, 6.1, 7.6, 9.1, 12.2, 15.2, 18, 21.3, 24.4, 27.4, 30.5, 36.6, 42.7, 48.8, 54.9, 61, 76.2, 91.4, 106.7, 121.9, 137.2, 152.4])
     windDefCreated = load.AddWindIntensity(windDefId, intensity_kN_per_m2, height_list)
     print(f'Wind intensity added: {windDefCreated}, wind definition id {windDefId}')
-    windDefCreated = load.AddWindExposure(windDefId, windExposure, top_nodes)
-    print(f'Wind exposure added: {windDefCreated}, wind definition id {windDefId}')
+    #windDefCreated = load.AddWindExposure(windDefId, windExposure, top_nodes)
+    #print(f'Wind exposure added: {windDefCreated}, wind definition id {windDefId}')
 
     windDef2Id = 2
-    windExposure = load_configuration.get("wind_exposure", 1.0)
+    #windExposure = load_configuration.get("wind_exposure", 1.0)
     windDefCreated = load.AddWindDefinition(windDef2Id, "Wind 2")
     print(f'Wind definition created: {windDefCreated}, wind definition id {windDef2Id}')
-    intensity_kN_per_m2 = load_configuration.get("wind2_intensity_kN_per_m2", [20.0, 21.0, 22.0, 24.5, 25.0, 27.5, 29.3, 32.7])
-    height_list = load_configuration.get("wind2_height_list", [15.0, 16.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0])
+    intensity_kN_per_m2 = load_configuration.get("wind2_intensity_kN_per_m2", [0.113, 0.12, 0.125, 0.13])
+    height_list = load_configuration.get("wind2_height_list", [4.6, 6.1, 7.6, 9.1])
     windDefCreated = load.AddWindIntensity(windDef2Id, intensity_kN_per_m2, height_list)
     print(f'Wind intensity added: {windDefCreated}, wind definition id {windDef2Id}')
-    windDefCreated = load.AddWindExposure(windDef2Id, windExposure, list(support_nodes))
-    print(f'Wind exposure added: {windDefCreated}, wind definition id {windDef2Id}')
+    #windDefCreated = load.AddWindExposure(windDef2Id, windExposure, list(support_nodes))
+    #print(f'Wind exposure added: {windDefCreated}, wind definition id {windDef2Id}')
     
     modes = load_configuration.get("cut_off_modes", 200)  # Default to 200 modes if not specified
     frequency = load_configuration.get("cut_off_frequency", 200)  # Default to 200 Hz if not specified
@@ -677,14 +677,18 @@ def _apply_load_configuration(
     # Seismic load (to be implemented)
     defineSeismicLoad = load_configuration.get("define_seismic_load", True)
     if defineSeismicLoad:
-        seismic_code = load_configuration.get("seismic_code", "IBC 2018")
+        seismic_code = load_configuration.get("seismic_code", "UBC 1997")  # Default to UBC 1997 if not specified. Earlier versions might use "IBC 2018"
         seismicCode = SEISMIC_LOAD_CODE_TYPE_MAP[seismic_code] # "UBC 1985"
         isAccidental = load_configuration.get("is_seismic_accidental", 0)  # 1 or 0 depending on whether the seismic load is accidental
         seismicLoadFactor = load_configuration.get("seismic_load_factor", 0.3)  # Default to 0.3 if not specified
         isSeismicLoadDefCreated = load.AddSeismicDefinition(seismicCode, isAccidental)
         print(f"Seismic definition created: {isSeismicLoadDefCreated} for seismic code: {seismicCode} {seismic_code} and load factor {seismicLoadFactor}")
+        # UBC 1985
         #seismicParams = load_configuration.get("seismic_params", {"ZONE": 0.095, "K": 1.01, "I": 1.02, "TS": 0.5})
-        seismicParams = load_configuration.get("seismic_params", {"SS": 0.679, "S1": 0.241, "I": 1.25, "RX": 1.5, "RZ": 1.5, "SCLASS": 3, "CTX": 0.426, "CTZ": 0.426, "TL": 8, "FA": 1.128, "FV": 1.559, "XX": 0.75, "XZ": 0.75})
+        # UBC 1997
+        seismicParams = load_configuration.get("seismic_params", {"ZONE": 0.075, "I": 1, "RWX": 2.9, "RWZ": 2.9, "STYP": 4, "CT": 0.0488, "NA": 1, "NV": 1})
+        # IBC 2018
+        #seismicParams = load_configuration.get("seismic_params", {"SS": 0.679, "S1": 0.241, "I": 1.25, "RX": 1.5, "RZ": 1.5, "SCLASS": 3, "CTX": 0.426, "CTZ": 0.426, "TL": 8, "FA": 1.128, "FV": 1.559, "XX": 0.75, "XZ": 0.75})
         print(f"Seismic parameters: {seismicParams}")
         for param, value in seismicParams.items():
             load.ModifySeismicDefinitionParams(param, value)

@@ -79,6 +79,10 @@ fields build):
   "occupancy_category": "standard_occupancy",
   "frame_pressure_coefficient_Cq": 1.8,
   "equipment_pressure_coefficient_Cpe": 1.4,
+    "radiator_wind_force_x_kN": 1.67,
+    "radiator_wind_force_y1_kN": 0.74,
+    "radiator_wind_force_z_kN": 2.24,
+    "radiator_wind_force_y2_kN": 0.78,
   "seismic_zone": "2A",
   "soil_type": "SC",
   "seismic_source_type": "C",
@@ -703,6 +707,53 @@ def _apply_radiator_installation_load(
     _apply_distributed_nodal_load(load, corner_nodes, edge_nodes, inner_nodes, radiator_mass_kg)
 
 
+def _apply_radiator_wind_nodal_loads(
+    load: OSLoad,
+    node_cache: Dict[tuple, int],
+    top_nodes: List[int],
+    wind_case_title: str,
+    load_configuration: Dict[str, Any],
+) -> None:
+    coordinates = _get_top_node_coordinates(node_cache, top_nodes)
+    along_x = wind_case_title in ("W+X", "W-X")
+    row_axis = 0 if along_x else 2
+    endpoint_axis = 2 if along_x else 0
+    rows = sorted({point[row_axis] for point in coordinates})
+    if len(rows) < 2:
+        raise ValueError(f"{wind_case_title} radiator wind forces require at least two top-node rows.")
+    negative_direction = wind_case_title in ("W-X", "W-Z")
+    selected_rows = list(reversed(rows[-2:])) if negative_direction else rows[:2]
+    horizontal_force = float(load_configuration.get(
+        "radiator_wind_force_x_kN" if along_x else "radiator_wind_force_z_kN",
+        1.67 if along_x else 2.24,
+    ))
+    vertical_force = float(load_configuration.get(
+        "radiator_wind_force_y1_kN" if along_x else "radiator_wind_force_y2_kN",
+        0.74 if along_x else 0.78,
+    ))
+    horizontal_sign = -1.0 if negative_direction else 1.0
+    for row_index, row_coordinate in enumerate(selected_rows):
+        row_nodes = {
+            point: node_id for point, node_id in coordinates.items()
+            if point[row_axis] == row_coordinate
+        }
+        endpoints = (
+            min(point[endpoint_axis] for point in row_nodes),
+            max(point[endpoint_axis] for point in row_nodes),
+        )
+        endpoint_nodes = sorted(node_id for point, node_id in row_nodes.items() if point[endpoint_axis] in endpoints)
+        interior_nodes = sorted(node_id for point, node_id in row_nodes.items() if point[endpoint_axis] not in endpoints)
+        vertical_sign = 1.0 if row_index == 0 else -1.0
+        for multiplier, nodes in ((1, endpoint_nodes), (2, interior_nodes)):
+            if nodes:
+                horizontal = horizontal_sign * multiplier * horizontal_force
+                load.AddNodalLoad(
+                    nodes, horizontal if along_x else 0.0,
+                    vertical_sign * multiplier * vertical_force,
+                    0.0 if along_x else horizontal, 0.0, 0.0, 0.0,
+                )
+
+
 def _create_directional_wind_cases(
     load: OSLoad,
     members: List[Dict[str, Any]],
@@ -970,6 +1021,9 @@ def _apply_load_configuration(
         load_configuration.get("is_open_structure", True),
     )
     currentLoadCaseId += len(wind_cases)
+    for wind_case, title in zip(wind_cases, ("W+X", "W-X", "W+Z", "W-Z")):
+        load.SetLoadActive(wind_case)
+        _apply_radiator_wind_nodal_loads(load, node_cache, top_nodes, title, load_configuration)
 
     #TODO: Wind uniform load on members
     #load.AddMemberUniformForce(columns + longitudinal_bracings + transverse_bracings, DIRECTION_TYPE_MAP["GlobalX"], 0.6, 0.0, 0.0, 0.0)  # 4=GlobalX

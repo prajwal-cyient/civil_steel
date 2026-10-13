@@ -13,6 +13,7 @@ helpers = [
         "_get_edge_nodes", "_get_inner_nodes", "_get_edge_members", "_node_key",
         "_apply_distributed_nodal_load", "_apply_radiator_installation_load",
         "_apply_distributed_seismic_joint_weight",
+        "_apply_radiator_wind_nodal_loads",
         "_apply_load_configuration", "searchDictByKeyStart", "_create_directional_wind_cases",
     }
 ]
@@ -198,8 +199,8 @@ class RadiatorInstallationLoadTests(unittest.TestCase):
         self.assertIn(("AddSelfWeightInXYZ", (2, -1.0)), dead_calls)
         uniform_calls = [arguments for method, arguments in dead_calls if method == "AddMemberUniformForce"]
         self.assertEqual(uniform_calls, [
-            ([1, 2, 5, 6], 5, -1.5, 0.0, 3.0, 0.0),
-            ([7, 8, 11, 12], 5, -1.0, 0.0, 2.0, 0.0),
+            ([1, 2, 5, 6], 5, -1.5, 0.0, 0.0, 0.0),
+            ([7, 8, 11, 12], 5, -1.0, 0.0, 0.0, 0.0),
         ])
         for seismic_call, dead_call in zip(seismic_uniform_calls, uniform_calls):
             self.assertEqual(seismic_call.args[5], dead_call[0])
@@ -233,6 +234,58 @@ class RadiatorInstallationLoadTests(unittest.TestCase):
             wind_factor = 0.75 if combination.args[0] == "Comb DL LL WL" else 1.2
             for title in ("W+X", "W-X", "W+Z", "W-Z"):
                 load.AddLoadAndFactorToCombination.assert_any_call(combination.args[1], case_ids[title], wind_factor)
+
+    def test_radiator_wind_forces_use_two_rows_and_endpoint_multipliers(self):
+        node_cache = {
+            (column * 3300 + 100, 5000, row * 2600 - 200): column * 4 + row + 1
+            for column in range(3) for row in range(4)
+        }
+        node_cache[(100, 0, -200)] = 99
+        expected_groups = {
+            "W+X": [[1, 4], [2, 3], [5, 8], [6, 7]],
+            "W-X": [[9, 12], [10, 11], [5, 8], [6, 7]],
+            "W+Z": [[1, 9], [5], [2, 10], [6]],
+            "W-Z": [[4, 12], [8], [3, 11], [7]],
+        }
+        for title, groups in expected_groups.items():
+            with self.subTest(title=title):
+                load = Mock()
+                namespace["_apply_radiator_wind_nodal_loads"](
+                    load, node_cache, list(range(1, 13)), title, {},
+                )
+                calls = load.AddNodalLoad.call_args_list
+                self.assertEqual([call.args[0] for call in calls], groups)
+                along_x = title in ("W+X", "W-X")
+                sign = -1 if title in ("W-X", "W-Z") else 1
+                horizontal = 1.67 if along_x else 2.24
+                vertical = 0.74 if along_x else 0.78
+                for call, multiplier, vertical_sign in zip(calls, [1, 2, 1, 2], [1, 1, -1, -1]):
+                    self.assertAlmostEqual(call.args[1], sign * multiplier * horizontal if along_x else 0.0)
+                    self.assertAlmostEqual(call.args[2], vertical_sign * multiplier * vertical)
+                    self.assertAlmostEqual(call.args[3], 0.0 if along_x else sign * multiplier * horizontal)
+                    self.assertEqual(call.args[4:], (0.0, 0.0, 0.0))
+
+    def test_radiator_wind_force_configuration_overrides(self):
+        node_cache = {(column, 5, row): column * 2 + row + 1 for column in range(2) for row in range(2)}
+        configuration = {
+            "radiator_wind_force_x_kN": 10, "radiator_wind_force_y1_kN": 20,
+            "radiator_wind_force_z_kN": 30, "radiator_wind_force_y2_kN": 40,
+        }
+        for title, expected_horizontal, expected_vertical in (("W+X", 10, 20), ("W+Z", 30, 40)):
+            load = Mock()
+            namespace["_apply_radiator_wind_nodal_loads"](load, node_cache, [1, 2, 3, 4], title, configuration)
+            calls = load.AddNodalLoad.call_args_list
+            self.assertEqual(len(calls), 2)
+            horizontal_index = 1 if title == "W+X" else 3
+            self.assertEqual(calls[0].args[horizontal_index], expected_horizontal)
+            self.assertEqual(calls[0].args[2], expected_vertical)
+            self.assertEqual(calls[1].args[2], -expected_vertical)
+
+    def test_radiator_wind_requires_two_rows(self):
+        load = Mock()
+        with self.assertRaisesRegex(ValueError, "at least two"):
+            namespace["_apply_radiator_wind_nodal_loads"](load, {(0, 5, 0): 1}, [1], "W+X", {})
+        load.AddNodalLoad.assert_not_called()
 
     def test_directional_wind_cases_use_unique_rows_and_requested_ranges(self):
         members = []
@@ -268,16 +321,16 @@ class RadiatorInstallationLoadTests(unittest.TestCase):
                 active_case = arguments[0]
             elif method == "AddWindLoad":
                 calls_by_case.setdefault(active_case, []).append(arguments)
-        for case_id, direction, factor in ((11, 1, 1.0), (12, 4, -1.0)):
+        for case_id, direction, factor in ((11, 1, 1.0), (12, 1, -1.0)):
             self.assertEqual(len(calls_by_case[case_id]), 3)
             for arguments, coordinate in zip(calls_by_case[case_id], [0.0, 3.3, 6.6]):
-                expected = (1, direction, factor, 1, 0.0, 5.3, -1.0, 6.8, coordinate - 0.1, coordinate + 0.1)
+                expected = (1, direction, factor, 1, 0.0, 5.3, -1.0, 8.0, coordinate - 0.1, coordinate + 0.1)
                 for actual_value, expected_value in zip(arguments, expected):
                     self.assertAlmostEqual(actual_value, expected_value)
-        for case_id, direction, factor in ((13, 3, 1.0), (14, 6, -1.0)):
+        for case_id, direction, factor in ((13, 3, 1.0), (14, 3, -1.0)):
             self.assertEqual(len(calls_by_case[case_id]), 4)
             for arguments, coordinate in zip(calls_by_case[case_id], [0.0, 2.6, 5.2, 7.8]):
-                expected = (1, direction, factor, 1, 0.0, 5.3, coordinate - 0.1, coordinate + 0.1, -1.0, 8.0)
+                expected = (1, direction, factor, 1, 0.0, 5.3, coordinate - 0.1, coordinate + 0.1, -1.0, 6.8)
                 for actual_value, expected_value in zip(arguments, expected):
                     self.assertAlmostEqual(actual_value, expected_value)
 

@@ -116,6 +116,7 @@ force_unit_kilonewton = 5
 self_weight_direction_global_y = 2
 start_end = 0
 final_end = 1
+startingComboLoadCaseId = 100
 
 LOAD_TYPE_MAP = {
     "Dead": 0,
@@ -369,6 +370,16 @@ MATERIAL_MAPPING = {
     "S275JR": "STEEL",
     "C30/37": "CONCRETE",
     "4000Psi": "CONCRETE",
+}
+
+ENVELOP_TYPE_MAP = {
+    "NONE": 0,
+    "STRESS": 1,
+    "SERVICEABILITY": 2,
+    "COLUMN": 3,
+    "CONNECTION": 4,
+    "STRENGTH": 5,
+    "TEMPORARY": 6,
 }
 
 def searchDictByKeyStart(dict: Dict[str, Any], key_start: str) -> Any:
@@ -1029,7 +1040,10 @@ def _apply_load_configuration(
     #load.AddMemberUniformForce(columns + longitudinal_bracings + transverse_bracings, DIRECTION_TYPE_MAP["GlobalX"], 0.6, 0.0, 0.0, 0.0)  # 4=GlobalX
 
     # Load Combination 3 (75% of 1 & 2)
+    comboLoadCases: list[int] = []
+    currentLoadCaseId = max(currentLoadCaseId, startingComboLoadCaseId)
     combo3 = load.CreateNewLoadCombination("Comb DL LL WL", currentLoadCaseId)
+    comboLoadCases.append(combo3)
     currentLoadCaseId += 1
     #TODO: Add the two load cases (DL and LL) with appropriate factors to the combination
     load.AddLoadAndFactorToCombination(combo3, load_case, 1)
@@ -1046,6 +1060,7 @@ def _apply_load_configuration(
     load.AddLoadAndFactorToCombination(combo3, temperature_case2, 1.2)
 
     combo4 = load.CreateNewLoadCombination("Comb DL LL WL 2", currentLoadCaseId)
+    comboLoadCases.append(combo4)
     currentLoadCaseId += 1
     #TODO: Add the two load cases (DL and LL) with appropriate factors to the combination
     load.AddLoadAndFactorToCombination(combo4, load_case, 1)
@@ -1060,6 +1075,20 @@ def _apply_load_configuration(
     load.AddLoadAndFactorToCombination(combo4, seismic_case_5, 1.1)
     load.AddLoadAndFactorToCombination(combo4, temperature_case1, 1.5)
     load.AddLoadAndFactorToCombination(combo4, temperature_case2, 1.5)
+
+    envelopCreationResults: list[bool] = []
+    envelopeId = 1
+    ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["SERVICEABILITY"], comboLoadCases)
+    envelopCreationResults.append(ret)
+    envelopeId += 1
+    ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["STRENGTH"], comboLoadCases)
+    envelopCreationResults.append(ret)
+    envelopeId += 1
+    ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["STRENGTH"], comboLoadCases)
+    envelopCreationResults.append(ret)
+    envelopeId += 1
+    print(f'Envelope creation results: {envelopCreationResults}')
+    #load.AddLoadCasesToEnvelop(envelopeId-1, comboLoadCases)
 
     return {"applied": currentLoadCaseId - 1 - len(errors), "errors": errors}
 

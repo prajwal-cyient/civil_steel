@@ -668,6 +668,7 @@ def _apply_distributed_nodal_load(
     edge_nodes: List[int],
     inner_nodes: List[int],
     mass_kg: float,
+    is_seismic: bool = False,
 ) -> None:
     node_groups = {1: corner_nodes, 2: edge_nodes, 4: inner_nodes}
 
@@ -677,7 +678,10 @@ def _apply_distributed_nodal_load(
     base_value_kN = float(mass_kg) * 9.81 / 1000.0 / total_multiplier
     for multiplier, nodes in node_groups.items():
         if nodes:
-            load.AddNodalLoad(sorted(nodes), 0.0, -multiplier * base_value_kN, 0.0, 0.0, 0.0, 0.0)
+            if is_seismic:
+                load.AddSeismicDefJointWeight(multiplier * base_value_kN, sorted(nodes))
+            else:
+                load.AddNodalLoad(sorted(nodes), 0.0, -multiplier * base_value_kN, 0.0, 0.0, 0.0, 0.0)
 
 
 def _apply_distributed_seismic_joint_weight(
@@ -687,15 +691,7 @@ def _apply_distributed_seismic_joint_weight(
     inner_nodes: List[int],
     mass_kg: float,
 ) -> None:
-    node_groups = {1: corner_nodes, 2: edge_nodes, 4: inner_nodes}
-    total_multiplier = sum(multiplier * len(nodes) for multiplier, nodes in node_groups.items())
-    if not total_multiplier:
-        raise ValueError("Seismic joint weight requires top nodes.")
-    base_value_kN = float(mass_kg) * 9.81 / 1000.0 / total_multiplier
-    for multiplier, nodes in node_groups.items():
-        if nodes:
-            load.AddSeismicDefJointWeight(multiplier * base_value_kN, sorted(nodes))
-
+    _apply_distributed_nodal_load(load, corner_nodes, edge_nodes, inner_nodes, mass_kg, is_seismic=True)
 
 def _apply_radiator_installation_load(
     load: OSLoad,

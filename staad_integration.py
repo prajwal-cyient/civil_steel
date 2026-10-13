@@ -707,6 +707,54 @@ def _apply_radiator_installation_load(
     _apply_distributed_nodal_load(load, corner_nodes, edge_nodes, inner_nodes, radiator_mass_kg)
 
 
+def _create_directional_wind_cases(
+    load: OSLoad,
+    members: List[Dict[str, Any]],
+    grid_spec: Dict[str, Any],
+    wind_definition_id: int,
+    first_case_id: int,
+    is_open_structure: bool,
+) -> List[int]:
+    longitudinal_rows_m = sorted({
+        member["p1"][0] / 1000.0 for member in members
+        if member.get("type", "").lower() == "beam" and member.get("name", "").startswith("beam-x")
+    })
+    transverse_rows_m = sorted({
+        member["p1"][2] / 1000.0 for member in members
+        if member.get("type", "").lower() == "beam" and member.get("name", "").startswith("beam-y")
+    })
+    max_height_m = max(
+        grid_spec.get("total_structure_height", 0),
+        max(max(member["p1"][1], member["p2"][1]) for member in members),
+    ) / 1000.0
+    transverse_extent_m = grid_spec["n_trans_bays"] * grid_spec["bay_trans_mm"] / 1000.0
+    longitudinal_extent_m = grid_spec["n_long_bays"] * grid_spec["bay_long_mm"] / 1000.0
+    wind_cases = []
+    for title, direction, factor, rows, axis in (
+        ("W+X", "Global X", 1.0, longitudinal_rows_m, "X"),
+        ("W-X", "Global X", -1.0, longitudinal_rows_m, "X"),
+        ("W+Z", "Global Z", 1.0, transverse_rows_m, "Z"),
+        ("W-Z", "Global Z", -1.0, transverse_rows_m, "Z"),
+    ):
+        wind_case = load.CreateNewPrimaryLoadEx2(title, LOAD_TYPE_MAP["Wind"], first_case_id + len(wind_cases))
+        wind_cases.append(wind_case)
+        load.SetLoadActive(wind_case)
+        for row_index, coordinate_m in enumerate(rows):
+            strip_min_m = -0.1 if row_index == 0 else coordinate_m - 0.1
+            strip_max_m = strip_min_m + 0.2
+            if axis == "X":
+                dx_min, dx_max = strip_min_m, strip_max_m
+                dz_min, dz_max = -1.0, longitudinal_extent_m + 0.2
+            else:
+                dx_min, dx_max = -1.0, transverse_extent_m + 0.2
+                dz_min, dz_max = strip_min_m, strip_max_m
+            load.AddWindLoad(
+                wind_definition_id, WIND_DIRECTION_MAP[direction], factor, int(is_open_structure),
+                0.0, max_height_m, dz_min, dz_max, dx_min, dx_max,
+            )
+    return wind_cases
+
+
 def _apply_load_configuration(
     load: OSLoad,
     node_cache: Dict[tuple, int],
@@ -921,55 +969,11 @@ def _apply_load_configuration(
     load.AddTemperatureLoad(columns + longitudinal_beams + transverse_beams + longitudinal_bracings + transverse_bracings, temperature_delta, 0.0, 0.0)
     print(f'Applied temperature drop load of {temperature_delta} °C to all members')
 
-    wind_case = load.CreateNewPrimaryLoadEx2("WIND 1", LOAD_TYPE_MAP["Wind"], currentLoadCaseId)
-    currentLoadCaseId += 1
-    load.SetLoadActive(wind_case)
-    windLoadFraction_x = load_configuration.get("wind_load_fraction_x", 1)
-    windLoadFraction_z = load_configuration.get("wind_load_fraction_z", 1)
-    windLoadFraction_nx = load_configuration.get("wind_load_fraction_nx", 0.25)
-    windLoadFraction_nz = load_configuration.get("wind_load_fraction_nz", 0.25)
-    isOpenStructure = load_configuration.get("is_open_structure", True)
-    total_structure_height = grid_spec.get("total_structure_height", 0)
-    column_height = columnObjs[0]["p2"][1] - columnObjs[0]["p1"][1]
-    isOpenStructure = 1 if isOpenStructure else 0
-    windDirection = WIND_DIRECTION_MAP["Global X"]
-    dyMin = 0
-    dyMax = max(total_structure_height, column_height)/1000.0
-    dzMin = 0
-    dzMax = grid_spec.get("bay_long_mm", 3500)*grid_spec.get("n_long_bays", 1)/2000.0
-    dxMin = 0
-    dxMax = grid_spec.get("bay_trans_mm", 3500)*grid_spec.get("n_trans_bays", 1)/2000.0
-    load.AddWindLoad(windDefId, windDirection, windLoadFraction_x, isOpenStructure, dyMin, dyMax, dzMin, dzMax, dxMin, dxMax)
-    windDirection = WIND_DIRECTION_MAP["Global -X"]
-    load.AddWindLoad(windDefId, windDirection, windLoadFraction_nx, isOpenStructure, dyMin, dyMax, dzMin, dzMax, dxMin, dxMax)
-    windDirection = WIND_DIRECTION_MAP["Global Z"]
-    load.AddWindLoad(windDefId, windDirection, windLoadFraction_z, isOpenStructure, dyMin, dyMax, dzMin, dzMax, dxMin, dxMax)
-    windDirection = WIND_DIRECTION_MAP["Global -Z"]
-    load.AddWindLoad(windDefId, windDirection, windLoadFraction_nz, isOpenStructure, dyMin, dyMax, dzMin, dzMax, dxMin, dxMax)
-
-    wind_case_2 = load.CreateNewPrimaryLoadEx2("WIND 2", LOAD_TYPE_MAP["Wind"], currentLoadCaseId)
-    currentLoadCaseId += 1
-    load.SetLoadActive(wind_case_2)
-    windLoadFraction_x = load_configuration.get("wind_load_fraction_x", 1)
-    windLoadFraction_z = load_configuration.get("wind_load_fraction_z", 1)
-    windLoadFraction_nx = load_configuration.get("wind_load_fraction_nx", 0.25)
-    windLoadFraction_nz = load_configuration.get("wind_load_fraction_nz", 0.25)
-    isOpenStructure = load_configuration.get("is_open_structure", False)
-    isOpenStructure = 1 if isOpenStructure else 0
-    windDirection = WIND_DIRECTION_MAP["Global X"]
-    dyMin = 0
-    dyMax = max(total_structure_height, column_height)/1000.0
-    dzMin = grid_spec.get("bay_long_mm", 3500)*grid_spec.get("n_long_bays", 1)/2000.0
-    dzMax = grid_spec.get("bay_long_mm", 3500)*grid_spec.get("n_long_bays", 1)/1000.0
-    dxMin = grid_spec.get("bay_long_mm", 3500)*grid_spec.get("n_long_bays", 1)/2000.0
-    dxMax = grid_spec.get("bay_trans_mm", 3500)*grid_spec.get("n_trans_bays", 1)/1000.0
-    load.AddWindLoad(windDefId, windDirection, windLoadFraction_x, isOpenStructure, dyMin, dyMax, dzMin, dzMax, dxMin, dxMax)
-    windDirection = WIND_DIRECTION_MAP["Global -X"]
-    load.AddWindLoad(windDefId, windDirection, windLoadFraction_nx, isOpenStructure, dyMin, dyMax, dzMin, dzMax, dxMin, dxMax)
-    windDirection = WIND_DIRECTION_MAP["Global Z"]
-    load.AddWindLoad(windDefId, windDirection, windLoadFraction_z, isOpenStructure, dyMin, dyMax, dzMin, dzMax, dxMin, dxMax)
-    windDirection = WIND_DIRECTION_MAP["Global -Z"]
-    load.AddWindLoad(windDefId, windDirection, windLoadFraction_nz, isOpenStructure, dyMin, dyMax, dzMin, dzMax, dxMin, dxMax)
+    wind_cases = _create_directional_wind_cases(
+        load, members, grid_spec, windDefId, currentLoadCaseId,
+        load_configuration.get("is_open_structure", True),
+    )
+    currentLoadCaseId += len(wind_cases)
 
     #TODO: Wind uniform load on members
     #load.AddMemberUniformForce(columns + longitudinal_bracings + transverse_bracings, DIRECTION_TYPE_MAP["GlobalX"], 0.6, 0.0, 0.0, 0.0)  # 4=GlobalX
@@ -981,8 +985,8 @@ def _apply_load_configuration(
     load.AddLoadAndFactorToCombination(combo3, load_case, 1)
     load.AddLoadAndFactorToCombination(combo3, installation_case, 1)
     load.AddLoadAndFactorToCombination(combo3, load_case_2, 0.80)
-    load.AddLoadAndFactorToCombination(combo3, wind_case, 0.75)
-    load.AddLoadAndFactorToCombination(combo3, wind_case_2, 0.75)
+    for wind_case in wind_cases:
+        load.AddLoadAndFactorToCombination(combo3, wind_case, 0.75)
     load.AddLoadAndFactorToCombination(combo3, seismic_case_1, 0.75)
     load.AddLoadAndFactorToCombination(combo3, seismic_case_2, 0.75)
     load.AddLoadAndFactorToCombination(combo3, seismic_case_3, 0.75)
@@ -997,8 +1001,8 @@ def _apply_load_configuration(
     load.AddLoadAndFactorToCombination(combo4, load_case, 1)
     load.AddLoadAndFactorToCombination(combo4, installation_case, 1)
     load.AddLoadAndFactorToCombination(combo4, load_case_2, 0.95)
-    load.AddLoadAndFactorToCombination(combo4, wind_case, 1.2)
-    load.AddLoadAndFactorToCombination(combo4, wind_case_2, 1.2)
+    for wind_case in wind_cases:
+        load.AddLoadAndFactorToCombination(combo4, wind_case, 1.2)
     load.AddLoadAndFactorToCombination(combo4, seismic_case_1, 1.1)
     load.AddLoadAndFactorToCombination(combo4, seismic_case_2, 1.1)
     load.AddLoadAndFactorToCombination(combo4, seismic_case_3, 1.1)

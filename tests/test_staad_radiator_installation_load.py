@@ -13,7 +13,7 @@ helpers = [
         "_get_edge_nodes", "_get_inner_nodes", "_get_edge_members", "_node_key",
         "_apply_distributed_nodal_load", "_apply_radiator_installation_load",
         "_apply_distributed_seismic_joint_weight",
-        "_apply_load_configuration", "searchDictByKeyStart",
+        "_apply_load_configuration", "searchDictByKeyStart", "_create_directional_wind_cases",
     }
 ]
 constants = [
@@ -158,7 +158,8 @@ class RadiatorInstallationLoadTests(unittest.TestCase):
             {"total_radiator_weight_including_liquid_kg": 4380,
              "total_live_weight_including_liquid_kg": 160,
              "live_load_intensity_kN_per_m2": 2.87},
-            members, support_nodes, {"bay_long_mm": 3000, "bay_trans_mm": 2000},
+            members, support_nodes, {"bay_long_mm": 3000, "bay_trans_mm": 2000,
+                                     "n_long_bays": 2, "n_trans_bays": 2},
         )
         case_ids = {
             call.args[0]: call.args[2] for call in load.CreateNewPrimaryLoadEx2.call_args_list
@@ -224,12 +225,68 @@ class RadiatorInstallationLoadTests(unittest.TestCase):
             -160 * 9.81 / 1000,
         )
         live_uniform_calls = [arguments for method, arguments in live_calls if method == "AddMemberUniformForce"]
-        self.assertEqual(live_uniform_calls, [
-            ([1, 2, 3, 4, 5, 6], 5, -2.87 * 3.0, 0.0, 3.0, 0.0),
-            ([7, 8, 9, 10, 11, 12], 5, -2.87 * 2.0, 0.0, 2.0, 0.0),
-        ])
+        self.assertEqual(live_uniform_calls, [])
+        self.assertNotIn("WIND 1", case_ids)
+        self.assertNotIn("WIND 2", case_ids)
         for combination in load.CreateNewLoadCombination.call_args_list:
             load.AddLoadAndFactorToCombination.assert_any_call(combination.args[1], case_ids["INST"], 1)
+            wind_factor = 0.75 if combination.args[0] == "Comb DL LL WL" else 1.2
+            for title in ("W+X", "W-X", "W+Z", "W-Z"):
+                load.AddLoadAndFactorToCombination.assert_any_call(combination.args[1], case_ids[title], wind_factor)
+
+    def test_directional_wind_cases_use_unique_rows_and_requested_ranges(self):
+        members = []
+        for row in range(3):
+            for bay in range(3):
+                members.append({
+                    "type": "beam", "name": f"beam-x-{row}-{bay}",
+                    "p1": [row * 3300, 5000, bay * 2600],
+                    "p2": [row * 3300, 5000, (bay + 1) * 2600],
+                })
+        for row in range(4):
+            for bay in range(2):
+                members.append({
+                    "type": "beam", "name": f"beam-y-{bay}-{row}",
+                    "p1": [bay * 3300, 5000, row * 2600],
+                    "p2": [(bay + 1) * 3300, 5000, row * 2600],
+                })
+        load = Mock()
+        load.CreateNewPrimaryLoadEx2.side_effect = lambda title, load_type, case_id: case_id
+        grid_spec = {
+            "n_trans_bays": 2, "bay_trans_mm": 3300,
+            "n_long_bays": 3, "bay_long_mm": 2600, "total_structure_height": 5300,
+        }
+        cases = namespace["_create_directional_wind_cases"](load, list(reversed(members)), grid_spec, 1, 11, True)
+        self.assertEqual(cases, [11, 12, 13, 14])
+        self.assertEqual([call.args for call in load.CreateNewPrimaryLoadEx2.call_args_list], [
+            ("W+X", 3, 11), ("W-X", 3, 12), ("W+Z", 3, 13), ("W-Z", 3, 14),
+        ])
+        calls_by_case = {}
+        active_case = None
+        for method, arguments, keywords in load.mock_calls:
+            if method == "SetLoadActive":
+                active_case = arguments[0]
+            elif method == "AddWindLoad":
+                calls_by_case.setdefault(active_case, []).append(arguments)
+        for case_id, direction, factor in ((11, 1, 1.0), (12, 4, -1.0)):
+            self.assertEqual(len(calls_by_case[case_id]), 3)
+            for arguments, coordinate in zip(calls_by_case[case_id], [0.0, 3.3, 6.6]):
+                expected = (1, direction, factor, 1, 0.0, 5.3, -1.0, 6.8, coordinate - 0.1, coordinate + 0.1)
+                for actual_value, expected_value in zip(arguments, expected):
+                    self.assertAlmostEqual(actual_value, expected_value)
+        for case_id, direction, factor in ((13, 3, 1.0), (14, 6, -1.0)):
+            self.assertEqual(len(calls_by_case[case_id]), 4)
+            for arguments, coordinate in zip(calls_by_case[case_id], [0.0, 2.6, 5.2, 7.8]):
+                expected = (1, direction, factor, 1, 0.0, 5.3, coordinate - 0.1, coordinate + 0.1, -1.0, 8.0)
+                for actual_value, expected_value in zip(arguments, expected):
+                    self.assertAlmostEqual(actual_value, expected_value)
+
+        load.reset_mock()
+        grid_spec["total_structure_height"] = 4900
+        namespace["_create_directional_wind_cases"](load, members, grid_spec, 1, 11, False)
+        for call in load.AddWindLoad.call_args_list:
+            self.assertEqual(call.args[3], 0)
+            self.assertEqual(call.args[5], 5.0)
 
 
 if __name__ == "__main__":

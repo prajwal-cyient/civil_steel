@@ -928,9 +928,9 @@ def _apply_load_configuration(
     # Load direction (1 to 9 for LocalX, LocalY, LocalZ, GlobalX, GlobalY, GlobalZ, ProjectedX, ProjectedY, ProjectedZ respectively)
     # For uniform load in the global Y direction (downwards), use direction 6 (GlobalY)
     if longitudinal_edge_members:
-        load.AddMemberUniformForce(longitudinal_edge_members, DIRECTION_TYPE_MAP["GlobalY"], -dead_load_intensity_kN_per_m2 * longitudinal_beam_length_m, 0.0, longitudinal_beam_length_m, 0.0)
+        load.AddMemberUniformForce(longitudinal_edge_members, DIRECTION_TYPE_MAP["GlobalY"], -dead_load_intensity_kN_per_m2 * longitudinal_beam_length_m, 0.0, 0.0, 0.0)
     if transverse_edge_members:
-        load.AddMemberUniformForce(transverse_edge_members, DIRECTION_TYPE_MAP["GlobalY"], -dead_load_intensity_kN_per_m2 * transverse_beam_length_m, 0.0, transverse_beam_length_m, 0.0)
+        load.AddMemberUniformForce(transverse_edge_members, DIRECTION_TYPE_MAP["GlobalY"], -dead_load_intensity_kN_per_m2 * transverse_beam_length_m, 0.0, 0.0, 0.0)
 
     installation_case = load.CreateNewPrimaryLoadEx2("INST", LOAD_TYPE_MAP["Dead"], currentLoadCaseId)
     currentLoadCaseId += 1

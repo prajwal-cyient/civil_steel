@@ -1197,7 +1197,7 @@ def _apply_load_configuration(
     print(f'Envelope creation results: {envelopCreationResults}')
     #load.AddLoadCasesToEnvelop(envelopeId-1, comboLoadCases)
     # TODO: Here we define the load envelope case IDs to be included in the load envelope list.
-    loadEnvelopeCaseIds = [3]
+    loadEnvelopeCaseIds = [envelopeId-1] # pick the last one
     ret = load.CreateLoadList(LOAD_LIST_TYPE_MAP["load_envelope_list"], loadEnvelopeCaseIds)
 
     # create design parameters

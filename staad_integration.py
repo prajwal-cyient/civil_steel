@@ -382,6 +382,60 @@ ENVELOP_TYPE_MAP = {
     "TEMPORARY": 6,
 }
 
+# Load list type: 0 and 1 for load list and load envelope list,
+LOAD_LIST_TYPE_MAP: Dict[str, int] = {
+    "load_list": 0,
+    "load_envelope_list": 1,
+}
+
+# STAAD.Pro openstaadpy Design Code Mapping Dictionary
+DESIGN_CODES_MAP: Dict[str, int] = {
+    "AASHTO ASD": 1001,
+    "AISC ASD": 1002,
+    "AS 4100-1998": 1003,
+    "BS 5950-1:2000": 1004,
+    "BS 5400:Part 3:1982": 1005,
+    "CAN/CSA-S16-01": 1006,
+    "French CM66 1977": 1007,
+    "DIN 18 800 Part 1": 1008,
+    "IS 800 1984, ASD": 1009,
+    "Japan AIJ 2002": 1010,
+    "AISC LRFD": 1011,
+    "Norway NS 3472 2001": 1012,
+    "Norway NPD 1993": 1014,
+    "API 2A-WSD": 1016,
+    "ASCE 10-97": 1020,
+    "Russia SNiP 2.23-81* 1990": 1025,
+    "Canada S136-94": 1027,
+    "IS 801 1975": 1028,
+    "IS 802 1995": 1029,
+    "Mexico NTC 1987": 1030,
+    "IS 800 2007, LSD": 1032,
+    "IS 800 2007, WSD": 1052, # Note: Mapping duplicated/corrected per original list references
+    "BS 5950-5:1998": 1033,
+    "South Africa SANS 10162-1:2011": 1034,
+    "AASHTO LRFD": 1044,
+    "ANSI/AISC 360-05": 1045,
+    "ASME NF 3000 (various years)": 1053, # Note: Kept the last instance (1053) for unique dictionary keys
+    "ASCE 52": 1060,
+    "ANSI/AISC 360-10": 1061,
+    "Canadian S16_09": 1062,
+    "Russia SP 16.13330.2011": 1063,
+    "South Africa SANS10162-1:1993": 1064,
+    "Canadian S16_14": 1065,
+    "NZS3404_1997": 1066,
+    "ANSI/AISC 360-16": 1067,
+    "AISI S100-2016": 1068,
+    "Canadian S16_19": 1069,
+    "AISC CASTELLATED": 1102,
+    "AISC N690 1994": 1202,
+    "AISC N690 1984": 1204,
+    "Japan AIJ 2005": 1210,
+    "BS EN 1993-1-1:2005": 1220,
+    "Russia SP 16.13330.2017": 1221,
+}
+
+
 def searchDictByKeyStart(dict: Dict[str, Any], key_start: str) -> Any:
     for key, value in dict.items():
         if key.startswith(key_start):
@@ -823,8 +877,55 @@ def _create_combo_load_case(load: OSLoad, currentLoadCaseId: int, comboCaseTitle
             load.AddLoadAndFactorToCombination(comboCaseId, case_id, factor)
     return currentLoadCaseId
 
+def create_design_parameters(design: OSDesign, grid_spec: Dict[str, Any], members: List[Dict[str, Any]], longitudinal_beams: List[Any], transverse_beams: List[Any], columns: List[Any], longitudinal_braces: List[Any], transverse_braces: List[Any]) -> None:
+    design_code_str = grid_spec.get("design_code", "BS EN 1993-1-1:2005")
+    design_code = DESIGN_CODES_MAP[design_code_str]
+    member_id_list = [member["id"] for member in members]
+    print(f'Creating design parameters for design code {design_code_str}: {design_code}')
+    designRefId = design.CreateDesignBrief(design_code)
+    #design.AssignDesignParameter(designRefId, "CODE", design_code_str, [])
+    design.AssignDesignParameter(designRefId, "BEAM", "3", member_id_list)
+    design.AssignDesignParameter(designRefId, "NA", "0", member_id_list)
+    design.AssignDesignParameter(designRefId, "SGR", "2", member_id_list)
+    # For beams: Assume I cross-section profile (I-beam)
+    design.AssignDesignParameter(designRefId, "SBLT", "0", longitudinal_beams + transverse_beams)
+    # For columns and braces: Assume standard square or rectangular cross-section profile
+    design.AssignDesignParameter(designRefId, "SBLT", "2", columns + longitudinal_braces + transverse_braces)
+    design.AssignDesignParameter(designRefId, "GM1", "1", member_id_list)
+    design.AssignDesignParameter(designRefId, "GM2", "1.25", member_id_list)
+    design.AssignDesignParameter(designRefId, "GM0", "1", member_id_list)
+    # Calculate and assign lengths for columns, longitudinal beams, and transverse beams
+    columnObjs = list(filter(lambda m: m.get("type", "").lower() == "column", members))
+    column_length = (columnObjs[0].get("p2")[1] - columnObjs[0].get("p1")[1])/1000.0 if columnObjs else 0
+    design.AssignDesignParameter(designRefId, "LY", str(column_length), columns)
+    design.AssignDesignParameter(designRefId, "LZ", str(column_length), columns)
+    design.AssignDesignParameter(designRefId, "UNL", str(column_length), columns)
+    print(f'Assigned column length LY, LZ, UNL = {column_length} to columns: {columns}')
+
+    longitudinal_beam_objs = list(filter(lambda m: m.get("type", "").lower() == "beam" and m.get("name", "").lower().startswith("beam-x"), members))
+    longitudinal_beam_length = (longitudinal_beam_objs[0].get("p2")[2] - longitudinal_beam_objs[0].get("p1")[2])/1000.0 if longitudinal_beam_objs else 0
+    design.AssignDesignParameter(designRefId, "LY", str(longitudinal_beam_length), longitudinal_beams)
+    design.AssignDesignParameter(designRefId, "LZ", str(longitudinal_beam_length), longitudinal_beams)
+    design.AssignDesignParameter(designRefId, "UNL", str(longitudinal_beam_length), longitudinal_beams)
+    print(f'Assigned longitudinal beam length LY, LZ, UNL = {longitudinal_beam_length} to longitudinal beams: {longitudinal_beams}')
+
+    transverse_beam_objs = list(filter(lambda m: m.get("type", "").lower() == "beam" and m.get("name", "").lower().startswith("beam-y"), members))
+    transverse_beam_length = (transverse_beam_objs[0].get("p2")[0] - transverse_beam_objs[0].get("p1")[0])/1000.0 if transverse_beam_objs else 0
+    design.AssignDesignParameter(designRefId, "LY", str(transverse_beam_length), transverse_beams)
+    design.AssignDesignParameter(designRefId, "LZ", str(transverse_beam_length), transverse_beams)
+    design.AssignDesignParameter(designRefId, "UNL", str(transverse_beam_length), transverse_beams)
+    print(f'Assigned transverse beam length LY, LZ, UNL = {transverse_beam_length} to transverse beams: {transverse_beams}')
+
+    design.AssignDesignParameter(designRefId, "KY", "1", columns)
+    design.AssignDesignParameter(designRefId, "KZ", "1", columns)
+    design.AssignDesignParameter(designRefId, "TRACK", "2", columns)
+
+    design.AssignDesignCommand(designRefId, "CHECK CODE", "", member_id_list)
+    design.AssignDesignCommand(designRefId, "MEMBER TAKE OFF", "", member_id_list)
+
 def _apply_load_configuration(
     load: OSLoad,
+    design: OSDesign,
     node_cache: Dict[tuple, int],
     load_configuration: Dict[str, Any],
     members: List[Dict[str, Any]],
@@ -1095,14 +1196,12 @@ def _apply_load_configuration(
 
     print(f'Envelope creation results: {envelopCreationResults}')
     #load.AddLoadCasesToEnvelop(envelopeId-1, comboLoadCases)
-    # Load list type: 0 and 1 for load list and load envelope list,
-    LOAD_LIST_TYPE_MAP: Dict[str, int] = {
-        "load_list": 0,
-        "load_envelope_list": 1,
-    }
     # TODO: Here we define the load envelope case IDs to be included in the load envelope list.
     loadEnvelopeCaseIds = [3]
     ret = load.CreateLoadList(LOAD_LIST_TYPE_MAP["load_envelope_list"], loadEnvelopeCaseIds)
+
+    # create design parameters
+    create_design_parameters(design, grid_spec, members, longitudinal_beams, transverse_beams, columns, longitudinal_bracings, transverse_bracings)
 
     return {"applied": currentLoadCaseId - 1 - len(errors), "errors": errors}
 
@@ -1157,14 +1256,6 @@ def _joint_force_maxima(joint_member_ends: dict, start_forces: list, end_forces:
                     }
     return groups
 
-def create_design_parameters():
-    design_parameters = {
-        "material": {},
-        "profile": {},
-        "load": {},
-    }
-    return design_parameters
-
 async def send_to_staad(data: dict) -> dict:
     """
     Send every member in data["members_split_beams"] to the currently
@@ -1214,6 +1305,7 @@ async def send_to_staad(data: dict) -> dict:
     load = openstaad.Load
     support = openstaad.Support
     command = openstaad.Command
+    design = openstaad.Design
 
     end_my_mz_release_spec_id = property.CreateMemberReleaseSpec(1, [0, 0, 0, 0, 1, 1], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     truss_spec_id = property.CreateMemberTrussSpec()
@@ -1270,7 +1362,7 @@ async def send_to_staad(data: dict) -> dict:
     load_errors: List[Dict[str, str]] = []
     if load_configuration:
         load_result = _apply_load_configuration(
-            load, node_cache, load_configuration, members, support_nodes, grid_spec
+            load, design, node_cache, load_configuration, members, support_nodes, grid_spec
         )
         load_applied = load_result["applied"]
         load_errors = load_result["errors"]

@@ -812,6 +812,16 @@ def _create_directional_wind_cases(
             )
     return wind_cases
 
+def _create_combo_load_case(load: OSLoad, currentLoadCaseId: int, comboCaseTitle: str, comboLoadCases: List[int], primary_case_ids: List[int], load_factors: List[float]) -> int:
+    comboCaseId = load.CreateNewLoadCombination(comboCaseTitle, currentLoadCaseId)
+    comboLoadCases.append(comboCaseId)
+    currentLoadCaseId += 1
+
+    # Add the primary load cases with their corresponding factors
+    for case_id, factor in zip(primary_case_ids, load_factors):
+        if factor is not None and factor != 0:
+            load.AddLoadAndFactorToCombination(comboCaseId, case_id, factor)
+    return currentLoadCaseId
 
 def _apply_load_configuration(
     load: OSLoad,
@@ -1042,53 +1052,57 @@ def _apply_load_configuration(
     # Load Combination 3 (75% of 1 & 2)
     comboLoadCases: list[int] = []
     currentLoadCaseId = max(currentLoadCaseId, startingComboLoadCaseId)
-    combo3 = load.CreateNewLoadCombination("Comb DL LL WL", currentLoadCaseId)
-    comboLoadCases.append(combo3)
-    currentLoadCaseId += 1
-    #TODO: Add the two load cases (DL and LL) with appropriate factors to the combination
-    load.AddLoadAndFactorToCombination(combo3, load_case, 1)
-    load.AddLoadAndFactorToCombination(combo3, installation_case, 1)
-    load.AddLoadAndFactorToCombination(combo3, load_case_2, 0.80)
-    for wind_case in wind_cases:
-        load.AddLoadAndFactorToCombination(combo3, wind_case, 0.75)
-    load.AddLoadAndFactorToCombination(combo3, seismic_case_1, 0.75)
-    load.AddLoadAndFactorToCombination(combo3, seismic_case_2, 0.75)
-    load.AddLoadAndFactorToCombination(combo3, seismic_case_3, 0.75)
-    load.AddLoadAndFactorToCombination(combo3, seismic_case_4, 0.75)
-    load.AddLoadAndFactorToCombination(combo3, seismic_case_5, 0.75)
-    load.AddLoadAndFactorToCombination(combo3, temperature_case1, 1.2)
-    load.AddLoadAndFactorToCombination(combo3, temperature_case2, 1.2)
-
-    combo4 = load.CreateNewLoadCombination("Comb DL LL WL 2", currentLoadCaseId)
-    comboLoadCases.append(combo4)
-    currentLoadCaseId += 1
-    #TODO: Add the two load cases (DL and LL) with appropriate factors to the combination
-    load.AddLoadAndFactorToCombination(combo4, load_case, 1)
-    load.AddLoadAndFactorToCombination(combo4, installation_case, 1)
-    load.AddLoadAndFactorToCombination(combo4, load_case_2, 0.95)
-    for wind_case in wind_cases:
-        load.AddLoadAndFactorToCombination(combo4, wind_case, 1.2)
-    load.AddLoadAndFactorToCombination(combo4, seismic_case_1, 1.1)
-    load.AddLoadAndFactorToCombination(combo4, seismic_case_2, 1.1)
-    load.AddLoadAndFactorToCombination(combo4, seismic_case_3, 1.1)
-    load.AddLoadAndFactorToCombination(combo4, seismic_case_4, 1.1)
-    load.AddLoadAndFactorToCombination(combo4, seismic_case_5, 1.1)
-    load.AddLoadAndFactorToCombination(combo4, temperature_case1, 1.5)
-    load.AddLoadAndFactorToCombination(combo4, temperature_case2, 1.5)
+    primary_load_cases = [load_case, installation_case, load_case_2, *wind_cases, seismic_case_1, seismic_case_2, seismic_case_3, seismic_case_4, seismic_case_5, temperature_case1, temperature_case2]
 
     envelopCreationResults: list[bool] = []
     envelopeId = 1
-    ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["SERVICEABILITY"], comboLoadCases)
+    startingComboCaseIdIndex = 0
+
+    load_case_factors = [1, 1, 0.8] + [0.75] * len(wind_cases) + [0.75] * 5 + [1.2, 1.2]
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL", comboLoadCases, primary_load_cases, load_case_factors)
+
+    load_case_factors = [1, 1, 0.95] + [1.2] * len(wind_cases) + [1.1] * 5 + [1.5, 1.5]
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL 2", comboLoadCases, primary_load_cases, load_case_factors)
+    # Add the first load envelope (serviceability)
+    ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["SERVICEABILITY"], comboLoadCases[startingComboCaseIdIndex:])
     envelopCreationResults.append(ret)
     envelopeId += 1
-    ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["STRENGTH"], comboLoadCases)
+    startingComboCaseIdIndex = len(comboLoadCases)
+
+    load_case_factors = [1, 1, 0.95] + [1.0] * len(wind_cases) + [1.2] * 5 + [1.5, 1.5]
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL 3", comboLoadCases, primary_load_cases, load_case_factors)
+    load_case_factors = [1, 1, 0.95] + [1.2] * len(wind_cases) + [1.1] * 5 + [1.5, 1.5]
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL 4", comboLoadCases, primary_load_cases, load_case_factors)
+    load_case_factors = [1, 1, 0.95] + [1.2] * len(wind_cases) + [1.1] * 5 + [1.5, 1.5]
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL 5", comboLoadCases, primary_load_cases, load_case_factors)
+    # Add the next load envelope (strength)
+    ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["STRENGTH"], comboLoadCases[startingComboCaseIdIndex:])
     envelopCreationResults.append(ret)
     envelopeId += 1
-    ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["STRENGTH"], comboLoadCases)
+    startingComboCaseIdIndex = len(comboLoadCases)
+
+    load_case_factors = [1, 1, 0.95] + [1.3] * len(wind_cases) + [1.4] * 5 + [1.5, 1.5]
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL 6", comboLoadCases, primary_load_cases, load_case_factors)
+    load_case_factors = [1, 1, 0.95] + [0.9] * len(wind_cases) + [0.9] * 5 + [1.5, 1.5]
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL 7", comboLoadCases, primary_load_cases, load_case_factors)
+    load_case_factors = [1, 1, 0.95] + [1.5] * len(wind_cases) + [1.5] * 5 + [1.5, 1.5]
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL 8", comboLoadCases, primary_load_cases, load_case_factors)
+    # Add the next load envelope (strength)
+    ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["STRENGTH"], comboLoadCases[startingComboCaseIdIndex:])
     envelopCreationResults.append(ret)
     envelopeId += 1
+    startingComboCaseIdIndex = len(comboLoadCases)
+
     print(f'Envelope creation results: {envelopCreationResults}')
     #load.AddLoadCasesToEnvelop(envelopeId-1, comboLoadCases)
+    # Load list type: 0 and 1 for load list and load envelope list,
+    LOAD_LIST_TYPE_MAP: Dict[str, int] = {
+        "load_list": 0,
+        "load_envelope_list": 1,
+    }
+    # TODO: Here we define the load envelope case IDs to be included in the load envelope list.
+    loadEnvelopeCaseIds = [3]
+    ret = load.CreateLoadList(LOAD_LIST_TYPE_MAP["load_envelope_list"], loadEnvelopeCaseIds)
 
     return {"applied": currentLoadCaseId - 1 - len(errors), "errors": errors}
 
@@ -1143,6 +1157,13 @@ def _joint_force_maxima(joint_member_ends: dict, start_forces: list, end_forces:
                     }
     return groups
 
+def create_design_parameters():
+    design_parameters = {
+        "material": {},
+        "profile": {},
+        "load": {},
+    }
+    return design_parameters
 
 async def send_to_staad(data: dict) -> dict:
     """
@@ -1308,14 +1329,28 @@ async def send_to_staad(data: dict) -> dict:
 
     # Check analysis status
     analysis_status = openstaad.GetAnalysisStatus()
-    print(f"Analysis status: {analysis_status}")
+    staad_update_status["analysis_status"] = analysis_status
+
+    try:
+        staad_update_status["errors"] = openstaad.GetAnalysisErrorMessages()
+    except Exception as e:
+        staad_update_status["errors"] = []
+        print(f"Failed to extract analysis error messages: {e}")
+    try:
+        staad_update_status["warnings"] = openstaad.GetAnalysisWarningMessages()
+    except Exception as e:
+        staad_update_status["warnings"] = []
+        print(f"Failed to extract analysis warning messages: {e}")
+    print(f"Analysis status: {analysis_status}, errors: {staad_update_status['errors']}, warnings: {staad_update_status['warnings']}")
+    print("Analysis results extracted and status updated.")
 
     if analysis_status["ReturnValue"] not in [2, 3]:
         staad_update_status["analysis_failed"] = True
-        staad_update_status["analysis_status"] = analysis_status
         return staad_update_status
 
     await asyncio.sleep(3)
+
+    staad_update_status["analysis_complete"] = True
 
     # Extract results
     output = openstaad.Output
@@ -1363,9 +1398,6 @@ async def send_to_staad(data: dict) -> dict:
         staad_update_status[lc_title]["joint_force_maxima"] = _joint_force_maxima(
             joint_member_ends, start_forces, end_forces
         )
-        staad_update_status[lc_title]["analysis_status"] = analysis_status
-        staad_update_status[lc_title]["analysis_complete"] = True
-        print("Analysis results extracted and status updated.")
     
     return staad_update_status
 

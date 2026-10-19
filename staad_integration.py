@@ -102,7 +102,7 @@ import json
 import sys
 import time
 import traceback
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 try:
     from openstaadpy import os_analytical
@@ -1155,42 +1155,42 @@ def _apply_load_configuration(
     currentLoadCaseId = max(currentLoadCaseId, startingComboLoadCaseId)
     primary_load_cases = [load_case, installation_case, load_case_2, *wind_cases, seismic_case_1, seismic_case_2, seismic_case_3, seismic_case_4, seismic_case_5, temperature_case1, temperature_case2]
 
-    envelopCreationResults: list[bool] = []
+    envelopCreationResults: list[Dict[str, Any]] = []
     envelopeId = 1
     startingComboCaseIdIndex = 0
 
     load_case_factors = [1, 1, 0.8] + [0.75] * len(wind_cases) + [0.75] * 5 + [1.2, 1.2]
-    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL", comboLoadCases, primary_load_cases, load_case_factors)
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
 
     load_case_factors = [1, 1, 0.95] + [1.2] * len(wind_cases) + [1.1] * 5 + [1.5, 1.5]
-    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL 2", comboLoadCases, primary_load_cases, load_case_factors)
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
     # Add the first load envelope (serviceability)
     ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["SERVICEABILITY"], comboLoadCases[startingComboCaseIdIndex:])
-    envelopCreationResults.append(ret)
+    envelopCreationResults.append({"envelopeId": envelopeId, "envelopeType": "SERVICEABILITY", "loadCases": comboLoadCases[startingComboCaseIdIndex:], "result": ret})
     envelopeId += 1
     startingComboCaseIdIndex = len(comboLoadCases)
 
     load_case_factors = [1, 1, 0.95] + [1.0] * len(wind_cases) + [1.2] * 5 + [1.5, 1.5]
-    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL 3", comboLoadCases, primary_load_cases, load_case_factors)
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
     load_case_factors = [1, 1, 0.95] + [1.2] * len(wind_cases) + [1.1] * 5 + [1.5, 1.5]
-    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL 4", comboLoadCases, primary_load_cases, load_case_factors)
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
     load_case_factors = [1, 1, 0.95] + [1.2] * len(wind_cases) + [1.1] * 5 + [1.5, 1.5]
-    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL 5", comboLoadCases, primary_load_cases, load_case_factors)
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
     # Add the next load envelope (strength)
     ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["STRENGTH"], comboLoadCases[startingComboCaseIdIndex:])
-    envelopCreationResults.append(ret)
+    envelopCreationResults.append({"envelopeId": envelopeId, "envelopeType": "STRENGTH", "loadCases": comboLoadCases[startingComboCaseIdIndex:], "result": ret})
     envelopeId += 1
     startingComboCaseIdIndex = len(comboLoadCases)
 
     load_case_factors = [1, 1, 0.95] + [1.3] * len(wind_cases) + [1.4] * 5 + [1.5, 1.5]
-    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL 6", comboLoadCases, primary_load_cases, load_case_factors)
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
     load_case_factors = [1, 1, 0.95] + [0.9] * len(wind_cases) + [0.9] * 5 + [1.5, 1.5]
-    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL 7", comboLoadCases, primary_load_cases, load_case_factors)
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
     load_case_factors = [1, 1, 0.95] + [1.5] * len(wind_cases) + [1.5] * 5 + [1.5, 1.5]
-    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, "Comb DL LL WL 8", comboLoadCases, primary_load_cases, load_case_factors)
+    currentLoadCaseId = _create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
     # Add the next load envelope (strength)
     ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["STRENGTH"], comboLoadCases[startingComboCaseIdIndex:])
-    envelopCreationResults.append(ret)
+    envelopCreationResults.append({"envelopeId": envelopeId, "envelopeType": "STRENGTH", "loadCases": comboLoadCases[startingComboCaseIdIndex:], "result": ret})
     envelopeId += 1
     startingComboCaseIdIndex = len(comboLoadCases)
 
@@ -1203,7 +1203,7 @@ def _apply_load_configuration(
     # create design parameters
     create_design_parameters(design, grid_spec, members, longitudinal_beams, transverse_beams, columns, longitudinal_bracings, transverse_bracings)
 
-    return {"applied": currentLoadCaseId - 1 - len(errors), "errors": errors}
+    return {"applied": currentLoadCaseId - 1 - len(errors), "errors": errors, "envelopCreationResults": envelopCreationResults}
 
 
 # ── Public API ───────────────────────────────────────────────────────────
@@ -1255,6 +1255,106 @@ def _joint_force_maxima(joint_member_ends: dict, start_forces: list, end_forces:
                         "forces": dict(zip(components, forces)),
                     }
     return groups
+
+'''
+Create a summary of forces/displacements for member/node in the staad style:
+Given a list of member id/node id and its forces/displacements, this function returns max/min values for each component.
+'''
+def summarize_forces_displacements(data: List[Dict[str, Any]], id_key: str, value_key: str) -> Dict[str, Any]:
+    entity_values = data[0][value_key] if data else []
+    #print("id_key:", id_key, "value_key:", value_key, "Initial entity values:", entity_values)
+    summary = {"max": [float("-inf") for _ in range(len(entity_values))], "min": [float("inf") for _ in range(len(entity_values))],
+               "max_ids": [None for _ in range(len(entity_values))], "min_ids": [None for _ in range(len(entity_values))]}
+    for entry in data:
+        entity_id = entry[id_key]
+        entity_values = entry[value_key]
+        for index in range(len(entity_values)):
+            value = entity_values[index]
+            if value > summary["max"][index]:
+                summary["max"][index] = value
+                summary["max_ids"][index] = entity_id
+            if value < summary["min"][index]:
+                summary["min"][index] = value
+                summary["min_ids"][index] = entity_id
+    return summary
+
+'''
+Calculate the max/min of forces for each component and assign other elements accordingly.
+This function is typically used to summarize the extreme values and their corresponding entities for further analysis or reporting.
+'''
+def find_extreme_forces(forces: List[Dict[str, Any]], forces_summary: Dict[str, Any], summary_key: str, force_key: str, beam_node_map: Dict[int, Tuple[int, int]], lc: str, lc_title: str, start_or_end: int, summary_results: Dict[str, Any]) -> Dict[str, Any]:
+    force_components = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
+    force_key_index = force_components.index(force_key)
+    summary_value_key = f'{summary_key}_{force_key}'
+    comparison = forces_summary[summary_key][force_key_index] > summary_results["forces"][summary_value_key][force_key] if summary_key == "max" else forces_summary[summary_key][force_key_index] < summary_results["forces"][summary_value_key][force_key]
+    if comparison:
+        beam_no = forces_summary[f"{summary_key}_ids"][force_key_index]
+        for comp in force_components:
+            summary_results["forces"][summary_value_key][comp] = list(filter(lambda x: x["beam"] == beam_no, forces))[0]["forces"][force_components.index(comp)]
+        summary_results["forces"][summary_value_key][force_key] = forces_summary[summary_key][force_key_index]
+        summary_results["forces"][summary_value_key]["beam"] = beam_no
+        summary_results["forces"][summary_value_key]["node"] = beam_node_map[beam_no][start_or_end]
+        summary_results["forces"][summary_value_key]["load_case"] = lc
+        summary_results["forces"][summary_value_key]["load_case_title"] = lc_title
+    return summary_results
+
+'''
+Calculate the max/min of member displacements for each component and assign other elements accordingly.
+This function is typically used to summarize the extreme values and their corresponding entities for further analysis or reporting.
+'''
+def find_extreme_member_displacements(member_displacements: List[Dict[str, Any]], member_displacements_summary: Dict[str, Any], summary_key: str, displacement_key: str, beam_node_map: Dict[int, Tuple[int, int]], lc: str, lc_title: str, start_or_end: int, summary_results: Dict[str, Any]) -> Dict[str, Any]:
+    displacement_components = ["X", "Y", "Z"]
+    displacement_key_index = displacement_components.index(displacement_key)
+    summary_value_key = f'{summary_key}_{displacement_key}'
+    comparison = member_displacements_summary[summary_key][displacement_key_index] > summary_results["member_displacements"][summary_value_key][displacement_key] if summary_key == "max" else member_displacements_summary[summary_key][displacement_key_index] < summary_results["member_displacements"][summary_value_key][displacement_key]
+    if comparison:
+        beam_no = member_displacements_summary[f"{summary_key}_ids"][displacement_key_index]
+        for comp in displacement_components:
+            summary_results["member_displacements"][summary_value_key][comp] = list(filter(lambda x: x["beam"] == beam_no, member_displacements))[0]["displacements"][displacement_components.index(comp)]
+        summary_results["member_displacements"][summary_value_key][displacement_key] = member_displacements_summary[summary_key][displacement_key_index]
+        summary_results["member_displacements"][summary_value_key]["beam"] = beam_no
+        summary_results["member_displacements"][summary_value_key]["node"] = beam_node_map[beam_no][start_or_end]
+        summary_results["member_displacements"][summary_value_key]["load_case"] = lc
+        summary_results["member_displacements"][summary_value_key]["load_case_title"] = lc_title
+    return summary_results
+
+'''
+Calculate the max/min of displacements for each component and assign other elements accordingly.
+This function is typically used to summarize the extreme values and their corresponding entities for further analysis or reporting.
+'''
+def find_extreme_displacements(displacements: List[Dict[str, Any]], displacements_summary: Dict[str, Any], summary_key: str, displacement_key: str, lc: str, lc_title: str, summary_results: Dict[str, Any]) -> Dict[str, Any]:
+    displacement_components = ["X", "Y", "Z", "rX", "rY", "rZ"]
+    displacement_key_index = displacement_components.index(displacement_key)
+    summary_value_key = f'{summary_key}_{displacement_key}'
+    comparison = displacements_summary[summary_key][displacement_key_index] > summary_results["displacements"][summary_value_key][displacement_key] if summary_key == "max" else displacements_summary[summary_key][displacement_key_index] < summary_results["displacements"][summary_value_key][displacement_key]
+    if comparison:
+        node_no = displacements_summary[f"{summary_key}_ids"][displacement_key_index]
+        for comp in displacement_components:
+            summary_results["displacements"][summary_value_key][comp] = list(filter(lambda x: x["node"] == node_no, displacements))[0]["displacements"][displacement_components.index(comp)]
+        summary_results["displacements"][summary_value_key][displacement_key] = displacements_summary[summary_key][displacement_key_index]
+        summary_results["displacements"][summary_value_key]["node"] = node_no
+        summary_results["displacements"][summary_value_key]["load_case"] = lc
+        summary_results["displacements"][summary_value_key]["load_case_title"] = lc_title
+    return summary_results
+
+'''
+Calculate the max/min of displacements for each component and assign other elements accordingly.
+This function is typically used to summarize the extreme values and their corresponding entities for further analysis or reporting.
+'''
+def find_extreme_support_reactions(support_reactions: List[Dict[str, Any]], support_reactions_summary: Dict[str, Any], summary_key: str, force_key: str, lc: str, lc_title: str, summary_results: Dict[str, Any]) -> Dict[str, Any]:
+    force_components = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
+    force_key_index = force_components.index(force_key)
+    summary_value_key = f'{summary_key}_{force_key}'
+    comparison = support_reactions_summary[summary_key][force_key_index] > summary_results["support_reactions"][summary_value_key][force_key] if summary_key == "max" else support_reactions_summary[summary_key][force_key_index] < summary_results["support_reactions"][summary_value_key][force_key]
+    if comparison:
+        node_no = support_reactions_summary[f"{summary_key}_ids"][force_key_index]
+        for comp in force_components:
+            summary_results["support_reactions"][summary_value_key][comp] = list(filter(lambda x: x["node"] == node_no, support_reactions))[0]["forces"][force_components.index(comp)]
+        summary_results["support_reactions"][summary_value_key][force_key] = support_reactions_summary[summary_key][force_key_index]
+        summary_results["support_reactions"][summary_value_key]["node"] = node_no
+        summary_results["support_reactions"][summary_value_key]["load_case"] = lc
+        summary_results["support_reactions"][summary_value_key]["load_case_title"] = lc_title
+    return summary_results
 
 async def send_to_staad(data: dict) -> dict:
     """
@@ -1319,6 +1419,7 @@ async def send_to_staad(data: dict) -> dict:
     support_nodes: Set[int] = set()
     member_ids_by_type: Dict[str, List[int]] = {}
     joint_member_ends = {}
+    beam_node_map: Dict[int, Tuple[int, int]] = {}  # maps beam_id to its start and end node IDs
 
     created = 0
     beam_no = 0
@@ -1336,6 +1437,7 @@ async def send_to_staad(data: dict) -> dict:
             created += 1
             joint_member_ends.setdefault(n1, []).append((beam_no, start_end))
             joint_member_ends.setdefault(n2, []).append((beam_no, final_end))
+            beam_node_map[beam_no] = (n1, n2)
         except Exception as exc:  # keep going; report this member and move on
             errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
             continue  # nothing to assign a property to if geometry creation failed
@@ -1366,6 +1468,7 @@ async def send_to_staad(data: dict) -> dict:
         )
         load_applied = load_result["applied"]
         load_errors = load_result["errors"]
+        load_envelopes = load_result.get("envelopCreationResults", [])
 
     # Update structure before analysis
     openstaad.UpdateStructure()
@@ -1383,6 +1486,7 @@ async def send_to_staad(data: dict) -> dict:
         "errors": errors,
         "property_assignment_failed": len(property_errors),
         "property_errors": property_errors,
+        "load_envelopes": load_envelopes,
         "load_cases_applied": load_applied,
         "load_cases_failed": len(load_errors),
         "load_errors": load_errors,
@@ -1452,10 +1556,65 @@ async def send_to_staad(data: dict) -> dict:
     force_factor = 4.4482216152605 if base_unit == "English" else 1.0
     moments_factor = force_factor * 0.0254 if base_unit == "English" else 1.0
 
+    displacement_unit = output.GetOutputUnitForDisplacement()
+    force_unit = output.GetOutputUnitForForce()
+    moment_unit = output.GetOutputUnitForMoment()
+    rotation_unit = output.GetOutputUnitForRotation()
+    print(f"Output units - Displacement unit: {displacement_unit}, Force unit: {force_unit}, Moment unit: {moment_unit}, Rotation unit: {rotation_unit}")
+
     # GetMemberEndForces returns FX, FY, FZ, MX, MY, and MZ (in order)
     results_local = load_configuration.get("results_local_or_global", 0)
     loadCaseMap = {load.GetLoadCaseTitle(lc): lc for lc in load.GetLoadCombinationCaseNumbers()} # GetPrimaryLoadCaseNumbers
     print(f"Load case map: {loadCaseMap}")
+
+    summary_results = {
+                        "displacements": {"max_X": {"node": None, "load_case": None, "load_case_title": None, "X": float("-inf"), "Y": None, "Z": None, "rX": None, "rY": None, "rZ": None},
+                                          "min_X": {"node": None, "load_case": None, "load_case_title": None, "X": float("inf"), "Y": None, "Z": None, "rX": None, "rY": None, "rZ": None},
+                                          "max_Y": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": float("-inf"), "Z": None, "rX": None, "rY": None, "rZ": None},
+                                          "min_Y": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": float("inf"), "Z": None, "rX": None, "rY": None, "rZ": None},
+                                          "max_Z": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": float("-inf"), "rX": None, "rY": None, "rZ": None},
+                                          "min_Z": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": float("inf"), "rX": None, "rY": None, "rZ": None},
+                                          "max_rX": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": None, "rX": float("-inf"), "rY": None, "rZ": None},
+                                          "min_rX": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": None, "rX": float("inf"), "rY": None, "rZ": None},
+                                          "max_rY": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": None, "rX": None, "rY": float("-inf"), "rZ": None},
+                                          "min_rY": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": None, "rX": None, "rY": float("inf"), "rZ": None},
+                                          "max_rZ": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": None, "rX": None, "rY": None, "rZ": float("-inf")},
+                                          "min_rZ": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": None, "rX": None, "rY": None, "rZ": float("inf")}
+                        },
+                        "member_displacements": {"max_X": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "X": float("-inf"), "Y": None, "Z": None},
+                                          "min_X": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "X": float("inf"), "Y": None, "Z": None},
+                                          "max_Y": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "X": None, "Y": float("-inf"), "Z": None},
+                                          "min_Y": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "X": None, "Y": float("inf"), "Z": None},
+                                          "max_Z": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": float("-inf")},
+                                          "min_Z": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": float("inf")},
+                        },
+                        "forces": {"max_Fx": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": float("-inf"), "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                  "min_Fx": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": float("inf"), "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                  "max_Fy": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": float("-inf"), "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                  "min_Fy": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": float("inf"), "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                  "max_Fz": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": float("-inf"), "Mx": None, "My": None, "Mz": None},
+                                  "min_Fz": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": float("inf"), "Mx": None, "My": None, "Mz": None},
+                                  "max_Mx": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": float("-inf"), "My": None, "Mz": None},
+                                  "min_Mx": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": float("inf"), "My": None, "Mz": None},
+                                  "max_My": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": float("-inf"), "Mz": None},
+                                  "min_My": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": float("inf"), "Mz": None},
+                                  "max_Mz": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": float("-inf")},
+                                  "min_Mz": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": float("inf")},
+                        },
+                        "support_reactions": {"max_Fx": {"node": None, "load_case": None, "load_case_title": None, "Fx": float("-inf"), "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                               "min_Fx": {"node": None, "load_case": None, "load_case_title": None, "Fx": float("inf"), "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                               "max_Fy": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": float("-inf"), "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                               "min_Fy": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": float("inf"), "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                               "max_Fz": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": float("-inf"), "Mx": None, "My": None, "Mz": None},
+                                               "min_Fz": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": float("inf"), "Mx": None, "My": None, "Mz": None},
+                                               "max_Mx": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": float("-inf"), "My": None, "Mz": None},
+                                               "min_Mx": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": float("inf"), "My": None, "Mz": None},
+                                               "max_My": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": float("-inf"), "Mz": None},
+                                               "min_My": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": float("inf"), "Mz": None},
+                                               "max_Mz": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": float("-inf")},
+                                               "min_Mz": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": float("inf")}
+                        }
+                    }
     for lc_title, lc in loadCaseMap.items():
         print(f"Processing load case: {lc_title} (ID: {lc})")
         end_forces = [
@@ -1469,28 +1628,271 @@ async def send_to_staad(data: dict) -> dict:
         ]
 
         support_reactions = [
-            {"support": support_id, "forces": output.GetSupportReactions(int(support_id), int(lc))}
+            {"node": support_id, "forces": output.GetSupportReactions(int(support_id), int(lc))}
             for support_id in support_nodes
         ]
 
+        member_start_displacements = [
+            {"beam": line_id, "displacements": output.GetMemberEndDisplacements(int(line_id), start_end, int(lc))}
+            for line_id in beam_by_name.values()
+        ]
+
+        member_end_displacements = [
+            {"beam": line_id, "displacements": output.GetMemberEndDisplacements(int(line_id), final_end, int(lc))}
+            for line_id in beam_by_name.values()
+        ]
+
+        node_displacements = [
+            {"node": node_id, "displacements": output.GetNodeDisplacements(int(node_id), int(lc))}
+            for node_id in node_cache.values()
+        ]
+
+        # convert to kN and kN-m for forces and moments respectively
         for force_entries in (start_forces, end_forces, support_reactions):
             for entry in force_entries:
                 entry["forces"] = [
                     value * (force_factor if index < 3 else moments_factor)
                     for index, value in enumerate(entry["forces"])
                 ]
+        # convert displacements from inches to m
+        if displacement_unit.startswith("in"):
+            for displacement_entries in (member_start_displacements, member_end_displacements, node_displacements):
+                for entry in displacement_entries:
+                    entry["displacements"] = [value * 0.0254 for value in entry["displacements"]]
+
+        start_forces_summary = summarize_forces_displacements(start_forces, "beam", "forces")
+        end_forces_summary = summarize_forces_displacements(end_forces, "beam", "forces")
+        support_reactions_summary = summarize_forces_displacements(support_reactions, "node", "forces")
+        member_start_displacements_summary = summarize_forces_displacements(member_start_displacements, "beam", "displacements")
+        member_end_displacements_summary = summarize_forces_displacements(member_end_displacements, "beam", "displacements")
+        node_displacements_summary = summarize_forces_displacements(node_displacements, "node", "displacements")
+
+        find_extreme_forces(start_forces, start_forces_summary, "max", "Fx", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_forces(start_forces, start_forces_summary, "min", "Fx", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_forces(start_forces, start_forces_summary, "max", "Fy", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_forces(start_forces, start_forces_summary, "min", "Fy", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_forces(start_forces, start_forces_summary, "max", "Fz", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_forces(start_forces, start_forces_summary, "min", "Fz", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_forces(start_forces, start_forces_summary, "max", "Mx", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_forces(start_forces, start_forces_summary, "min", "Mx", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_forces(start_forces, start_forces_summary, "max", "My", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_forces(start_forces, start_forces_summary, "min", "My", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_forces(start_forces, start_forces_summary, "max", "Mz", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_forces(start_forces, start_forces_summary, "min", "Mz", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_forces(end_forces, end_forces_summary, "max", "Fx", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_forces(end_forces, end_forces_summary, "min", "Fx", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_forces(end_forces, end_forces_summary, "max", "Fy", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_forces(end_forces, end_forces_summary, "min", "Fy", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_forces(end_forces, end_forces_summary, "max", "Fz", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_forces(end_forces, end_forces_summary, "min", "Fz", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_forces(end_forces, end_forces_summary, "max", "Mx", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_forces(end_forces, end_forces_summary, "min", "Mx", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_forces(end_forces, end_forces_summary, "max", "My", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_forces(end_forces, end_forces_summary, "min", "My", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_forces(end_forces, end_forces_summary, "max", "Mz", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_forces(end_forces, end_forces_summary, "min", "Mz", beam_node_map, lc, lc_title, final_end, summary_results)
+
+        find_extreme_support_reactions(support_reactions, support_reactions_summary, "max", "Fx", lc, lc_title, summary_results)
+        find_extreme_support_reactions(support_reactions, support_reactions_summary, "min", "Fx", lc, lc_title, summary_results)
+        find_extreme_support_reactions(support_reactions, support_reactions_summary, "max", "Fy", lc, lc_title, summary_results)
+        find_extreme_support_reactions(support_reactions, support_reactions_summary, "min", "Fy", lc, lc_title, summary_results)
+        find_extreme_support_reactions(support_reactions, support_reactions_summary, "max", "Fz", lc, lc_title, summary_results)
+        find_extreme_support_reactions(support_reactions, support_reactions_summary, "min", "Fz", lc, lc_title, summary_results)
+        find_extreme_support_reactions(support_reactions, support_reactions_summary, "max", "Mx", lc, lc_title, summary_results)
+        find_extreme_support_reactions(support_reactions, support_reactions_summary, "min", "Mx", lc, lc_title, summary_results)
+        find_extreme_support_reactions(support_reactions, support_reactions_summary, "max", "My", lc, lc_title, summary_results)
+        find_extreme_support_reactions(support_reactions, support_reactions_summary, "min", "My", lc, lc_title, summary_results)
+        find_extreme_support_reactions(support_reactions, support_reactions_summary, "max", "Mz", lc, lc_title, summary_results)
+        find_extreme_support_reactions(support_reactions, support_reactions_summary, "min", "Mz", lc, lc_title, summary_results)
+
+        find_extreme_displacements(node_displacements, node_displacements_summary, "max", "X", lc, lc_title, summary_results)
+        find_extreme_displacements(node_displacements, node_displacements_summary, "min", "X", lc, lc_title, summary_results)
+        find_extreme_displacements(node_displacements, node_displacements_summary, "max", "Y", lc, lc_title, summary_results)
+        find_extreme_displacements(node_displacements, node_displacements_summary, "min", "Y", lc, lc_title, summary_results)
+        find_extreme_displacements(node_displacements, node_displacements_summary, "max", "Z", lc, lc_title, summary_results)
+        find_extreme_displacements(node_displacements, node_displacements_summary, "min", "Z", lc, lc_title, summary_results)
+        find_extreme_displacements(node_displacements, node_displacements_summary, "max", "rX", lc, lc_title, summary_results)
+        find_extreme_displacements(node_displacements, node_displacements_summary, "min", "rX", lc, lc_title, summary_results)
+        find_extreme_displacements(node_displacements, node_displacements_summary, "max", "rY", lc, lc_title, summary_results)
+        find_extreme_displacements(node_displacements, node_displacements_summary, "min", "rY", lc, lc_title, summary_results)
+        find_extreme_displacements(node_displacements, node_displacements_summary, "max", "rZ", lc, lc_title, summary_results)
+        find_extreme_displacements(node_displacements, node_displacements_summary, "min", "rZ", lc, lc_title, summary_results)
+
+        find_extreme_member_displacements(member_start_displacements, member_start_displacements_summary, "max", "X", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_member_displacements(member_start_displacements, member_start_displacements_summary, "min", "X", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_member_displacements(member_start_displacements, member_start_displacements_summary, "max", "Y", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_member_displacements(member_start_displacements, member_start_displacements_summary, "min", "Y", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_member_displacements(member_start_displacements, member_start_displacements_summary, "max", "Z", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_member_displacements(member_start_displacements, member_start_displacements_summary, "min", "Z", beam_node_map, lc, lc_title, start_end, summary_results)
+        find_extreme_member_displacements(member_end_displacements, member_end_displacements_summary, "max", "X", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_member_displacements(member_end_displacements, member_end_displacements_summary, "min", "X", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_member_displacements(member_end_displacements, member_end_displacements_summary, "max", "Y", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_member_displacements(member_end_displacements, member_end_displacements_summary, "min", "Y", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_member_displacements(member_end_displacements, member_end_displacements_summary, "max", "Z", beam_node_map, lc, lc_title, final_end, summary_results)
+        find_extreme_member_displacements(member_end_displacements, member_end_displacements_summary, "min", "Z", beam_node_map, lc, lc_title, final_end, summary_results)
 
         staad_update_status[lc_title] = {}
-        staad_update_status[lc_title]["units"] = {"force": "kN", "moment": "kN-m"}
+        # results metadata
         staad_update_status[lc_title]["load_case_id"] = int(lc)
-        staad_update_status[lc_title]["results_local_or_global"] = results_local
+        # store summarized results in the update status dictionary
+        staad_update_status[lc_title]["summary_start_forces"] = start_forces_summary
+        staad_update_status[lc_title]["summary_end_forces"] = end_forces_summary
+        staad_update_status[lc_title]["summary_support_reactions"] = support_reactions_summary
+        staad_update_status[lc_title]["summary_member_start_displacements"] = member_start_displacements_summary
+        staad_update_status[lc_title]["summary_member_end_displacements"] = member_end_displacements_summary
+        staad_update_status[lc_title]["summary_node_displacements"] = node_displacements_summary
+        # store raw results in the update status dictionary
+        staad_update_status[lc_title]["member_start_displacements"] = member_start_displacements
+        staad_update_status[lc_title]["member_end_displacements"] = member_end_displacements
+        staad_update_status[lc_title]["node_displacements"] = node_displacements
         staad_update_status[lc_title]["end_forces"] = end_forces
         staad_update_status[lc_title]["start_forces"] = start_forces
         staad_update_status[lc_title]["support_reactions"] = support_reactions
         staad_update_status[lc_title]["joint_force_maxima"] = _joint_force_maxima(
             joint_member_ends, start_forces, end_forces
         )
+
+    # Find envelope wise summary of results
+    envelope_summary_results: Dict[int, Any] = {}
+    for envelopeDetail in load_envelopes:
+        envelopeId = envelopeDetail["envelopeId"]
+        envelopeType = envelopeDetail["envelopeType"]
+        loadCases = envelopeDetail["loadCases"]
+        print(f"Processing envelope {envelopeId} of type {envelopeType} with load cases {loadCases}.")
+        env_summary_results = {
+                    "displacements": {"max_X": {"node": None, "load_case": None, "load_case_title": None, "X": float("-inf"), "Y": None, "Z": None, "rX": None, "rY": None, "rZ": None},
+                                        "min_X": {"node": None, "load_case": None, "load_case_title": None, "X": float("inf"), "Y": None, "Z": None, "rX": None, "rY": None, "rZ": None},
+                                        "max_Y": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": float("-inf"), "Z": None, "rX": None, "rY": None, "rZ": None},
+                                        "min_Y": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": float("inf"), "Z": None, "rX": None, "rY": None, "rZ": None},
+                                        "max_Z": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": float("-inf"), "rX": None, "rY": None, "rZ": None},
+                                        "min_Z": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": float("inf"), "rX": None, "rY": None, "rZ": None},
+                                        "max_rX": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": None, "rX": float("-inf"), "rY": None, "rZ": None},
+                                        "min_rX": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": None, "rX": float("inf"), "rY": None, "rZ": None},
+                                        "max_rY": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": None, "rX": None, "rY": float("-inf"), "rZ": None},
+                                        "min_rY": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": None, "rX": None, "rY": float("inf"), "rZ": None},
+                                        "max_rZ": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": None, "rX": None, "rY": None, "rZ": float("-inf")},
+                                        "min_rZ": {"node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": None, "rX": None, "rY": None, "rZ": float("inf")}
+                    },
+                    "member_displacements": {"max_X": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "X": float("-inf"), "Y": None, "Z": None},
+                                        "min_X": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "X": float("inf"), "Y": None, "Z": None},
+                                        "max_Y": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "X": None, "Y": float("-inf"), "Z": None},
+                                        "min_Y": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "X": None, "Y": float("inf"), "Z": None},
+                                        "max_Z": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": float("-inf")},
+                                        "min_Z": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "X": None, "Y": None, "Z": float("inf")},
+                    },
+                    "forces": {"max_Fx": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": float("-inf"), "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                "min_Fx": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": float("inf"), "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                "max_Fy": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": float("-inf"), "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                "min_Fy": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": float("inf"), "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                "max_Fz": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": float("-inf"), "Mx": None, "My": None, "Mz": None},
+                                "min_Fz": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": float("inf"), "Mx": None, "My": None, "Mz": None},
+                                "max_Mx": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": float("-inf"), "My": None, "Mz": None},
+                                "min_Mx": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": float("inf"), "My": None, "Mz": None},
+                                "max_My": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": float("-inf"), "Mz": None},
+                                "min_My": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": float("inf"), "Mz": None},
+                                "max_Mz": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": float("-inf")},
+                                "min_Mz": {"beam": None, "node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": float("inf")},
+                    },
+                    "support_reactions": {"max_Fx": {"node": None, "load_case": None, "load_case_title": None, "Fx": float("-inf"), "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                            "min_Fx": {"node": None, "load_case": None, "load_case_title": None, "Fx": float("inf"), "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                            "max_Fy": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": float("-inf"), "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                            "min_Fy": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": float("inf"), "Fz": None, "Mx": None, "My": None, "Mz": None},
+                                            "max_Fz": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": float("-inf"), "Mx": None, "My": None, "Mz": None},
+                                            "min_Fz": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": float("inf"), "Mx": None, "My": None, "Mz": None},
+                                            "max_Mx": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": float("-inf"), "My": None, "Mz": None},
+                                            "min_Mx": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": float("inf"), "My": None, "Mz": None},
+                                            "max_My": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": float("-inf"), "Mz": None},
+                                            "min_My": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": float("inf"), "Mz": None},
+                                            "max_Mz": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": float("-inf")},
+                                            "min_Mz": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": float("inf")}
+                    }
+                }
+        for lc in loadCases:
+            lc_title = load.GetLoadCaseTitle(lc)
+            print(f"Processing load case {lc} {lc_title} in envelope {envelopeId}")
+            start_forces = staad_update_status[lc_title]["start_forces"]
+            end_forces = staad_update_status[lc_title]["end_forces"]
+            member_start_displacements = staad_update_status[lc_title]["member_start_displacements"]
+            member_end_displacements = staad_update_status[lc_title]["member_end_displacements"]
+            node_displacements = staad_update_status[lc_title]["node_displacements"]
+            support_reactions = staad_update_status[lc_title]["support_reactions"]
+            start_forces_summary = staad_update_status[lc_title]["summary_start_forces"]
+            end_forces_summary = staad_update_status[lc_title]["summary_end_forces"]
+            support_reactions_summary = staad_update_status[lc_title]["summary_support_reactions"]
+            member_start_displacements_summary = staad_update_status[lc_title]["summary_member_start_displacements"]
+            member_end_displacements_summary = staad_update_status[lc_title]["summary_member_end_displacements"]
+            node_displacements_summary = staad_update_status[lc_title]["summary_node_displacements"]
+            
+            find_extreme_forces(start_forces, start_forces_summary, "max", "Fx", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_forces(start_forces, start_forces_summary, "min", "Fx", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_forces(start_forces, start_forces_summary, "max", "Fy", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_forces(start_forces, start_forces_summary, "min", "Fy", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_forces(start_forces, start_forces_summary, "max", "Fz", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_forces(start_forces, start_forces_summary, "min", "Fz", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_forces(start_forces, start_forces_summary, "max", "Mx", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_forces(start_forces, start_forces_summary, "min", "Mx", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_forces(start_forces, start_forces_summary, "max", "My", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_forces(start_forces, start_forces_summary, "min", "My", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_forces(start_forces, start_forces_summary, "max", "Mz", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_forces(start_forces, start_forces_summary, "min", "Mz", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_forces(end_forces, end_forces_summary, "max", "Fx", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_forces(end_forces, end_forces_summary, "min", "Fx", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_forces(end_forces, end_forces_summary, "max", "Fy", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_forces(end_forces, end_forces_summary, "min", "Fy", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_forces(end_forces, end_forces_summary, "max", "Fz", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_forces(end_forces, end_forces_summary, "min", "Fz", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_forces(end_forces, end_forces_summary, "max", "Mx", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_forces(end_forces, end_forces_summary, "min", "Mx", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_forces(end_forces, end_forces_summary, "max", "My", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_forces(end_forces, end_forces_summary, "min", "My", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_forces(end_forces, end_forces_summary, "max", "Mz", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_forces(end_forces, end_forces_summary, "min", "Mz", beam_node_map, lc, lc_title, final_end, env_summary_results)
+
+            find_extreme_support_reactions(support_reactions, support_reactions_summary, "max", "Fx", lc, lc_title, env_summary_results)
+            find_extreme_support_reactions(support_reactions, support_reactions_summary, "min", "Fx", lc, lc_title, env_summary_results)
+            find_extreme_support_reactions(support_reactions, support_reactions_summary, "max", "Fy", lc, lc_title, env_summary_results)
+            find_extreme_support_reactions(support_reactions, support_reactions_summary, "min", "Fy", lc, lc_title, env_summary_results)
+            find_extreme_support_reactions(support_reactions, support_reactions_summary, "max", "Fz", lc, lc_title, env_summary_results)
+            find_extreme_support_reactions(support_reactions, support_reactions_summary, "min", "Fz", lc, lc_title, env_summary_results)
+            find_extreme_support_reactions(support_reactions, support_reactions_summary, "max", "Mx", lc, lc_title, env_summary_results)
+            find_extreme_support_reactions(support_reactions, support_reactions_summary, "min", "Mx", lc, lc_title, env_summary_results)
+            find_extreme_support_reactions(support_reactions, support_reactions_summary, "max", "My", lc, lc_title, env_summary_results)
+            find_extreme_support_reactions(support_reactions, support_reactions_summary, "min", "My", lc, lc_title, env_summary_results)
+            find_extreme_support_reactions(support_reactions, support_reactions_summary, "max", "Mz", lc, lc_title, env_summary_results)
+            find_extreme_support_reactions(support_reactions, support_reactions_summary, "min", "Mz", lc, lc_title, env_summary_results)
+
+            find_extreme_displacements(node_displacements, node_displacements_summary, "max", "X", lc, lc_title, env_summary_results)
+            find_extreme_displacements(node_displacements, node_displacements_summary, "min", "X", lc, lc_title, env_summary_results)
+            find_extreme_displacements(node_displacements, node_displacements_summary, "max", "Y", lc, lc_title, env_summary_results)
+            find_extreme_displacements(node_displacements, node_displacements_summary, "min", "Y", lc, lc_title, env_summary_results)
+            find_extreme_displacements(node_displacements, node_displacements_summary, "max", "Z", lc, lc_title, env_summary_results)
+            find_extreme_displacements(node_displacements, node_displacements_summary, "min", "Z", lc, lc_title, env_summary_results)
+            find_extreme_displacements(node_displacements, node_displacements_summary, "max", "rX", lc, lc_title, env_summary_results)
+            find_extreme_displacements(node_displacements, node_displacements_summary, "min", "rX", lc, lc_title, env_summary_results)
+            find_extreme_displacements(node_displacements, node_displacements_summary, "max", "rY", lc, lc_title, env_summary_results)
+            find_extreme_displacements(node_displacements, node_displacements_summary, "min", "rY", lc, lc_title, env_summary_results)
+            find_extreme_displacements(node_displacements, node_displacements_summary, "max", "rZ", lc, lc_title, env_summary_results)
+            find_extreme_displacements(node_displacements, node_displacements_summary, "min", "rZ", lc, lc_title, env_summary_results)
+
+            find_extreme_member_displacements(member_start_displacements, member_start_displacements_summary, "max", "X", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_member_displacements(member_start_displacements, member_start_displacements_summary, "min", "X", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_member_displacements(member_start_displacements, member_start_displacements_summary, "max", "Y", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_member_displacements(member_start_displacements, member_start_displacements_summary, "min", "Y", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_member_displacements(member_start_displacements, member_start_displacements_summary, "max", "Z", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_member_displacements(member_start_displacements, member_start_displacements_summary, "min", "Z", beam_node_map, lc, lc_title, start_end, env_summary_results)
+            find_extreme_member_displacements(member_end_displacements, member_end_displacements_summary, "max", "X", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_member_displacements(member_end_displacements, member_end_displacements_summary, "min", "X", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_member_displacements(member_end_displacements, member_end_displacements_summary, "max", "Y", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_member_displacements(member_end_displacements, member_end_displacements_summary, "min", "Y", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_member_displacements(member_end_displacements, member_end_displacements_summary, "max", "Z", beam_node_map, lc, lc_title, final_end, env_summary_results)
+            find_extreme_member_displacements(member_end_displacements, member_end_displacements_summary, "min", "Z", beam_node_map, lc, lc_title, final_end, env_summary_results)
+        envelope_summary_results[envelopeId] = env_summary_results
     
+    staad_update_status["envelope_summary_results"] = envelope_summary_results
+    staad_update_status["results_local_or_global"] = results_local
+    staad_update_status["units"] = {"force": "kN", "moment": "kN-m", "displacement": "m"}
+    staad_update_status["summary_results"] = summary_results
+
     return staad_update_status
 
 

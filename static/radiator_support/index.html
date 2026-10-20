@@ -374,6 +374,39 @@
     letter-spacing: 0.03em;
     pointer-events: none;
   }
+  #results-pane { flex: 0 0 490px; width: 490px; max-width: 45vw; overflow-y: auto; background: var(--navy-deep); border-left: 1px solid var(--line); }
+  #results-pane[hidden] { display: none; }
+  .result-panel { border-bottom: 1px solid var(--line); }
+  .result-panel > summary { padding: 16px; cursor: pointer; font: 600 15px var(--font-head); color: var(--bright); }
+  .result-content { padding: 0 16px 18px; min-width: 0; font-size: 12px; }
+  .result-content h3 { margin: 20px 0 8px; font: 600 14px var(--font-head); }
+  .result-content p { line-height: 1.5; overflow-wrap: anywhere; }
+  .result-table-wrap { overflow-x: auto; max-width: 100%; margin: 8px 0; }
+  .result-content table { border-collapse: collapse; width: 100%; font-size: 11px; }
+  .result-content th, .result-content td { padding: 8px; border-bottom: 1px solid var(--line-dim); text-align: right; vertical-align: top; white-space: nowrap; }
+  .result-content th { color: var(--paper-ink-dim); font-weight: 500; }
+  .result-content th:first-child, .result-content td:first-child { text-align: left; }
+  .result-content td.result-text { white-space: normal; min-width: 100px; overflow-wrap: anywhere; }
+  .result-content details { margin-top: 10px; }
+  .result-content summary { cursor: pointer; padding: 8px 0; font-family: var(--font-head); color: var(--bright); }
+  .result-notice { padding: 10px 0; border-bottom: 1px solid var(--line-dim); }
+  .result-warning { color: #f2c46d; }
+  .result-failure { color: #ff929a; }
+  .result-success { color: #88d5a0; }
+  #results-pane:not(:has(.result-panel[open])) { flex-basis: 190px; width: 190px; }
+  #right-pane { min-width: 0; }
+  @media (max-width: 1100px) {
+    #results-pane { flex-basis: 380px; width: 380px; }
+    #left-pane { width: 340px; }
+  }
+  @media (max-width: 800px) {
+    #app { display: block; height: auto; min-height: 100vh; overflow: visible; width: 100%; }
+    #left-pane { width: 100%; min-width: 0; max-height: 55vh; }
+    #right-pane { height: 65vh; min-height: 430px; }
+    #results-pane, #results-pane:not(:has(.result-panel[open])) { width: 100%; max-width: none; border-left: 0; }
+    #legend { gap: 8px; flex-wrap: wrap; bottom: auto; top: 12px; left: 12px; right: 12px; }
+    #hud { top: 65px; right: 12px; }
+  }
 </style>
 </head>
 <body>
@@ -588,8 +621,19 @@
     </div>
   </div>
 
+  <aside id="results-pane" aria-label="Integration results" hidden>
+    <details id="staad-results-panel" class="result-panel" hidden>
+      <summary>Staad Results</summary>
+      <div id="staad-results-content" class="result-content" aria-live="polite"></div>
+    </details>
+    <details id="tekla-results-panel" class="result-panel" hidden>
+      <summary>Tekla Results</summary>
+      <div id="tekla-results-content" class="result-content" aria-live="polite"></div>
+    </details>
+  </aside>
 </div>
 
+<script src="/static/radiator_support/results.js"></script>
 <script type="importmap">
 {
   "imports": {
@@ -725,6 +769,7 @@ function resizeRenderer() {
   camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resizeRenderer);
+new ResizeObserver(resizeRenderer).observe(rightPane);
 resizeRenderer();
 
 function animate() {
@@ -1005,6 +1050,7 @@ updateTeklaBtn.addEventListener('click', async () => {
 
     const result = await res.json();
 
+    renderTeklaResults(result);
     if (result.failed > 0) {
       teklaStatus.className = 'error';
       const firstErrors = result.errors.slice(0, 3).map(e => `${e.name}: ${e.error}`).join('\n');
@@ -1096,6 +1142,7 @@ sendStaadBtn.addEventListener('click', async () => {
 
     const result = await res.json();
 
+    renderStaadResults(result);
     const parts = [];
     if (result.failed > 0) {
       const firstErrors = result.errors.slice(0, 3).map(e => `${e.name}: ${e.error}`).join('\n');

@@ -37,6 +37,7 @@ function resultTable(parent, records, columns) {
   for (const key of keys) {
     const cell = resultElement('th', resultLabel(key));
     cell.scope = 'col';
+    if (key === 'extreme') cell.classList.add('result-extreme');
     heading.append(cell);
   }
   head.append(heading);
@@ -47,6 +48,11 @@ function resultTable(parent, records, columns) {
     for (const key of keys) {
       const value = record[key];
       const cell = resultElement('td', resultValue(value));
+      if (key === 'extreme') cell.classList.add('result-extreme');
+      const component = String(record.extreme ?? '').replace(/^(max|min)[\s_]+/i, '').replace(/[\s_]/g, '').toLowerCase();
+      if (typeof value === 'number' && component === key.replace(/[\s_]/g, '').toLowerCase()) {
+        cell.classList.add('result-governing');
+      }
       cell.title = typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
       if (typeof value === 'string') cell.classList.add('result-text');
       if ((key === 'maximum' || key === 'minimum') && typeof value === 'number' && value > 1) {
@@ -96,6 +102,7 @@ function openResultPanel(kind) {
   const content = document.getElementById(`${kind}-results-content`);
   content.replaceChildren();
   document.getElementById('results-pane').hidden = false;
+  document.getElementById('results-divider').hidden = false;
   panel.hidden = false;
   panel.open = true;
   return content;
@@ -149,3 +156,61 @@ function renderTeklaResults(result) {
   const extra = Object.fromEntries(Object.entries(result).filter(([key]) => !['created', 'failed', 'errors'].includes(key)));
   if (Object.keys(extra).length) resultData(resultSection(content, 'Additional Results', true), extra);
 }
+
+function initializePaneDividers() {
+  const app = document.getElementById('app');
+  const input = document.getElementById('left-pane');
+  const results = document.getElementById('results-pane');
+  for (const [pane, variable, direction, minimum] of [
+    [input, '--input-width', 1, 260],
+    [results, '--results-width', -1, 240],
+  ]) {
+    const divider = resultElement('div', undefined, 'pane-divider');
+    divider.id = pane === results ? 'results-divider' : 'input-divider';
+    divider.setAttribute('role', 'separator');
+    divider.setAttribute('aria-orientation', 'vertical');
+    divider.setAttribute('aria-label', pane === input ? 'Resize input panel' : 'Resize results panel');
+    divider.setAttribute('aria-controls', pane.id);
+    divider.tabIndex = 0;
+    divider.hidden = pane.hidden;
+    if (pane === input) pane.after(divider);
+    else pane.before(divider);
+    const setWidth = width => {
+      const other = pane === input ? results : input;
+      const otherWidth = other.hidden ? 0 : other.getBoundingClientRect().width;
+      const maximum = Math.max(minimum, app.clientWidth - otherWidth - 180);
+      const nextWidth = Math.round(Math.max(minimum, Math.min(width, maximum)));
+      app.style.setProperty(variable, `${nextWidth}px`);
+      divider.setAttribute('aria-valuenow', String(nextWidth));
+      divider.setAttribute('aria-valuemin', String(minimum));
+      divider.setAttribute('aria-valuemax', String(Math.round(maximum)));
+    };
+    let startX = 0;
+    let startWidth = 0;
+    divider.addEventListener('pointerdown', event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      startX = event.clientX;
+      startWidth = pane.getBoundingClientRect().width;
+      divider.setPointerCapture(event.pointerId);
+      document.body.classList.add('resizing-pane');
+    });
+    divider.addEventListener('pointermove', event => {
+      if (divider.hasPointerCapture(event.pointerId)) setWidth(startWidth + direction * (event.clientX - startX));
+    });
+    const finish = event => {
+      if (divider.hasPointerCapture(event.pointerId)) divider.releasePointerCapture(event.pointerId);
+      document.body.classList.remove('resizing-pane');
+    };
+    divider.addEventListener('pointerup', finish);
+    divider.addEventListener('pointercancel', finish);
+    divider.addEventListener('lostpointercapture', () => document.body.classList.remove('resizing-pane'));
+    divider.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      event.preventDefault();
+      setWidth(pane.getBoundingClientRect().width + direction * (event.key === 'ArrowRight' ? 20 : -20));
+    });
+  }
+}
+
+initializePaneDividers();

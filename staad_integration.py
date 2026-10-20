@@ -1617,13 +1617,14 @@ async def send_to_staad(data: dict) -> dict:
                     }
     for lc_title, lc in loadCaseMap.items():
         print(f"Processing load case: {lc_title} (ID: {lc})")
-        end_forces = [
-            {"beam": line_id, "forces": output.GetMemberEndForces(int(line_id), final_end, int(lc), results_local)}
+        start_forces = [
+            {"beam": line_id, "forces": output.GetMemberEndForces(int(line_id), start_end, int(lc), results_local)}
             for line_id in beam_by_name.values()
         ]
 
-        start_forces = [
-            {"beam": line_id, "forces": output.GetMemberEndForces(int(line_id), start_end, int(lc), results_local)}
+        # Calculate member end forces at the final end, with sign reversed to maintain consistency with start forces.
+        end_forces = [
+            {"beam": line_id, "forces": [-1*x for x in output.GetMemberEndForces(int(line_id), final_end, int(lc), results_local)]}
             for line_id in beam_by_name.values()
         ]
 

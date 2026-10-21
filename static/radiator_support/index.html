@@ -93,21 +93,28 @@
 
   form { padding: 4px 20px 24px 20px; flex: 1; }
 
-  fieldset {
+  .input-section {
     border: 1px solid var(--line);
     border-radius: 2px;
     margin: 18px 0 0 0;
     padding: 12px 14px 16px 14px;
   }
 
-  legend {
+  .input-section > summary {
     font-family: var(--font-head);
     font-weight: 600;
     font-size: 12px;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--bright);
-    padding: 0 6px;
+    padding: 4px 0;
+    cursor: pointer;
+  }
+
+  .input-section:not([open]) { padding-bottom: 12px; }
+  .input-section > summary:focus-visible {
+    outline: 2px solid var(--bright);
+    outline-offset: 4px;
   }
 
   .field-row {
@@ -431,8 +438,8 @@
 
     <form id="grid-form" onsubmit="return false;">
 
-      <fieldset>
-        <legend>Grid Geometry</legend>
+      <details class="input-section">
+        <summary>Grid Geometry</summary>
         <div class="field-row"><label for="n_long_bays">Long. bays (count)</label><input type="number" id="n_long_bays" value="21" min="1" step="1"></div>
         <div class="field-row"><label for="n_trans_bays">Trans. bays (count)</label><input type="number" id="n_trans_bays" value="5" min="1" step="1"></div>
         <div class="field-row"><label for="bay_long_mm">Bay spacing, long. (mm)</label><input type="number" id="bay_long_mm" value="2600" step="any"></div>
@@ -450,19 +457,19 @@
             </div>
           </div>
         </div>
-      </fieldset>
+      </details>
 
-      <fieldset>
-        <legend>Plates &amp; Eccentricity</legend>
+      <details class="input-section">
+        <summary>Plates &amp; Eccentricity</summary>
         <div class="field-row"><label for="vertical_base_eccentricity_mm">Vertical base eccentricity (mm)</label><input type="number" id="vertical_base_eccentricity_mm" value="38" step="any"></div>
         <div class="field-row"><label for="base_plate_offset_above_column_base_mm">Base plate offset above column base (mm)</label><input type="number" id="base_plate_offset_above_column_base_mm" value="30" step="any"></div>
         <div class="field-row"><label for="gusset_plate_thickness_mm">Gusset plate thickness (mm)</label><input type="number" id="gusset_plate_thickness_mm" value="15" step="any"></div>
         <div class="field-row"><label for="embedded_plate_thickness_mm">Embedded plate thickness (mm)</label><input type="number" id="embedded_plate_thickness_mm" value="10" step="any"></div>
         <div class="field-row"><label for="bracing_distance_from_column_mm">Bracing distance from column (mm)</label><input type="number" id="bracing_distance_from_column_mm" value="20" step="any"></div>
-      </fieldset>
+      </details>
 
-      <fieldset>
-        <legend>Materials &amp; Profiles</legend>
+      <details class="input-section">
+        <summary>Materials &amp; Profiles</summary>
 
         <div class="material-group">
           <div class="group-label">Beam</div>
@@ -491,22 +498,22 @@
           <div class="field-row"><label>Profile</label><input type="text" id="transverse_brace_profile" value="CFRHS100X100X4"></div>
           <div class="field-row"><label>Tekla class</label><input type="text" id="transverseClass" value="7"></div>
         </div>
-      </fieldset>
+      </details>
 
-      <fieldset>
-        <legend>Longitudinal Brace Bays</legend>
+      <details class="input-section">
+        <summary>Longitudinal Brace Bays</summary>
         <div id="long-brace-list"></div>
         <button type="button" class="add-btn" id="add-long-brace">+ ADD LONGITUDINAL BRACE BAY</button>
-      </fieldset>
+      </details>
 
-      <fieldset>
-        <legend>Transverse Brace Bays</legend>
+      <details class="input-section">
+        <summary>Transverse Brace Bays</summary>
         <div id="trans-brace-list"></div>
         <button type="button" class="add-btn" id="add-trans-brace">+ ADD TRANSVERSE BRACE BAY</button>
-      </fieldset>
+      </details>
 
-      <fieldset>
-        <legend>Load Configuration (STAAD)</legend>
+      <details class="input-section">
+        <summary>Load Configuration (STAAD)</summary>
 
         <div class="material-group">
           <div class="group-label">Radiator &amp; Supports</div>
@@ -594,7 +601,7 @@
         </div>
 
         <div class="load-config-hint">Sent to STAAD when you click "Send to STAAD" below (not part of Generate Structure).</div>
-      </fieldset>
+      </details>
 
       <button id="generate-btn" type="button">Generate Structure</button>
       <div id="status-msg"></div>

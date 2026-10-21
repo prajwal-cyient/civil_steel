@@ -5,6 +5,29 @@ __pycache__/
 *.backup
 *.Archiv
 output*/
+sample_projects/*.ANL
+sample_projects/*.CFR
+sample_projects/*.EQL
+sample_projects/*.REI_Saved_Picture
+sample_projects/*.ULD
+sample_projects/*.cod
+sample_projects/*.day
+sample_projects/*.num
+sample_projects/*.png
+sample_projects/*.sbk
+sample_projects/*.std.metadata
+sample_projects/*.uid
+sample_projects/*_Autorecovery.zip
+sample_projects/Radiator_structure_3_With_slide_conn_L19.TXT
+sample_projects/*_TEMPLOAD.DAT
+sample_projects/*.EU2
+sample_projects/*.bmd
+sample_projects/*.dsn
+sample_projects/*.dsp
+sample_projects/*.rea
+sample_projects/*.dbs
+sample_projects/*.dgn
+sample_projects/*.scn
 
 # Virtual environments
 .venv/

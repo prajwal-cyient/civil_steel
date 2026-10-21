@@ -1,0 +1,127 @@
+{
+  "template_project_path": "sample_projects/braced_bothside_template_orig.ideaCon",
+  "connection_selector": {"name": "CON1"},
+  "member_updates": [
+    {
+      "member_name": "M1",
+      "cross_section_mprl_name": "SHS120/120/5.0",
+      "material_mprl_name": "S355"
+    },
+    {
+      "member_name": "M2",
+      "cross_section_mprl_name": "HEA140",
+      "material_mprl_name": "S355"
+    },
+    {
+      "member_name": "M3",
+      "cross_section_mprl_name": "HEA140",
+      "material_mprl_name": "S355"
+    },
+    {
+      "member_name": "M4",
+      "cross_section_mprl_name": "SHS100/100/5.0",
+      "material_mprl_name": "S355",
+      "gama_pitch": -60
+    },
+    {
+      "member_name": "M5",
+      "cross_section_mprl_name": "SHS100/100/5.0",
+      "material_mprl_name": "S355",
+      "gama_pitch": -45
+    }
+  ],
+  "load_effect": {
+    "name": "LC1 - generated",
+    "member_loadings": [
+      {
+        "member_name": "M1",
+        "n": -19.365,
+        "vy": 0.1,
+        "vz": -0.005,
+        "mx": 0.006,
+        "my": 0.0,
+        "mz": 0.0,
+        "position": "End"
+      },
+      {
+        "member_name": "M2",
+        "n": 6.53,
+        "vy": 1.76,
+        "vz": -0.16,
+        "mx": 0.0,
+        "my": 0.0,
+        "mz": 0.6,
+        "position": "Start"
+      },
+      {
+        "member_name": "M2",
+        "n": 2.488,
+        "vy": -1.842,
+        "vz": 0.016,
+        "mx": 0.0,
+        "my": 0.017,
+        "mz": 0.81,
+        "position": "End"
+      },
+      {
+        "member_name": "M3",
+        "n": 2.167,
+        "vy": 0.25,
+        "vz": -0.01,
+        "mx": -0.0001,
+        "my": 0.0147,
+        "mz": 0.1235,
+        "position": "Start"
+      },
+      {
+        "member_name": "M3",
+        "n": 4.551,
+        "vy": 0.202,
+        "vz": -0.012,
+        "mx": 0.00,
+        "my": 0.0001,
+        "mz": 0.106,
+        "position": "End"
+      },
+      {
+        "member_name": "M4",
+        "n": 23.6,
+        "vy": 0.152,
+        "vz": 0.0,
+        "mx": 0.0,
+        "my": 0.0,
+        "mz": 0.0,
+        "position": "End"
+      },
+      {
+        "member_name": "M5",
+        "n": -5.92,
+        "vy": 0.193,
+        "vz": 0.0,
+        "mx": 0.0,
+        "my": 0.0,
+        "mz": 0.0,
+        "position": "End"
+      }
+    ]
+  },
+  "output_dir": "output_CON1",
+  "save_project_path": "output_CON1/CON1_designed.ideaCon",
+  "operation_parameters": [
+    {"key": "EP_pl_th", "expression": "0.015"},
+    {"key": "Stiff_th", "expression": "0.01"},
+    {"key": "Stiff_sel", "expression": "True"},
+    {"key": "EP_weld", "expression": "0.005"},
+    {"key": "Stiff_bot_weld(web)", "expression": "0.005"},
+    {"key": "Stiff_bot_weld(flange)", "expression": "0.005"},
+    {"key": "Stiff_top_weld(web)", "expression": "0.005"},
+    {"key": "Stiff_top_weld(flange)", "expression": "0.005"},
+    {"key": "CPL_th", "expression": "0.012"},
+    {"key": "CPL_weld", "expression": "0.005"},
+    {"key": "CPL_tongue_weld", "expression": "0.005"},
+    {"key": "CPL2_th", "expression": "0.012"},
+    {"key": "CPL2_weld", "expression": "0.005"},
+    {"key": "CPL2_tongue_weld", "expression": "0.005"},
+    {"key": "Bolt_Type", "expression": "M16 8.8"}
+  ]
+}

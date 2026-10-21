@@ -106,7 +106,11 @@ ConMember.connected_by. Supplying a position yourself isn't possible
 because the API rejects loads placed at the joint-attached end.
 
 Sample cmd to run this utility:
-python idea_statica_integration.py sample_projects/Transverese_bracing_conn_detail.ideaCon --design Transverese_bracing_conn_detail.json.json
+To view the parameters of a connection without performing a design, use:
+python idea_statica_integration.py sample_projects/Transverese_bracing_conn_detail.ideaCon
+
+To perform a design using the JSON input, use: (NOTE: The json file contains idea statica connection file)
+python idea_statica_integration.py --design Transverese_bracing_conn_detail.json.json
 """
 
 import argparse
@@ -140,6 +144,7 @@ try:
     from ideastatica_connection_api.models.parameter_update_response import ParameterUpdateResponse
     from ideastatica_connection_api.models.connection_data import ConnectionData
     from typing import List
+    from ideastatica_connection_api.models.con_load_effect_position_enum import ConLoadEffectPositionEnum
 except ImportError:  # pragma: no cover - only available where the SDK is installed
     ConnectionApiServiceAttacher = None
 
@@ -269,10 +274,11 @@ def _free_end_position(member: ConMember) -> str:
     # the joint), or the API rejects it with a "Position:X is not
     # defined in connection" 422 error.
     connected_by = member.connected_by
+    #TODO: Should the free end be opposite to the connected_by end?
     if connected_by == ConMemberConnectedByEnum.BEGIN:
-        return "End"
+        return ConLoadEffectPositionEnum.END
     if connected_by == ConMemberConnectedByEnum.END:
-        return "Begin"
+        return ConLoadEffectPositionEnum.BEGIN
     raise IdeaStaticaJointError(
         f"Member {member.name!r} has no connected_by set; can't determine its free end."
     )
@@ -505,13 +511,20 @@ def design_joint(data: dict) -> dict:
                 member = _resolve_member(members, loading["member_name"])
                 # The joint's fixed end can't take a load; position is
                 # derived from the member's actual free end, not guessed.
-                position = _free_end_position(member)
+                specified_position = loading.get("position", "")
+                if specified_position and specified_position.lower() in ["start", "begin"]:
+                    position = ConLoadEffectPositionEnum.BEGIN
+                elif specified_position and specified_position.lower() in ["end"]:
+                    position = ConLoadEffectPositionEnum.END
+                else:
+                    position = _free_end_position(member)
+                # Convert loads from kN and kNm to N and Nmm for the API
                 member_loadings.append(ConLoadEffectMemberLoad(
                     member_id=member.id,
                     position=position,
                     section_load=ConLoadEffectSectionLoad(
-                        n=loading.get("n", 0), vy=loading.get("vy", 0), vz=loading.get("vz", 0),
-                        mx=loading.get("mx", 0), my=loading.get("my", 0), mz=loading.get("mz", 0),
+                        n=loading.get("n", 0)*1000.0, vy=loading.get("vy", 0)*1000.0, vz=loading.get("vz", 0)*1000.0,
+                        mx=loading.get("mx", 0)*1000.0, my=loading.get("my", 0)*1000.0, mz=loading.get("mz", 0)*1000.0,
                     ),
                 ))
             api_client.load_effect.add_load_effect(
@@ -702,8 +715,13 @@ def _self_test(template_path: str) -> None:
                 print(f"   Connection id={con.id} common operation properties:")
                 print(f"     {properties.to_dict()}")
                 parameters = _get_parameters(api_client, project_id, con.id, include_hidden=True)
-                print(f"   Connection id={con.id} parameters:")
-                for p in parameters:
+                visible_parameters = [p for p in parameters if p.is_visible]
+                hidden_parameters = [p for p in parameters if not p.is_visible]
+                print(f"   Connection id={con.id} Hidden parameters:")
+                for p in hidden_parameters:
+                    print(f'Parameter: {p.to_json()}')
+                print(f"   Connection id={con.id} Visible parameters:")
+                for p in visible_parameters:
                     print(f'Parameter: {p.to_json()}')
             print()
         except Exception as exc:

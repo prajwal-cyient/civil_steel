@@ -28,6 +28,9 @@ sample_projects/*.rea
 sample_projects/*.dbs
 sample_projects/*.dgn
 sample_projects/*.scn
+sample_projects/*.cut
+sample_projects/*.slg
+sample_projects/*.REI_SPRO_Auxilary_Data
 
 # Virtual environments
 .venv/

@@ -104,6 +104,9 @@ always applied at the member's free end (the end not attached to the
 joint), which this module derives automatically from
 ConMember.connected_by. Supplying a position yourself isn't possible
 because the API rejects loads placed at the joint-attached end.
+
+Sample cmd to run this utility:
+python idea_statica_integration.py sample_projects/Transverese_bracing_conn_detail.ideaCon --design design_joint_sample.json
 """
 
 import argparse
@@ -577,28 +580,32 @@ def design_joint(data: dict) -> dict:
             f.write(json.dumps(connection_data.to_dict(), indent=2))
         print(f"Extracted and saved IOM connection data for connection {connection_id} in {time.time() - start:.2f} seconds")
 
-        # ---- Extract results ----
-        print(f"Extracting raw results for connection {connection_id}")
-        start = time.time()
-        raw_results_file = os.path.join(output_dir, "raw_cbfem_results.json")
-        raw_json_list = api_client.calculation.get_raw_json_results(project_id, [connection_id])
-        with open(raw_results_file, "w") as f:
-            f.write(raw_json_list[0])
-        print(f"Extracted raw results for connection {connection_id} in {time.time() - start:.2f} seconds. Number of raw results: {len(raw_json_list)}")
+        extract_raw_results = data.get("extract_raw_results", False)
+        if extract_raw_results:
+            # ---- Extract results ----
+            print(f"Extracting raw results for connection {connection_id}")
+            start = time.time()
+            raw_results_file = os.path.join(output_dir, "raw_cbfem_results.json")
+            raw_json_list = api_client.calculation.get_raw_json_results(project_id, [connection_id])
+            with open(raw_results_file, "w") as f:
+                f.write(raw_json_list[0])
+            print(f"Extracted raw results for connection {connection_id} in {time.time() - start:.2f} seconds. Number of raw results: {len(raw_json_list)}")
 
-        print(f"Generating report PDF for connection {connection_id}")
-        report_pdf_file = os.path.join(output_dir, "report.pdf")
-        start = time.time()
-        api_client.report.save_report_pdf(project_id, connection_id, report_pdf_file)
-        print(f"Generated report PDF for connection {connection_id} in {time.time() - start:.2f} seconds")
+        extract_pdf_report = data.get("extract_pdf_report", False)
+        if extract_pdf_report:
+            print(f"Generating report PDF for connection {connection_id}")
+            report_pdf_file = os.path.join(output_dir, "report.pdf")
+            start = time.time()
+            api_client.report.save_report_pdf(project_id, connection_id, report_pdf_file)
+            print(f"Generated report PDF for connection {connection_id} in {time.time() - start:.2f} seconds")
     return {
         "connection_id": connection_id,
         "passed": result.passed,
         "check_summary": check_summary,
         "check_summary_file": summary_file,
-        "raw_results_file": raw_results_file,
+        "raw_results_file": raw_results_file if extract_raw_results else None,
         "iom_connection_data_file": iom_connection_data_file,
-        "report_pdf_file": report_pdf_file,
+        "report_pdf_file": report_pdf_file if extract_pdf_report else None,
         "saved_project_path": save_project_path,
     }
 

@@ -106,7 +106,7 @@ ConMember.connected_by. Supplying a position yourself isn't possible
 because the API rejects loads placed at the joint-attached end.
 
 Sample cmd to run this utility:
-python idea_statica_integration.py sample_projects/Transverese_bracing_conn_detail.ideaCon --design design_joint_sample.json
+python idea_statica_integration.py sample_projects/Transverese_bracing_conn_detail.ideaCon --design Transverese_bracing_conn_detail.json.json
 """
 
 import argparse

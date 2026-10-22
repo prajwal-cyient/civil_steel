@@ -137,6 +137,7 @@ try:
     from ideastatica_connection_api.models.con_operation_common_properties import ConOperationCommonProperties
     from ideastatica_connection_api.connection_api_client import ConnectionApiClient
     from ideastatica_connection_api.models.con_connection import ConConnection
+    from ideastatica_connection_api.models.con_aligned_plate import ConAlignedPlate
     from ideastatica_connection_api.models.con_member import ConMember
     from ideastatica_connection_api.models.con_operation import ConOperation
     from ideastatica_connection_api.models.idea_parameter import IdeaParameter
@@ -493,7 +494,11 @@ def design_joint(data: dict) -> dict:
         print(f"Updating {project_id} with connection {connection_id}")
         # ---- Member cross-section/material updates ----
         for update in member_updates:
-            member = _resolve_member(members, update["member_name"])
+            try:
+                member = _resolve_member(members, update["member_name"])
+            except Exception as e:
+                print(f"Warning: Not able to resolve member {update['member_name']}. Ignoring update.: {e}")
+                continue
             cross_section_id = _resolve_cross_section_id(
                 api_client, project_id,
                 update["cross_section_mprl_name"], update["material_mprl_name"],
@@ -501,6 +506,28 @@ def design_joint(data: dict) -> dict:
             member.cross_section_id = cross_section_id
             if "gama_pitch" in update:
                 member.position.gama_pitch = float(update["gama_pitch"])*pi/180 # convert degrees to radians
+            #TODO: This does not work as ConMember does not have aligned_plate or related_plate attributes by default, they are being added dynamically here.
+            # Modified patch/con_member.py to include these fields but that does work either.
+            if "aligned_plate" in update:
+                aligned_plate = update["aligned_plate"]
+                aligned_plate_member_id = _resolve_member(members, aligned_plate["member"])
+                member.model_config["validate_assignment"] = False
+                member.aligned_plate = ConAlignedPlate(
+                    plate_side=aligned_plate["plate_side"],
+                    member_id=aligned_plate_member_id.id,
+                    part_type=aligned_plate["part_type"]
+                )
+                member.model_config["validate_assignment"] = True
+            if "related_plate" in update:
+                related_plate = update["related_plate"]
+                related_plate_member_id = _resolve_member(members, related_plate["member"])
+                member.model_config["validate_assignment"] = False
+                member.related_plate = ConAlignedPlate(
+                    plate_side=related_plate["plate_side"],
+                    member_id=related_plate_member_id.id,
+                    part_type=related_plate["part_type"]
+                )
+                member.model_config["validate_assignment"] = True
             api_client.member.update_member(project_id, connection_id, member)
         print(f"Updated members for connection {connection_id}")
         print(f"Applying load effect for connection {connection_id}")
@@ -679,7 +706,7 @@ def _self_test(template_path: str) -> None:
                 print("Members:")
                 for m in members:
                     repr_m = to_json_convention_string(m)
-                    print(f"     member id={m.id} name={m.name!r} cross_section_id={m.cross_section_id}: {repr_m}\n")
+                    print(f" Type: {type(m)}    member id={m.id} name={m.name!r} cross_section_id={m.cross_section_id}: {repr_m}\n")
                 print("Load effects:")
                 load_effects = api_client.load_effect.get_load_effects(project_id, con.id)
                 for le in load_effects:

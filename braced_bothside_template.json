@@ -14,9 +14,19 @@
 
     },
     {
-      "member_name": "beam_transverse",
+      "member_name": "beam_transverse_placeholder",
       "cross_section_mprl_name": "HEA140",
-      "material_mprl_name": "S355"
+      "material_mprl_name": "S355",
+      "aligned_plate": {
+        "plate_side": "lowerSide",
+        "member": "beam_transverse",
+        "part_type": "bottomFlange"
+      },
+      "related_plate": {
+        "plate_side": "upperSide",
+        "member": "beam_longitudinal",
+        "part_type": "topFlange"
+      }
     },
     {
       "member_name": "bracing_longitudinal",
@@ -109,6 +119,20 @@
   "output_dir": "output_CON1",
   "save_project_path": "output_CON1/CON1_designed.ideaCon",
   "operation_parameters": [
-
+    {"key": "EP_pl_th", "expression": "0.015"},
+    {"key": "Stiff_th", "expression": "0.01"},
+    {"key": "Stiff_sel", "expression": "True"},
+    {"key": "EP_weld", "expression": "0.005"},
+    {"key": "Stiff_bot_weld(web)", "expression": "0.005"},
+    {"key": "Stiff_bot_weld(flange)", "expression": "0.005"},
+    {"key": "Stiff_top_weld(web)", "expression": "0.005"},
+    {"key": "Stiff_top_weld(flange)", "expression": "0.005"},
+    {"key": "CPL_th", "expression": "0.012"},
+    {"key": "CPL_weld", "expression": "0.005"},
+    {"key": "CPL_tongue_weld", "expression": "0.005"},
+    {"key": "CPL2_th", "expression": "0.012"},
+    {"key": "CPL2_weld", "expression": "0.005"},
+    {"key": "CPL2_tongue_weld", "expression": "0.005"},
+    {"key": "Bolt_Type", "expression": "M16 8.8"}
   ]
 }

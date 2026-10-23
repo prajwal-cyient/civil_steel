@@ -940,7 +940,7 @@ def _apply_load_configuration(
     node_cache: Dict[tuple, int],
     load_configuration: Dict[str, Any],
     members: List[Dict[str, Any]],
-    support_nodes: List[int],
+    support_nodes: Set[int],
     grid_spec: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
@@ -1712,7 +1712,8 @@ async def send_to_staad(data: dict) -> dict:
         # with member_start_displacements and member_end_displacements being lists of displacements X, Y, Z respectively
         member_displacements = {line_id: [member_start_displacements[line_id], member_end_displacements[line_id]] for line_id in beam_by_name.values()}
 
-        node_displacements = {node_id: [output.GetNodeDisplacements(int(node_id), int(lc))] for node_id in node_cache.values()}
+        top_nodes = list(set(node_cache.values()) - set(support_nodes))
+        node_displacements = {node_id: [output.GetNodeDisplacements(int(node_id), int(lc))] for node_id in top_nodes}
 
         # convert to kN and kN-m for forces and moments respectively
         for _, force_entries in forces.items():
@@ -1723,15 +1724,15 @@ async def send_to_staad(data: dict) -> dict:
             for i in range(len(force_entries[0])):
                 force_entries[0][i] = force_entries[0][i] * (force_factor if i < 3 else moments_factor)
 
-        # convert displacements from inches to m
+        # convert displacements from inches to mm
         if displacement_unit.startswith("in"):
             for _, member_displacements_entries in member_displacements.items():
                 for i in range(len(member_displacements_entries[0])):
-                    member_displacements_entries[0][i] = member_displacements_entries[0][i] * 0.0254
-                    member_displacements_entries[1][i] = member_displacements_entries[1][i] * 0.0254
+                    member_displacements_entries[0][i] = member_displacements_entries[0][i] * 25.4
+                    member_displacements_entries[1][i] = member_displacements_entries[1][i] * 25.4
             for _, node_displacements_entries in node_displacements.items():
                 for i in range(len(node_displacements_entries[0])):
-                    node_displacements_entries[0][i] = node_displacements_entries[0][i] * 0.0254
+                    node_displacements_entries[0][i] = node_displacements_entries[0][i] * 25.4
 
         forces_summary = summarize_forces_displacements(forces)
         support_reactions_summary = summarize_forces_displacements(support_reactions)
@@ -1785,6 +1786,13 @@ async def send_to_staad(data: dict) -> dict:
                             support_reactions, support_reactions_summary, beam_node_map, node_displacements,
                             node_displacements_summary, member_displacements, member_displacements_summary,
                             lc, lc_title, joint_member_ends, env_summary_results)
+        node_displacements_limits = {"min_X": abs(env_summary_results['displacements']['min_X']['X']),
+                                     "max_X": abs(env_summary_results['displacements']['max_X']['X']),
+                                     "min_Z": abs(env_summary_results['displacements']['min_Z']['Z']),
+                                     "max_Z": abs(env_summary_results['displacements']['max_Z']['Z'])}
+        node_displacements_limits_exceed_col_height_200 = {key: displacement_limit >= grid_spec.get('col_height_mm')/200 for key, displacement_limit in node_displacements_limits.items()}
+        env_summary_results['node_displacements_limits'] = node_displacements_limits
+        env_summary_results['node_displacements_limits_exceed_col_height_200'] = node_displacements_limits_exceed_col_height_200
         envelope_summary_results[envelopeId] = env_summary_results
 
     staad_update_status["min_fail_ratio"] = output.GetMemberSteelDesignMinFailureRatio()

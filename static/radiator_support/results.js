@@ -87,6 +87,10 @@ function resultTable(parent, records, columns) {
       if ((key === 'maximum' || key === 'minimum') && typeof value === 'number' && value > 1) {
         cell.classList.add('result-failure');
       }
+      if (key === 'exceeds_limit' && value === true) {
+        cell.classList.add('result-failure');
+        cell.replaceChildren(resultElement('strong', resultValue(value)));
+      }
       row.append(cell);
     }
     body.append(row);
@@ -176,7 +180,18 @@ function renderStaadResults(result) {
   for (const [id, summary] of envelopes) {
     const metadata = (result.load_envelopes || []).find(envelope => String(envelope.envelopeId) === id);
     const section = resultSection(content, `Envelope ${id}${metadata ? ` - ${metadata.envelopeType}` : ''}`, true);
-    resultData(section, summary);
+    const {
+      node_displacements_limits: displacements = {},
+      node_displacements_limits_exceed_col_height_200: exceedsLimits = {},
+      ...otherResults
+    } = summary;
+    resultData(section, otherResults);
+    const displacementSection = resultSection(section, 'Displacements Exceed Limits (Col Height/200)?');
+    resultTable(displacementSection, ['min_X', 'max_X', 'min_Z', 'max_Z'].map(extreme => ({
+      extreme: resultLabel(extreme),
+      displacement: displacements[extreme],
+      exceeds_limit: exceedsLimits[extreme],
+    })));
   }
 }
 

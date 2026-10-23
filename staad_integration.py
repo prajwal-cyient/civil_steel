@@ -547,6 +547,17 @@ def _format_com_error(exc: Exception) -> str:
             return " / ".join(str(p) for p in parts)
     return str(exc)
 
+def memberName2type(name: str) -> str:
+    if name.startswith("bracing-long"):
+        return "bracing_longitudinal"
+    elif name.startswith("bracing-trans"):
+        return "bracing_transverse"
+    elif name.startswith("beam-x"):
+        return "beam_longitudinal"
+    elif name.startswith("beam-y"):
+        return "beam_transverse"
+    else:
+        return "column"
 
 def _node_key(point: List[float]) -> tuple:
     # Round to avoid floating-point duplicates creating separate
@@ -1208,15 +1219,15 @@ def _apply_load_configuration(
 
 # ── Public API ───────────────────────────────────────────────────────────
 
-def _joint_force_maxima(joint_member_ends: dict, start_forces: list, end_forces: list) -> dict:
+def _joint_force_maxima(joint_member_ends: dict, forces: dict[int, list[list[float]]]) -> dict:
     """Return componentwise absolute member-end maxima grouped by joint degree.
 
     Forces retain the requested STAAD coordinate system (local or global).
     Each component is an independent envelope, not a simultaneous force vector.
     """
     forces_by_end = {
-        start_end: {entry["beam"]: entry["forces"] for entry in start_forces},
-        final_end: {entry["beam"]: entry["forces"] for entry in end_forces},
+        start_end: {beam_id: beam_forces[0] for beam_id, beam_forces in forces.items()},
+        final_end: {beam_id: beam_forces[1] for beam_id, beam_forces in forces.items()},
     }
     components = ("Fx", "Fy", "Fz", "Mx", "My", "Mz")
     groups = {}
@@ -1258,80 +1269,100 @@ def _joint_force_maxima(joint_member_ends: dict, start_forces: list, end_forces:
 
 '''
 Create a summary of forces/displacements for member/node in the staad style:
-Given a list of member id/node id and its forces/displacements, this function returns max/min values for each component.
+Given a list of member id/node id and its forces/displacements in a load case, this function returns max/min values for each component.
 '''
-def summarize_forces_displacements(data: List[Dict[str, Any]], id_key: str, value_key: str) -> Dict[str, Any]:
-    entity_values = data[0][value_key] if data else []
+def summarize_forces_displacements(data: dict[int, list[list[float]]]) -> Dict[str, Any]:
+    entity_values = list(data.values())[0][0] if data else []
+    num_components = len(entity_values)
     #print("id_key:", id_key, "value_key:", value_key, "Initial entity values:", entity_values)
-    summary = {"max": [float("-inf") for _ in range(len(entity_values))], "min": [float("inf") for _ in range(len(entity_values))],
-               "max_ids": [None for _ in range(len(entity_values))], "min_ids": [None for _ in range(len(entity_values))]}
-    for entry in data:
-        entity_id = entry[id_key]
-        entity_values = entry[value_key]
-        for index in range(len(entity_values)):
-            value = entity_values[index]
-            if value > summary["max"][index]:
-                summary["max"][index] = value
-                summary["max_ids"][index] = entity_id
-            if value < summary["min"][index]:
-                summary["min"][index] = value
-                summary["min_ids"][index] = entity_id
-    return summary
+    
+    ret = []
+    num_entities = len(list(data.values())[0])
+    for i in range(num_entities):
+        summary = {"max": [float("-inf") for _ in range(num_components)], "min": [float("inf") for _ in range(num_components)],
+                   "max_ids": [None for _ in range(num_components)], "min_ids": [None for _ in range(num_components)]}
+        for entity_id, entity_entry in data.items():
+            entity_values = entity_entry[i]
+            for index in range(len(entity_values)):
+                value = entity_values[index]
+                if value > summary["max"][index]:
+                    summary["max"][index] = value
+                    summary["max_ids"][index] = entity_id
+                if value < summary["min"][index]:
+                    summary["min"][index] = value
+                    summary["min_ids"][index] = entity_id
+        ret.append(summary)
+    return ret
+
+'''
+This function traverses one level from the given node to find connected members and their corresponding start or end nodes.
+Then it finds forces applied on those members at the corresponding start or end nodes.
+'''
+def find_connected_members_forces(node_id: int, joint_member_ends: Dict[int, List[Tuple[int, int]]], forces: dict[int, list[list[float]]]) -> List[Dict[str, Any]]:
+    connected_forces: List[Dict[str, Any]] = []
+    for beam_id, start_or_end in joint_member_ends[node_id]:
+        connected_forces.append({"beam": beam_id, "end": start_or_end, "forces": forces[beam_id][start_or_end]})
+    return connected_forces
 
 '''
 Calculate the max/min of forces for each component and assign other elements accordingly.
 This function is typically used to summarize the extreme values and their corresponding entities for further analysis or reporting.
 '''
-def find_extreme_forces(forces: List[Dict[str, Any]], forces_summary: Dict[str, Any], summary_key: str, force_key: str, beam_node_map: Dict[int, Tuple[int, int]], lc: str, lc_title: str, start_or_end: int, summary_results: Dict[str, Any]) -> Dict[str, Any]:
+def find_extreme_forces(forces: dict[int, list[list[float]]], forces_summary: list[Dict[str, Any]], summary_key: str, force_key: str, beam_node_map: Dict[int, Tuple[int, int]], lc: str, lc_title: str, joint_member_ends: Dict[int, List[Tuple[int, int]]], summary_results: Dict[str, Any]) -> Dict[str, Any]:
     force_components = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
     force_key_index = force_components.index(force_key)
     summary_value_key = f'{summary_key}_{force_key}'
-    comparison = forces_summary[summary_key][force_key_index] > summary_results["forces"][summary_value_key][force_key] if summary_key == "max" else forces_summary[summary_key][force_key_index] < summary_results["forces"][summary_value_key][force_key]
-    if comparison:
-        beam_no = forces_summary[f"{summary_key}_ids"][force_key_index]
-        for comp in force_components:
-            summary_results["forces"][summary_value_key][comp] = list(filter(lambda x: x["beam"] == beam_no, forces))[0]["forces"][force_components.index(comp)]
-        summary_results["forces"][summary_value_key][force_key] = forces_summary[summary_key][force_key_index]
-        summary_results["forces"][summary_value_key]["beam"] = beam_no
-        summary_results["forces"][summary_value_key]["node"] = beam_node_map[beam_no][start_or_end]
-        summary_results["forces"][summary_value_key]["load_case"] = lc
-        summary_results["forces"][summary_value_key]["load_case_title"] = lc_title
+    ends = [0, 1]
+    for start_or_end in ends:
+        comparison = forces_summary[start_or_end][summary_key][force_key_index] > summary_results["forces"][summary_value_key][force_key] if summary_key == "max" else forces_summary[start_or_end][summary_key][force_key_index] < summary_results["forces"][summary_value_key][force_key]
+        if comparison:
+            beam_no = forces_summary[start_or_end][f"{summary_key}_ids"][force_key_index]
+            for comp in force_components:
+                summary_results["forces"][summary_value_key][comp] = forces[beam_no][start_or_end][force_components.index(comp)]
+            summary_results["forces"][summary_value_key][force_key] = forces_summary[start_or_end][summary_key][force_key_index]
+            summary_results["forces"][summary_value_key]["beam"] = beam_no
+            summary_results["forces"][summary_value_key]["node"] = beam_node_map[beam_no][start_or_end]
+            summary_results["forces"][summary_value_key]["load_case"] = lc
+            summary_results["forces"][summary_value_key]["load_case_title"] = lc_title
+            summary_results["forces"][summary_value_key]["connected_forces"] = find_connected_members_forces(beam_node_map[beam_no][start_or_end], joint_member_ends, forces)
     return summary_results
 
 '''
 Calculate the max/min of member displacements for each component and assign other elements accordingly.
 This function is typically used to summarize the extreme values and their corresponding entities for further analysis or reporting.
 '''
-def find_extreme_member_displacements(member_displacements: List[Dict[str, Any]], member_displacements_summary: Dict[str, Any], summary_key: str, displacement_key: str, beam_node_map: Dict[int, Tuple[int, int]], lc: str, lc_title: str, start_or_end: int, summary_results: Dict[str, Any]) -> Dict[str, Any]:
+def find_extreme_member_displacements(member_displacements: dict[int, list[list[float]]], member_displacements_summary: list[Dict[str, Any]], summary_key: str, displacement_key: str, beam_node_map: Dict[int, Tuple[int, int]], lc: str, lc_title: str, joint_member_ends: Dict[int, List[Tuple[int, int]]], summary_results: Dict[str, Any]) -> Dict[str, Any]:
     displacement_components = ["X", "Y", "Z"]
     displacement_key_index = displacement_components.index(displacement_key)
     summary_value_key = f'{summary_key}_{displacement_key}'
-    comparison = member_displacements_summary[summary_key][displacement_key_index] > summary_results["member_displacements"][summary_value_key][displacement_key] if summary_key == "max" else member_displacements_summary[summary_key][displacement_key_index] < summary_results["member_displacements"][summary_value_key][displacement_key]
-    if comparison:
-        beam_no = member_displacements_summary[f"{summary_key}_ids"][displacement_key_index]
-        for comp in displacement_components:
-            summary_results["member_displacements"][summary_value_key][comp] = list(filter(lambda x: x["beam"] == beam_no, member_displacements))[0]["displacements"][displacement_components.index(comp)]
-        summary_results["member_displacements"][summary_value_key][displacement_key] = member_displacements_summary[summary_key][displacement_key_index]
-        summary_results["member_displacements"][summary_value_key]["beam"] = beam_no
-        summary_results["member_displacements"][summary_value_key]["node"] = beam_node_map[beam_no][start_or_end]
-        summary_results["member_displacements"][summary_value_key]["load_case"] = lc
-        summary_results["member_displacements"][summary_value_key]["load_case_title"] = lc_title
+    ends = [0, 1]
+    for start_or_end in ends:
+        comparison = member_displacements_summary[start_or_end][summary_key][displacement_key_index] > summary_results["member_displacements"][summary_value_key][displacement_key] if summary_key == "max" else member_displacements_summary[start_or_end][summary_key][displacement_key_index] < summary_results["member_displacements"][summary_value_key][displacement_key]
+        if comparison:
+            beam_no = member_displacements_summary[start_or_end][f"{summary_key}_ids"][displacement_key_index]
+            for comp in displacement_components:
+                summary_results["member_displacements"][summary_value_key][comp] = member_displacements[beam_no][start_or_end][displacement_components.index(comp)]
+            summary_results["member_displacements"][summary_value_key][displacement_key] = member_displacements_summary[start_or_end][summary_key][displacement_key_index]
+            summary_results["member_displacements"][summary_value_key]["beam"] = beam_no
+            summary_results["member_displacements"][summary_value_key]["node"] = beam_node_map[beam_no][start_or_end]
+            summary_results["member_displacements"][summary_value_key]["load_case"] = lc
+            summary_results["member_displacements"][summary_value_key]["load_case_title"] = lc_title
     return summary_results
 
 '''
 Calculate the max/min of displacements for each component and assign other elements accordingly.
 This function is typically used to summarize the extreme values and their corresponding entities for further analysis or reporting.
 '''
-def find_extreme_displacements(displacements: List[Dict[str, Any]], displacements_summary: Dict[str, Any], summary_key: str, displacement_key: str, lc: str, lc_title: str, summary_results: Dict[str, Any]) -> Dict[str, Any]:
+def find_extreme_node_displacements(displacements: dict[int, list[list[float]]], displacements_summary: list[Dict[str, Any]], summary_key: str, displacement_key: str, lc: str, lc_title: str, joint_member_ends: Dict[int, List[Tuple[int, int]]], summary_results: Dict[str, Any]) -> Dict[str, Any]:
     displacement_components = ["X", "Y", "Z", "rX", "rY", "rZ"]
     displacement_key_index = displacement_components.index(displacement_key)
     summary_value_key = f'{summary_key}_{displacement_key}'
-    comparison = displacements_summary[summary_key][displacement_key_index] > summary_results["displacements"][summary_value_key][displacement_key] if summary_key == "max" else displacements_summary[summary_key][displacement_key_index] < summary_results["displacements"][summary_value_key][displacement_key]
+    comparison = displacements_summary[0][summary_key][displacement_key_index] > summary_results["displacements"][summary_value_key][displacement_key] if summary_key == "max" else displacements_summary[0][summary_key][displacement_key_index] < summary_results["displacements"][summary_value_key][displacement_key]
     if comparison:
-        node_no = displacements_summary[f"{summary_key}_ids"][displacement_key_index]
+        node_no = displacements_summary[0][f"{summary_key}_ids"][displacement_key_index]
         for comp in displacement_components:
-            summary_results["displacements"][summary_value_key][comp] = list(filter(lambda x: x["node"] == node_no, displacements))[0]["displacements"][displacement_components.index(comp)]
-        summary_results["displacements"][summary_value_key][displacement_key] = displacements_summary[summary_key][displacement_key_index]
+            summary_results["displacements"][summary_value_key][comp] = displacements[node_no][0][displacement_components.index(comp)]
+        summary_results["displacements"][summary_value_key][displacement_key] = displacements_summary[0][summary_key][displacement_key_index]
         summary_results["displacements"][summary_value_key]["node"] = node_no
         summary_results["displacements"][summary_value_key]["load_case"] = lc
         summary_results["displacements"][summary_value_key]["load_case_title"] = lc_title
@@ -1341,16 +1372,16 @@ def find_extreme_displacements(displacements: List[Dict[str, Any]], displacement
 Calculate the max/min of displacements for each component and assign other elements accordingly.
 This function is typically used to summarize the extreme values and their corresponding entities for further analysis or reporting.
 '''
-def find_extreme_support_reactions(support_reactions: List[Dict[str, Any]], support_reactions_summary: Dict[str, Any], summary_key: str, force_key: str, lc: str, lc_title: str, summary_results: Dict[str, Any]) -> Dict[str, Any]:
+def find_extreme_support_reactions(support_reactions: dict[int, list[list[float]]], support_reactions_summary: list[Dict[str, Any]], summary_key: str, force_key: str, lc: str, lc_title: str, joint_member_ends: Dict[int, List[Tuple[int, int]]], summary_results: Dict[str, Any]) -> Dict[str, Any]:
     force_components = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
     force_key_index = force_components.index(force_key)
     summary_value_key = f'{summary_key}_{force_key}'
-    comparison = support_reactions_summary[summary_key][force_key_index] > summary_results["support_reactions"][summary_value_key][force_key] if summary_key == "max" else support_reactions_summary[summary_key][force_key_index] < summary_results["support_reactions"][summary_value_key][force_key]
+    comparison = support_reactions_summary[0][summary_key][force_key_index] > summary_results["support_reactions"][summary_value_key][force_key] if summary_key == "max" else support_reactions_summary[0][summary_key][force_key_index] < summary_results["support_reactions"][summary_value_key][force_key]
     if comparison:
-        node_no = support_reactions_summary[f"{summary_key}_ids"][force_key_index]
+        node_no = support_reactions_summary[0][f"{summary_key}_ids"][force_key_index]
         for comp in force_components:
-            summary_results["support_reactions"][summary_value_key][comp] = list(filter(lambda x: x["node"] == node_no, support_reactions))[0]["forces"][force_components.index(comp)]
-        summary_results["support_reactions"][summary_value_key][force_key] = support_reactions_summary[summary_key][force_key_index]
+            summary_results["support_reactions"][summary_value_key][comp] = support_reactions[node_no][0][force_components.index(comp)]
+        summary_results["support_reactions"][summary_value_key][force_key] = support_reactions_summary[0][summary_key][force_key_index]
         summary_results["support_reactions"][summary_value_key]["node"] = node_no
         summary_results["support_reactions"][summary_value_key]["load_case"] = lc
         summary_results["support_reactions"][summary_value_key]["load_case_title"] = lc_title
@@ -1407,11 +1438,10 @@ def initialize_summary_results() -> Dict[str, Any]:
                     }
     return summary_results
 
-def compute_summary_results(start_forces, start_forces_summary, end_forces, end_forces_summary,
+def compute_summary_results(forces, forces_summary,
                             support_reactions, support_reactions_summary, beam_node_map, node_displacements,
-                            node_displacements_summary, member_start_displacements, member_start_displacements_summary,
-                            member_end_displacements, member_end_displacements_summary,
-                            lc, lc_title, start_end, final_end, summary_results) -> None:
+                            node_displacements_summary, member_displacements, member_displacements_summary,
+                            lc, lc_title, joint_member_ends, summary_results) -> None:
     summary_keys = ["max", "min"]
     force_components = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
     node_displacement_components = ["X", "Y", "Z", "rX", "rY", "rZ"]
@@ -1420,17 +1450,15 @@ def compute_summary_results(start_forces, start_forces_summary, end_forces, end_
     # Compute extreme forces for start and end of members
     for component in force_components:
         for extreme in summary_keys:
-            find_extreme_forces(start_forces, start_forces_summary, extreme, component, beam_node_map, lc, lc_title, start_end, summary_results)
-            find_extreme_forces(end_forces, end_forces_summary, extreme, component, beam_node_map, lc, lc_title, final_end, summary_results)
-            find_extreme_support_reactions(support_reactions, support_reactions_summary, extreme, component, lc, lc_title, summary_results)
+            find_extreme_forces(forces, forces_summary, extreme, component, beam_node_map, lc, lc_title, joint_member_ends, summary_results)
+            find_extreme_support_reactions(support_reactions, support_reactions_summary, extreme, component, lc, lc_title, joint_member_ends, summary_results)
     for component in node_displacement_components:
         for extreme in summary_keys:
-            find_extreme_displacements(node_displacements, node_displacements_summary, extreme, component, lc, lc_title, summary_results)
+            find_extreme_node_displacements(node_displacements, node_displacements_summary, extreme, component, lc, lc_title, joint_member_ends, summary_results)
 
     for component in member_displacement_components:
         for extreme in summary_keys:
-            find_extreme_member_displacements(member_start_displacements, member_start_displacements_summary, extreme, component, beam_node_map, lc, lc_title, start_end, summary_results)
-            find_extreme_member_displacements(member_end_displacements, member_end_displacements_summary, extreme, component, beam_node_map, lc, lc_title, final_end, summary_results)
+            find_extreme_member_displacements(member_displacements, member_displacements_summary, extreme, component, beam_node_map, lc, lc_title, joint_member_ends, summary_results)
 
 async def send_to_staad(data: dict) -> dict:
     """
@@ -1488,13 +1516,30 @@ async def send_to_staad(data: dict) -> dict:
     #property.AssignMemberSpecToBeam([900001, 900002, 900003], end_my_mz_release_spec_id)
     #property.AssignMemberSpecToBeam([900148, 900154, 900160, 900166], truss_spec_id)
 
+    # Mapping of X, Y, Z co-ordinates to node Ids
+    # Key: (x, y, z) tuple, Value: node ID
     node_cache: Dict[tuple, int] = {}
+    # Node ID allocator for generating unique node IDs
     node_ids = _SequentialIdAllocator(STARTING_NODE_ID)
+    # Beam ID allocator for generating unique beam IDs
     beam_ids = _SequentialIdAllocator(STARTING_BEAM_ID)
+    # Mapping of member names to beam IDs:
+    # beam names: column-j-i, beam-x-j-i for longitudinal beams, beam-y-j-i for transverse beams, 
+    # bracing-long-j-bay, bracing-trans-i-bay
+    # where j ranges from 1 to number transverse bays and i ranges from 1 to number longitudinal bays
+    # for bracing-long-j-bay, j ranges from 1 to number transverse bays
+    # for bracing-trans-i-bay, i ranges from 1 to number longitudinal bays
+    # Key: member name, Value: beam ID
     beam_by_name: Dict[str, int] = {}
+    # Set of nodes that have been assigned supports: Bottom nodes of columns
     support_nodes: Set[int] = set()
+    # mapping of member types to their corresponding beam IDs
+    # column, beam, longitudinal_brace, transverse_brace
     member_ids_by_type: Dict[str, List[int]] = {}
-    joint_member_ends = {}
+    # Key: node ID, Value: list of tuples (beam ID, start_or_end)
+    # start_or_end: 0 for start node, 1 for end node
+    joint_member_ends: Dict[int, List[Tuple[int, int]]] = {}
+    # Mapping of beam IDs to their start and end node IDs
     beam_node_map: Dict[int, Tuple[int, int]] = {}  # maps beam_id to its start and end node IDs
 
     created = 0
@@ -1523,7 +1568,7 @@ async def send_to_staad(data: dict) -> dict:
         except Exception as exc:
             property_errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
 
-        memberType = member.get("type", "unknown").lower()
+        memberType = memberName2type(member.get("name", "")).lower()
         if memberType not in member_ids_by_type:
             member_ids_by_type[memberType] = []
         member_ids_by_type[memberType].append(beam_no)
@@ -1566,6 +1611,11 @@ async def send_to_staad(data: dict) -> dict:
         "load_cases_applied": load_applied,
         "load_cases_failed": len(load_errors),
         "load_errors": load_errors,
+        "beam_by_name": beam_by_name,
+        "support_nodes": list(support_nodes),
+        "member_ids_by_type": member_ids_by_type,
+        "joint_member_ends": joint_member_ends,
+        "beam_node_map": beam_node_map
     }
     
     # Start analysis
@@ -1646,83 +1696,70 @@ async def send_to_staad(data: dict) -> dict:
     summary_results = initialize_summary_results()
     for lc_title, lc in loadCaseMap.items():
         print(f"Processing load case: {lc_title} (ID: {lc})")
-        start_forces = [
-            {"beam": line_id, "forces": output.GetMemberEndForces(int(line_id), start_end, int(lc), results_local)}
-            for line_id in beam_by_name.values()
-        ]
+        start_forces = {line_id: output.GetMemberEndForces(int(line_id), start_end, int(lc), results_local) for line_id in beam_by_name.values()}
+        end_forces = {line_id: [-1*x for x in output.GetMemberEndForces(int(line_id), final_end, int(lc), results_local)] for line_id in beam_by_name.values()}
+        # Combine start and end forces for each member into a single dictionary entry
+        # key: line_id, value: [start_forces, end_forces] 
+        # with start_forces and end_forces being lists of member end forces Fx, Fy, Fz, Mx, My, and Mz respectively
+        forces = {line_id: [start_forces[line_id], end_forces[line_id]] for line_id in beam_by_name.values()}
 
-        # Calculate member end forces at the final end, with sign reversed to maintain consistency with start forces.
-        end_forces = [
-            {"beam": line_id, "forces": [-1*x for x in output.GetMemberEndForces(int(line_id), final_end, int(lc), results_local)]}
-            for line_id in beam_by_name.values()
-        ]
+        support_reactions = {support_id: [output.GetSupportReactions(int(support_id), int(lc))] for support_id in support_nodes}
 
-        support_reactions = [
-            {"node": support_id, "forces": output.GetSupportReactions(int(support_id), int(lc))}
-            for support_id in support_nodes
-        ]
+        member_start_displacements = {line_id: output.GetMemberEndDisplacements(int(line_id), start_end, int(lc)) for line_id in beam_by_name.values()}
+        member_end_displacements = {line_id: output.GetMemberEndDisplacements(int(line_id), final_end, int(lc)) for line_id in beam_by_name.values()}
+        # Combine start and end displacements for each member into a single dictionary entry
+        # key: line_id, value: [member_start_displacements, member_end_displacements] 
+        # with member_start_displacements and member_end_displacements being lists of displacements X, Y, Z respectively
+        member_displacements = {line_id: [member_start_displacements[line_id], member_end_displacements[line_id]] for line_id in beam_by_name.values()}
 
-        member_start_displacements = [
-            {"beam": line_id, "displacements": output.GetMemberEndDisplacements(int(line_id), start_end, int(lc))}
-            for line_id in beam_by_name.values()
-        ]
-
-        member_end_displacements = [
-            {"beam": line_id, "displacements": output.GetMemberEndDisplacements(int(line_id), final_end, int(lc))}
-            for line_id in beam_by_name.values()
-        ]
-
-        node_displacements = [
-            {"node": node_id, "displacements": output.GetNodeDisplacements(int(node_id), int(lc))}
-            for node_id in node_cache.values()
-        ]
+        node_displacements = {node_id: [output.GetNodeDisplacements(int(node_id), int(lc))] for node_id in node_cache.values()}
 
         # convert to kN and kN-m for forces and moments respectively
-        for force_entries in (start_forces, end_forces, support_reactions):
-            for entry in force_entries:
-                entry["forces"] = [
-                    value * (force_factor if index < 3 else moments_factor)
-                    for index, value in enumerate(entry["forces"])
-                ]
+        for _, force_entries in forces.items():
+            for i in range(len(force_entries[0])):
+                force_entries[0][i] = force_entries[0][i] * (force_factor if i < 3 else moments_factor)
+                force_entries[1][i] = force_entries[1][i] * (force_factor if i < 3 else moments_factor)
+        for _, force_entries in support_reactions.items():
+            for i in range(len(force_entries[0])):
+                force_entries[0][i] = force_entries[0][i] * (force_factor if i < 3 else moments_factor)
+
         # convert displacements from inches to m
         if displacement_unit.startswith("in"):
-            for displacement_entries in (member_start_displacements, member_end_displacements, node_displacements):
-                for entry in displacement_entries:
-                    entry["displacements"] = [value * 0.0254 for value in entry["displacements"]]
+            for _, member_displacements_entries in member_displacements.items():
+                for i in range(len(member_displacements_entries[0])):
+                    member_displacements_entries[0][i] = member_displacements_entries[0][i] * 0.0254
+                    member_displacements_entries[1][i] = member_displacements_entries[1][i] * 0.0254
+            for _, node_displacements_entries in node_displacements.items():
+                for i in range(len(node_displacements_entries[0])):
+                    node_displacements_entries[0][i] = node_displacements_entries[0][i] * 0.0254
 
-        start_forces_summary = summarize_forces_displacements(start_forces, "beam", "forces")
-        end_forces_summary = summarize_forces_displacements(end_forces, "beam", "forces")
-        support_reactions_summary = summarize_forces_displacements(support_reactions, "node", "forces")
-        member_start_displacements_summary = summarize_forces_displacements(member_start_displacements, "beam", "displacements")
-        member_end_displacements_summary = summarize_forces_displacements(member_end_displacements, "beam", "displacements")
-        node_displacements_summary = summarize_forces_displacements(node_displacements, "node", "displacements")
+        forces_summary = summarize_forces_displacements(forces)
+        support_reactions_summary = summarize_forces_displacements(support_reactions)
+        member_displacements_summary = summarize_forces_displacements(member_displacements)
+        node_displacements_summary = summarize_forces_displacements(node_displacements)
 
-        compute_summary_results(start_forces, start_forces_summary, end_forces, end_forces_summary,
+        compute_summary_results(forces, forces_summary,
                             support_reactions, support_reactions_summary, beam_node_map, node_displacements,
-                            node_displacements_summary, member_start_displacements, member_start_displacements_summary,
-                            member_end_displacements, member_end_displacements_summary,
-                            lc, lc_title, start_end, final_end, summary_results)
+                            node_displacements_summary, member_displacements, member_displacements_summary,
+                            lc, lc_title, joint_member_ends, summary_results)
 
         staad_update_status[lc] = {}
         # results metadata
         staad_update_status[lc]["load_case_id"] = int(lc)
         staad_update_status[lc]["load_case_title"] = lc_title
         # store summarized results in the update status dictionary
-        staad_update_status[lc]["summary_start_forces"] = start_forces_summary
-        staad_update_status[lc]["summary_end_forces"] = end_forces_summary
+        staad_update_status[lc]["summary_forces"] = forces_summary
         staad_update_status[lc]["summary_support_reactions"] = support_reactions_summary
-        staad_update_status[lc]["summary_member_start_displacements"] = member_start_displacements_summary
-        staad_update_status[lc]["summary_member_end_displacements"] = member_end_displacements_summary
+        staad_update_status[lc]["summary_member_displacements"] = member_displacements_summary
         staad_update_status[lc]["summary_node_displacements"] = node_displacements_summary
         # store raw results in the update status dictionary
-        staad_update_status[lc]["member_start_displacements"] = member_start_displacements
-        staad_update_status[lc]["member_end_displacements"] = member_end_displacements
+        staad_update_status[lc]["member_displacements"] = member_displacements
         staad_update_status[lc]["node_displacements"] = node_displacements
-        staad_update_status[lc]["end_forces"] = end_forces
-        staad_update_status[lc]["start_forces"] = start_forces
+        staad_update_status[lc]["forces"] = forces
         staad_update_status[lc]["support_reactions"] = support_reactions
+
         staad_update_status[lc]["joint_force_maxima"] = _joint_force_maxima(
-            joint_member_ends, start_forces, end_forces
+            joint_member_ends, forces
         )
 
     # Find envelope wise summary of results
@@ -1736,33 +1773,28 @@ async def send_to_staad(data: dict) -> dict:
         for lc in loadCases:
             lc_title = load.GetLoadCaseTitle(lc)
             print(f"Processing load case {lc} {lc_title} in envelope {envelopeId}")
-            start_forces = staad_update_status[lc]["start_forces"]
-            end_forces = staad_update_status[lc]["end_forces"]
-            member_start_displacements = staad_update_status[lc]["member_start_displacements"]
-            member_end_displacements = staad_update_status[lc]["member_end_displacements"]
+            forces = staad_update_status[lc]["forces"]
+            member_displacements = staad_update_status[lc]["member_displacements"]
             node_displacements = staad_update_status[lc]["node_displacements"]
             support_reactions = staad_update_status[lc]["support_reactions"]
-            start_forces_summary = staad_update_status[lc]["summary_start_forces"]
-            end_forces_summary = staad_update_status[lc]["summary_end_forces"]
+            forces_summary = staad_update_status[lc]["summary_forces"]
             support_reactions_summary = staad_update_status[lc]["summary_support_reactions"]
-            member_start_displacements_summary = staad_update_status[lc]["summary_member_start_displacements"]
-            member_end_displacements_summary = staad_update_status[lc]["summary_member_end_displacements"]
+            member_displacements_summary = staad_update_status[lc]["summary_member_displacements"]
             node_displacements_summary = staad_update_status[lc]["summary_node_displacements"]
-            compute_summary_results(start_forces, start_forces_summary, end_forces, end_forces_summary,
+            compute_summary_results(forces, forces_summary,
                             support_reactions, support_reactions_summary, beam_node_map, node_displacements,
-                            node_displacements_summary, member_start_displacements, member_start_displacements_summary,
-                            member_end_displacements, member_end_displacements_summary,
-                            lc, lc_title, start_end, final_end, env_summary_results)
+                            node_displacements_summary, member_displacements, member_displacements_summary,
+                            lc, lc_title, joint_member_ends, env_summary_results)
         envelope_summary_results[envelopeId] = env_summary_results
 
     staad_update_status["min_fail_ratio"] = output.GetMemberSteelDesignMinFailureRatio()
     staad_update_status["max_fail_ratio"] = output.GetMemberSteelDesignMaxFailureRatio()
-    member_ratios = [{"beam": line_id, "name": name, "ratio": output.GetMemberSteelDesignRatio(line_id)} for name, line_id in beam_by_name.items()]
+    member_ratios = {line_id: {"name": name, "ratio": output.GetMemberSteelDesignRatio(line_id)} for name, line_id in beam_by_name.items()}
     member_ratios_by_type: dict[str, list[float]] = {}
-    for ratio in member_ratios:
+    for line_id, ratio in member_ratios.items():
         name = ratio["name"]
         ratio_value = ratio["ratio"]
-        member_type = name.split('-')[0]
+        member_type = memberName2type(name)
         if member_type not in member_ratios_by_type:
             member_ratios_by_type[member_type] = []
         member_ratios_by_type[member_type].append(ratio_value)
@@ -1788,9 +1820,9 @@ async def send_to_staad(data: dict) -> dict:
 
     try:
         # Any additional processing that might raise an exception can go here
-        member_max_ratios = [{"beam": line_id, "name": name, "ratio": output.GetMultipleMemberSteelDesignMaxRatio(line_id)} for name, line_id in beam_by_name.items()]
+        member_max_ratios = {line_id: {"name": name, "ratio": output.GetMultipleMemberSteelDesignMaxRatio(line_id)} for name, line_id in beam_by_name.items()}
         member_max_ratios_by_type: dict[str, list[float]] = {}
-        for ratio in member_max_ratios:
+        for line_id, ratio in member_max_ratios.items():
             name = ratio["name"]
             ratio_value = ratio["ratio"]
             member_type = name.split('-')[0]

@@ -29,7 +29,8 @@ function resultTable(parent, records, columns) {
     parent.append(resultElement('p', 'No results available.'));
     return;
   }
-  const keys = columns || [...new Set(records.flatMap(record => Object.keys(record)))];
+  const keys = (columns || [...new Set(records.flatMap(record => Object.keys(record)))])
+    .filter(key => key !== 'connected_forces');
   const wrapper = resultElement('div', undefined, 'result-table-wrap');
   const table = resultElement('table');
   const head = resultElement('thead');
@@ -45,10 +46,38 @@ function resultTable(parent, records, columns) {
   const body = resultElement('tbody');
   for (const record of records) {
     const row = resultElement('tr');
+    const connectedForces = Array.isArray(record.connected_forces) ? record.connected_forces : null;
+    const detailRow = connectedForces ? resultElement('tr') : null;
+    if (detailRow) {
+      detailRow.hidden = true;
+      const detailCell = resultElement('td');
+      detailCell.colSpan = keys.length;
+      detailCell.append(resultElement('h3', 'Connected Forces'));
+      resultTable(detailCell, connectedForces.map(entry => ({
+        beam: entry.beam,
+        end: entry.end,
+        ...(Array.isArray(entry.forces)
+          ? Object.fromEntries(['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'].map((component, index) => [component, entry.forces[index]]))
+          : entry.forces && typeof entry.forces === 'object' ? entry.forces : { forces: entry.forces }),
+      })));
+      detailRow.append(detailCell);
+    }
     for (const key of keys) {
       const value = record[key];
       const cell = resultElement('td', resultValue(value));
       if (key === 'extreme') cell.classList.add('result-extreme');
+      if (key === 'extreme' && detailRow) {
+        const link = resultElement('a', resultValue(value));
+        link.href = '#';
+        link.className = 'result-extreme-link';
+        link.setAttribute('aria-expanded', 'false');
+        link.addEventListener('click', event => {
+          event.preventDefault();
+          detailRow.hidden = !detailRow.hidden;
+          link.setAttribute('aria-expanded', String(!detailRow.hidden));
+        });
+        cell.replaceChildren(link);
+      }
       const component = String(record.extreme ?? '').replace(/^(max|min)[\s_]+/i, '').replace(/[\s_]/g, '').toLowerCase();
       if (typeof value === 'number' && component === key.replace(/[\s_]/g, '').toLowerCase()) {
         cell.classList.add('result-governing');
@@ -61,6 +90,7 @@ function resultTable(parent, records, columns) {
       row.append(cell);
     }
     body.append(row);
+    if (detailRow) body.append(detailRow);
   }
   table.append(body);
   wrapper.append(table);

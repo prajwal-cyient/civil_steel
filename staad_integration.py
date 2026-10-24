@@ -1214,12 +1214,12 @@ def _apply_load_configuration(
     # create design parameters
     create_design_parameters(design, grid_spec, members, longitudinal_beams, transverse_beams, columns, longitudinal_bracings, transverse_bracings)
 
-    return {"applied": currentLoadCaseId - 1 - len(errors), "errors": errors, "envelopCreationResults": envelopCreationResults}
+    return {"applied": load.GetPrimaryLoadCaseCount() + load.GetLoadCombinationCaseCount(), "errors": errors, "envelopCreationResults": envelopCreationResults}
 
 
 # ── Public API ───────────────────────────────────────────────────────────
 
-def _joint_force_maxima(joint_member_ends: dict, forces: dict[int, list[list[float]]]) -> dict:
+def _joint_force_maxima(joint_member_ends: dict, forces: dict[int, list[list[float]]], member_data_by_id: dict[int, dict]) -> dict:
     """Return componentwise absolute member-end maxima grouped by joint degree.
 
     Forces retain the requested STAAD coordinate system (local or global).
@@ -1244,7 +1244,8 @@ def _joint_force_maxima(joint_member_ends: dict, forces: dict[int, list[list[flo
             "members": [
                 {
                     "beam": beam_id,
-                    "end": "start" if member_end == start_end else "end",
+                    "member_type": memberName2type(member_data_by_id[beam_id].get("name")),
+                    "end": member_end,
                     "forces": dict(zip(components, forces_by_end[member_end][beam_id])),
                 }
                 for beam_id, member_end in member_ends
@@ -1531,6 +1532,8 @@ async def send_to_staad(data: dict) -> dict:
     # for bracing-trans-i-bay, i ranges from 1 to number longitudinal bays
     # Key: member name, Value: beam ID
     beam_by_name: Dict[str, int] = {}
+    # key: member id, value: member data including name
+    member_data_by_id: Dict[int, Dict] = {}
     # Set of nodes that have been assigned supports: Bottom nodes of columns
     support_nodes: Set[int] = set()
     # mapping of member types to their corresponding beam IDs
@@ -1555,6 +1558,9 @@ async def send_to_staad(data: dict) -> dict:
             beam_no, n1, n2 = _create_beam(geometry, node_cache, node_ids, beam_ids, member)
             beam_by_name[member.get("name", "")] = beam_no
             member["id"] = beam_no
+            member["start"] = n1
+            member["end"] = n2
+            member_data_by_id[beam_no] = member
             created += 1
             joint_member_ends.setdefault(n1, []).append((beam_no, start_end))
             joint_member_ends.setdefault(n2, []).append((beam_no, final_end))
@@ -1612,6 +1618,7 @@ async def send_to_staad(data: dict) -> dict:
         "load_cases_failed": len(load_errors),
         "load_errors": load_errors,
         "beam_by_name": beam_by_name,
+        "member_data_by_id": member_data_by_id,
         "support_nodes": list(support_nodes),
         "member_ids_by_type": member_ids_by_type,
         "joint_member_ends": joint_member_ends,
@@ -1760,7 +1767,7 @@ async def send_to_staad(data: dict) -> dict:
         staad_update_status[lc]["support_reactions"] = support_reactions
 
         staad_update_status[lc]["joint_force_maxima"] = _joint_force_maxima(
-            joint_member_ends, forces
+            joint_member_ends, forces, member_data_by_id
         )
 
     # Find envelope wise summary of results

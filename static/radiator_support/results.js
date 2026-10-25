@@ -24,7 +24,7 @@ function resultValue(value) {
   return String(value);
 }
 
-function resultTable(parent, records, columns) {
+function resultTable(parent, records, columns, columnLabel = resultLabel) {
   if (!records.length) {
     parent.append(resultElement('p', 'No results available.'));
     return;
@@ -36,7 +36,7 @@ function resultTable(parent, records, columns) {
   const head = resultElement('thead');
   const heading = resultElement('tr');
   for (const key of keys) {
-    const cell = resultElement('th', resultLabel(key));
+    const cell = resultElement('th', columnLabel(key));
     cell.scope = 'col';
     if (key === 'extreme') cell.classList.add('result-extreme');
     heading.append(cell);
@@ -163,7 +163,69 @@ function renderIntegrationStatus(content, result, analysis = false) {
   }
 }
 
+function memberName2type(name) {
+  if (name.startsWith('bracing-long')) return 'bracing_longitudinal';
+  if (name.startsWith('bracing-trans')) return 'bracing_transverse';
+  if (name.startsWith('beam-x')) return 'beam_longitudinal';
+  if (name.startsWith('beam-y')) return 'beam_transverse';
+  return 'column';
+}
+
+function staadLoadCases(result) {
+  return [...new Set((result.load_envelopes || []).flatMap(envelope => envelope.loadCases || []).map(String))];
+}
+
+function renderStaadLoadCases(result) {
+  const select = document.getElementById('staad-load-case');
+  select.replaceChildren();
+  for (const id of staadLoadCases(result)) {
+    const option = resultElement('option', result[id]?.load_case_title || `Load case ${id}`);
+    option.value = id;
+    select.append(option);
+  }
+  select.disabled = !select.options.length;
+  document.getElementById('staad-view-controls').hidden = false;
+}
+
+function staadForceTable(parent, title, forces, units) {
+  parent.append(resultElement('h3', title));
+  if (!Array.isArray(forces)) {
+    parent.append(resultElement('p', 'Not available for this load case.'));
+    return;
+  }
+  resultTable(parent, [Object.fromEntries(['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'].map((component, index) => [
+    `${component} (${index < 3 ? units?.force || 'force unit not reported' : units?.moment || 'moment unit not reported'})`,
+    forces[index],
+  ]))], undefined, key => key);
+}
+
+function renderStaadTooltip(parent, result, loadCaseId, member, nodeId) {
+  parent.replaceChildren();
+  const loadCase = result[loadCaseId];
+  parent.append(resultElement('strong', member ? `Beam ${member.id}: ${member.name}` : `Joint ${nodeId}`));
+  parent.append(resultElement('p', loadCase ? `Load case ${loadCaseId}: ${loadCase.load_case_title}` : 'No load case available.'));
+  if (member) {
+    parent.append(resultElement('p', [
+      `Type: ${memberName2type(member.name)}`,
+      `Start node: ${member.start} | End node: ${member.end}`,
+      `Material: ${member.material} | Profile: ${member.profile} | Class: ${member.class}`,
+    ].join('\n')));
+    const basis = result.results_local_or_global === 0 ? 'local' : result.results_local_or_global === 1 ? 'global' : 'basis not reported';
+    staadForceTable(parent, `Start node ${member.start} forces (${basis})`, loadCase?.forces?.[member.id]?.[0], result.units);
+    staadForceTable(parent, `End node ${member.end} forces (${basis})`, loadCase?.forces?.[member.id]?.[1], result.units);
+  } else {
+    parent.append(resultElement('p', 'Click to highlight connected members. Click empty space to clear.'));
+  }
+  const supportIds = new Set((result.support_nodes || []).map(String));
+  for (const id of member ? [member.start, member.end] : [nodeId]) {
+    if (supportIds.has(String(id))) {
+      staadForceTable(parent, `Support ${id} reactions (global)`, loadCase?.support_reactions?.[id]?.[0], result.units);
+    }
+  }
+}
+
 function renderStaadResults(result) {
+  renderStaadLoadCases(result);
   const content = openResultPanel('staad');
   renderIntegrationStatus(content, result, true);
   content.append(resultElement('h3', 'Load Envelopes'));

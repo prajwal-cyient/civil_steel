@@ -706,6 +706,10 @@ def create_app():
     def radiator_support_ui():
         return FileResponse(str(static_dir / "radiator_support" / "index.html"))
 
+    @app.get("/favicon.ico")
+    def favicon():
+        return FileResponse(str(static_dir / "favicon.ico"))
+
     @app.post("/api/v1/generate_radiator_support")
     def generate_radiator_support(request: GenerateRequest):
         cfg = request.grid.model_dump()

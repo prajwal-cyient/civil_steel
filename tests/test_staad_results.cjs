@@ -166,3 +166,121 @@ test('clearing the viewer removes and disposes geometry, labels and STAAD state'
   assert.equal(context.staadTooltip.hidden, true);
   assert.equal(elements.get('staad-view-controls').hidden, true);
 });
+
+test('transverse indices use spreadsheet-style letters at every rollover', () => {
+  const { context } = setup();
+  loadViewerFunction(context, 'indexToLetters');
+  for (const [index, expected] of [
+    [1, 'A'], [2, 'B'], [26, 'Z'], [27, 'AA'], [28, 'AB'],
+    [52, 'AZ'], [53, 'BA'], [702, 'ZZ'], [703, 'AAA'],
+  ]) assert.equal(context.indexToLetters(index), expected);
+  const labels = Array.from({ length: 28 }, (_, index) => context.indexToLetters(index + 1));
+  assert.equal(labels.length, 28);
+  assert.equal(new Set(labels).size, 28);
+  assert.deepEqual(labels.slice(25), ['Z', 'AA', 'AB']);
+});
+
+test('STAAD rendering restores both grid indices and rotates only the camera by 180 degrees', () => {
+  const { context } = setup();
+  class Vector3 {
+    constructor(x = 0, y = 0, z = 0) { this.set(x, y, z); }
+    set(x, y, z) { Object.assign(this, { x, y, z }); return this; }
+    copy(v) { return this.set(v.x, v.y, v.z); }
+    clone() { return new Vector3(this.x, this.y, this.z); }
+    add(v) { return this.set(this.x + v.x, this.y + v.y, this.z + v.z); }
+    multiplyScalar(s) { return this.set(this.x * s, this.y * s, this.z * s); }
+    length() { return Math.hypot(this.x, this.y, this.z); }
+    normalize() { return this.multiplyScalar(1 / this.length()); }
+    applyAxisAngle(axis, angle) {
+      assert.deepEqual([axis.x, axis.y, axis.z], [0, 1, 0]);
+      return this.set(this.x * Math.cos(angle) + this.z * Math.sin(angle), this.y,
+        this.z * Math.cos(angle) - this.x * Math.sin(angle));
+    }
+  }
+  class Group {
+    constructor() { this.children = []; }
+    add(child) { this.children.push(child); }
+  }
+  class Box3 {
+    constructor() {
+      this.min = new Vector3(Infinity, Infinity, Infinity);
+      this.max = new Vector3(-Infinity, -Infinity, -Infinity);
+    }
+    expandByPoint(p) {
+      for (const axis of ['x', 'y', 'z']) {
+        this.min[axis] = Math.min(this.min[axis], p[axis]);
+        this.max[axis] = Math.max(this.max[axis], p[axis]);
+      }
+    }
+    isEmpty() { return this.min.x > this.max.x; }
+    getSize(v) { return v.set(this.max.x - this.min.x, this.max.y - this.min.y, this.max.z - this.min.z); }
+    getCenter(v) { return v.copy(this.min).add(this.max).multiplyScalar(0.5); }
+  }
+  class Geometry {
+    setFromPoints(points) { this.points = points; return this; }
+  }
+  class Line {
+    constructor(geometry, material) { Object.assign(this, { geometry, material, userData: {} }); }
+  }
+  context.THREE = {
+    Vector3, Box3, Group, BufferGeometry: Geometry, Line, LineSegments: Line,
+    LineBasicMaterial: class {}, GridHelper: class { constructor() { this.position = new Vector3(); } },
+  };
+  context.clearStructureView = () => {};
+  context.renderStaadJoints = () => {};
+  context.renderStaadViewSummary = () => {};
+  context.staadClassColor = () => 123;
+  context.TYPE_COLORS = {};
+  context.generatedLegend = '';
+  context.scene = { add() {} };
+  context.staadMemberLines = new Map();
+  context.camera = { position: new Vector3(), aspect: 1, updateProjectionMatrix() {} };
+  context.controls = { target: new Vector3(), update() {} };
+  context.makeIndexLabel = text => ({ text, position: new Vector3() });
+  loadViewerFunction(context, 'indexToLetters');
+  loadViewerFunction(context, 'toThree');
+  loadViewerFunction(context, 'renderStructure');
+  const engineeringMembers = [];
+  for (let j = 0; j < 2; j++) {
+    for (let i = 0; i < 3; i++) {
+      engineeringMembers.push({
+        id: `${j}-${i}`, type: 'column', name: `column-${j}-${i}`,
+        p1: [i * 2600, j * 3300, 100], p2: [i * 2600, j * 3300, 5100],
+      });
+    }
+  }
+  context.renderStructure(engineeringMembers);
+  const previewDirection = {
+    x: context.camera.position.x - context.controls.target.x,
+    y: context.camera.position.y - context.controls.target.y,
+    z: context.camera.position.z - context.controls.target.z,
+  };
+  assert.deepEqual(Array.from(context.labelsGroup.children, label => label.text), ['1', '1', '2', '2', '3', '3', 'A', 'A', 'B', 'B']);
+  const staadMembers = engineeringMembers.map(member => ({
+    ...member, p1: [member.p1[1], member.p1[2], member.p1[0]],
+    p2: [member.p2[1], member.p2[2], member.p2[0]],
+  }));
+  context.renderStructure(staadMembers, {});
+  const labels = Array.from(context.labelsGroup.children, label => ({
+    text: label.text, position: [label.position.x, label.position.y, label.position.z],
+  }));
+  assert.deepEqual(labels, [
+    { text: '1', position: [-312, 100, 0] },
+    { text: '1', position: [3612, 100, 0] },
+    { text: '2', position: [-312, 100, 2600] },
+    { text: '2', position: [3612, 100, 2600] },
+    { text: '3', position: [-312, 100, 5200] },
+    { text: '3', position: [3612, 100, 5200] },
+    { text: 'A', position: [0, 100, -312] },
+    { text: 'A', position: [0, 100, 5512] },
+    { text: 'B', position: [3300, 100, -312] },
+    { text: 'B', position: [3300, 100, 5512] },
+  ]);
+  assert.ok(Math.abs(context.camera.position.x - context.controls.target.x + previewDirection.x) < 1e-8);
+  assert.ok(Math.abs(context.camera.position.y - context.controls.target.y - previewDirection.y) < 1e-8);
+  assert.ok(Math.abs(context.camera.position.z - context.controls.target.z + previewDirection.z) < 1e-8);
+  for (const member of staadMembers) {
+    const points = context.staadMemberLines.get(member.id).geometry.points;
+    assert.deepEqual(Array.from(points, p => [p.x, p.y, p.z]), [member.p1, member.p2]);
+  }
+});

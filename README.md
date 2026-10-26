@@ -18,4 +18,10 @@ reactions. Force and moment units are taken from the response. Click a joint to
 highlight the member ends reported by `joint_member_ends`; click empty space to
 clear the selection. Generating a new structure resets the STAAD view.
 
+In the left pane, **Idea Statica Connection Design** lists the returned
+`joint_groups`. Selecting a group highlights all its joints and connected
+members. Selecting the placeholder clears the highlighting; clicking a joint
+replaces the group selection with that individual joint. The dropdown resets
+when a new structure is generated and is disabled when no groups are available.
+
 Run the results UI unit tests with `node --test tests\test_staad_results.cjs`.

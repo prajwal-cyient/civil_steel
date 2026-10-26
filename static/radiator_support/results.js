@@ -187,6 +187,21 @@ function renderStaadLoadCases(result) {
   document.getElementById('staad-view-controls').hidden = false;
 }
 
+function renderStaadJointGroups(result) {
+  const select = document.getElementById('idea-joint-group');
+  const names = Object.keys(result.joint_groups || {});
+  const placeholder = resultElement('option', names.length ? 'Select a joint group' : 'No joint groups available');
+  placeholder.value = '';
+  select.replaceChildren(placeholder);
+  for (const name of names) {
+    const option = resultElement('option', name);
+    option.value = name;
+    select.append(option);
+  }
+  select.value = '';
+  select.disabled = !names.length;
+}
+
 function staadForceTable(parent, title, forces, units) {
   parent.append(resultElement('h3', title));
   if (!Array.isArray(forces)) {
@@ -226,6 +241,7 @@ function renderStaadTooltip(parent, result, loadCaseId, member, nodeId) {
 
 function renderStaadResults(result) {
   renderStaadLoadCases(result);
+  renderStaadJointGroups(result);
   const content = openResultPanel('staad');
   renderIntegrationStatus(content, result, true);
   content.append(resultElement('h3', 'Load Envelopes'));

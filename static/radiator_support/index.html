@@ -616,6 +616,17 @@
         <div class="load-config-hint">Sent to STAAD when you click "Send to STAAD" below (not part of Generate Structure).</div>
       </details>
 
+      <details class="input-section" open>
+        <summary>Idea Statica Connection Design</summary>
+        <div class="field-row">
+          <label for="idea-joint-group">Joint group</label>
+          <select id="idea-joint-group" style="width:100%; min-width:0; flex:2;" disabled>
+            <option value="">No joint groups available</option>
+          </select>
+        </div>
+        <div class="load-config-hint">Send to STAAD to load joint groups. Select a group to highlight its joints and connected members.</div>
+      </details>
+
       <button id="generate-btn" type="button">Generate Structure</button>
       <div id="status-msg"></div>
     </form>
@@ -866,6 +877,7 @@ const TYPE_COLORS = {
 
 function clearStructureView() {
   staadViewResult = null;
+  renderStaadJointGroups({});
   staadMemberLines.clear();
   staadJointMeshes.length = 0;
   staadTooltip.hidden = true;
@@ -1106,20 +1118,41 @@ function staadHit(event, jointsOnly = false) {
   return hits[0]?.object || null;
 }
 
-function selectStaadJoint(nodeId) {
-  const ends = nodeId === null ? [] : staadViewResult.joint_member_ends?.[nodeId] || [];
-  const connected = new Set(ends.map(([id]) => String(id)));
+function highlightStaadJoints(nodeIds, memberIds) {
+  const selected = new Set(nodeIds.map(String));
+  const connected = new Set(memberIds.map(String));
   for (const [id, line] of staadMemberLines) {
     line.material.color.setHex(connected.has(id) ? 0xffff00 : line.userData.baseColor);
-    line.material.opacity = nodeId === null || connected.has(id) ? 1 : 0.25;
+    line.material.opacity = !selected.size || connected.has(id) ? 1 : 0.25;
   }
   for (const joint of staadJointMeshes) {
-    joint.material.color.setHex(joint.userData.nodeId === nodeId ? 0xffff00 : joint.userData.baseColor);
+    joint.material.color.setHex(selected.has(joint.userData.nodeId) ? 0xffff00 : joint.userData.baseColor);
   }
+  staadTooltip.hidden = true;
+}
+
+function selectStaadJoint(nodeId) {
+  document.getElementById('idea-joint-group').value = '';
+  const ends = nodeId === null ? [] : staadViewResult.joint_member_ends?.[nodeId] || [];
+  highlightStaadJoints(nodeId === null ? [] : [nodeId], ends.map(([id]) => id));
   document.getElementById('staad-joint-selection').textContent = nodeId === null
     ? 'Click a joint to highlight connected members.'
     : `Joint ${nodeId}: ${ends.map(([id, end]) => `${id} (${end === 0 ? 'start' : 'end'})`).join(', ') || 'No connected members reported.'}`;
 }
+
+function selectStaadJointGroup(name) {
+  if (!name) {
+    selectStaadJoint(null);
+    return;
+  }
+  const joints = staadViewResult.joint_groups[name].joints;
+  highlightStaadJoints(joints.map(joint => joint.node), joints.flatMap(joint => joint.members.map(member => member.beam)));
+  document.getElementById('staad-joint-selection').textContent = `${name}: ${joints.length} joints selected.`;
+}
+
+document.getElementById('idea-joint-group').addEventListener('change', event => {
+  selectStaadJointGroup(event.target.value);
+});
 
 let pointerDown = null;
 canvas.addEventListener('pointerdown', event => {

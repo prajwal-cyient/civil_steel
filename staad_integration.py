@@ -1239,6 +1239,17 @@ def add_to_group(groups: dict, group_name: str, node: int, joint_member_ends: Di
     })
     return groups
 
+def find_num_bracings(node: int, joint_member_ends: Dict[int, List[Tuple[int, int]]], longitudinal_bracings: list[int], transverse_bracings: list[int]) -> Tuple[int, int]:
+    beam_id_node_ends = joint_member_ends[node]
+    num_longitudinal_bracings = 0
+    num_transverse_bracings = 0
+    for beam_id, start_or_end in beam_id_node_ends:
+        if beam_id in longitudinal_bracings:
+            num_longitudinal_bracings += 1
+        elif beam_id in transverse_bracings:
+            num_transverse_bracings += 1
+    return num_longitudinal_bracings, num_transverse_bracings
+
 def _create_joint_groups(joint_member_ends: Dict[int, List[Tuple[int, int]]], member_data_by_id: dict[int, dict], node_cache: Dict[tuple, int], beam_node_map: Dict[int, Tuple[int, int]], support_nodes: Set[int]) -> dict:
     """Return joint groups based on the types and numbers of connected members.
     """
@@ -1260,21 +1271,26 @@ def _create_joint_groups(joint_member_ends: Dict[int, List[Tuple[int, int]]], me
     groups = {}
     # 1. All support nodes
     for support_node in support_nodes:
-        if len(joint_member_ends[support_node]) == 1:
-            beam_id, member_end = joint_member_ends[support_node][0]
-            if member_data_by_id[beam_id].get("type", "").lower() == "column":
-                add_to_group(groups, "support_column", support_node, joint_member_ends, member_data_by_id)
-        elif len(joint_member_ends[support_node]) == 2:
-            # column and a bracing joint
-            beam_id_node_ends = joint_member_ends[support_node]
-            member_1_type = memberName2type(member_data_by_id[beam_id_node_ends[0][0]].get("name"))
-            member_2_type = memberName2type(member_data_by_id[beam_id_node_ends[1][0]].get("name"))
-            bracing_type = member_1_type if member_1_type != "column" else member_2_type
-            group_name = f"support_column_{bracing_type}"
-            add_to_group(groups, group_name, support_node, joint_member_ends, member_data_by_id)
-        elif len(joint_member_ends[support_node]) == 3:
-            group_name = f"support_column_both_bracing"
-            add_to_group(groups, group_name, support_node, joint_member_ends, member_data_by_id)
+        num_longitudinal_bracings, num_transverse_bracings = find_num_bracings(support_node, joint_member_ends, longitudinal_bracings, transverse_bracings)
+        group_name = "support_column"
+        if num_longitudinal_bracings == 1 and num_transverse_bracings == 0:
+            group_name = f"support_node_with_1_longitudinal_bracing"
+        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 0:
+            group_name = f"support_node_with_2_longitudinal_bracings"
+        elif num_longitudinal_bracings == 0 and num_transverse_bracings == 1:
+            group_name = f"support_node_with_1_transverse_bracing"
+        elif num_longitudinal_bracings == 0 and num_transverse_bracings == 2:
+            group_name = f"support_node_with_2_transverse_bracings"
+        elif num_longitudinal_bracings == 1 and num_transverse_bracings == 1:
+            group_name = f"support_node_with_1_longitudinal_and_1_transverse_bracing"
+        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 1:
+            group_name = f"support_node_with_2_longitudinal_and_1_transverse_bracing"
+        elif num_longitudinal_bracings == 1 and num_transverse_bracings == 2:
+            group_name = f"support_node_with_1_longitudinal_and_2_transverse_bracings"
+        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 2:
+            group_name = f"support_node_with_2_longitudinal_and_2_transverse_bracings"
+
+        add_to_group(groups, group_name, support_node, joint_member_ends, member_data_by_id)
     # 2. All corner nodes
     for corner_node in corner_nodes:
         group_name = f"corner_node"
@@ -1314,15 +1330,7 @@ def _create_joint_groups(joint_member_ends: Dict[int, List[Tuple[int, int]]], me
     #inner_nodes = set(top_nodes) - set(edge_nodes_except_corners) - set(corner_nodes)
     for node in inner_nodes:
         group_name = f"inner_node_no_bracing"
-        # determine the number of longitudinal and transverse bracings connected to this inner node
-        beam_id_node_ends = joint_member_ends[node]
-        num_longitudinal_bracings = 0
-        num_transverse_bracings = 0
-        for beam_id, start_or_end in beam_id_node_ends:
-            if beam_id in longitudinal_bracings:
-                num_longitudinal_bracings += 1
-            elif beam_id in transverse_bracings:
-                num_transverse_bracings += 1
+        num_longitudinal_bracings, num_transverse_bracings = find_num_bracings(node, joint_member_ends, longitudinal_bracings, transverse_bracings)
 
         if num_longitudinal_bracings == 1 and num_transverse_bracings == 0:
             group_name = f"inner_node_with_1_longitudinal_bracing"

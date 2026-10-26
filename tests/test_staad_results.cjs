@@ -101,6 +101,26 @@ test('beam tooltip shows metadata, both member ends and selected support reactio
   assert.ok(output.includes('Not available for this load case.'));
 });
 
+test('joint group dropdown uses response keys and replaces stale groups', () => {
+  const { context, elements } = setup();
+  context.renderStaadJointGroups({ joint_groups: {
+    corner_node: { joints: [] },
+    inner_node_with_1_longitudinal_and_1_transverse_bracings: { joints: [] },
+  } });
+  const select = elements.get('idea-joint-group');
+  assert.deepEqual(select.options.map(option => [option.value, option.textContent]), [
+    ['', 'Select a joint group'],
+    ['corner_node', 'corner_node'],
+    ['inner_node_with_1_longitudinal_and_1_transverse_bracings', 'inner_node_with_1_longitudinal_and_1_transverse_bracings'],
+  ]);
+  assert.equal(select.disabled, false);
+  assert.equal(select.value, '');
+  context.renderStaadJointGroups({});
+  assert.equal(select.options.length, 1);
+  assert.equal(select.options[0].textContent, 'No joint groups available');
+  assert.equal(select.disabled, true);
+});
+
 test('joint tooltips show reactions and missing analysis data explicitly', () => {
   const { context } = setup();
   const tooltip = new Element('div');
@@ -122,6 +142,8 @@ test('joint selection highlights exactly the reported members and restores class
     id, { material: material(123), userData: { baseColor: 123 } },
   ]));
   context.staadJointMeshes = [{ material: material(456), userData: { nodeId: '900004', baseColor: 456 } }];
+  context.staadTooltip = { hidden: false };
+  loadViewerFunction(context, 'highlightStaadJoints');
   loadViewerFunction(context, 'selectStaadJoint');
   context.selectStaadJoint('900004');
   for (const [id, line] of context.staadMemberLines) {
@@ -137,6 +159,32 @@ test('joint selection highlights exactly the reported members and restores class
     assert.equal(line.material.opacity, 1);
   }
   assert.equal(context.staadJointMeshes[0].material.color.value, 456);
+
+  context.staadViewResult.joint_groups = {
+    corner_node: { joints: [
+      { node: 900004, members: [{ beam: 900002, end: 1 }, { beam: 900055, end: 0 }] },
+      { node: 900005, members: [{ beam: 900055, end: 1 }, { beam: 900056, end: 0 }] },
+    ] },
+    empty_group: { joints: [] },
+  };
+  context.staadJointMeshes.push({ material: material(789), userData: { nodeId: '900005', baseColor: 789 } });
+  loadViewerFunction(context, 'selectStaadJointGroup');
+  context.selectStaadJointGroup('corner_node');
+  assert.equal(elements.get('staad-joint-selection').textContent, 'corner_node: 2 joints selected.');
+  for (const [id, line] of context.staadMemberLines) {
+    const selected = ['900002', '900055', '900056'].includes(id);
+    assert.equal(line.material.color.value, selected ? 0xffff00 : 123);
+    assert.equal(line.material.opacity, selected ? 1 : 0.25);
+  }
+  assert.ok(context.staadJointMeshes.every(joint => joint.material.color.value === 0xffff00));
+  elements.get('idea-joint-group').value = 'corner_node';
+  context.selectStaadJoint('900004');
+  assert.equal(elements.get('idea-joint-group').value, '');
+  assert.equal(context.staadJointMeshes[1].material.color.value, 789);
+  context.selectStaadJointGroup('empty_group');
+  assert.ok([...context.staadMemberLines.values()].every(line => line.material.opacity === 1 && line.material.color.value === 123));
+  context.selectStaadJointGroup('');
+  assert.ok(context.staadJointMeshes.every(joint => joint.material.color.value === joint.userData.baseColor));
 });
 
 test('clearing the viewer removes and disposes geometry, labels and STAAD state', () => {
@@ -165,6 +213,7 @@ test('clearing the viewer removes and disposes geometry, labels and STAAD state'
   assert.equal(context.staadJointMeshes.length, 0);
   assert.equal(context.staadTooltip.hidden, true);
   assert.equal(elements.get('staad-view-controls').hidden, true);
+  assert.equal(elements.get('idea-joint-group').disabled, true);
 });
 
 test('transverse indices use spreadsheet-style letters at every rollover', () => {

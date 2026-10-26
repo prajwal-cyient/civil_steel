@@ -1216,56 +1216,132 @@ def _apply_load_configuration(
 
     return {"applied": load.GetPrimaryLoadCaseCount() + load.GetLoadCombinationCaseCount(), "errors": errors, "envelopCreationResults": envelopCreationResults}
 
+def is_node_on_beams(node: int, beam_ids: list[int], beam_node_map: Dict[int, Tuple[int, int]]) -> bool:
+    for beam_id in beam_ids:
+        if node in beam_node_map[beam_id]:
+            return True
+    return False
 
-# ── Public API ───────────────────────────────────────────────────────────
+def add_to_group(groups: dict, group_name: str, node: int, joint_member_ends: Dict[int, List[Tuple[int, int]]], member_data_by_id: dict[int, dict]) -> None:
+    groups.setdefault(group_name, {
+        "member_count": len(joint_member_ends[node]),
+        "joints": [],
+    })["joints"].append({
+        "node": node,
+        "members": [
+            {
+                "beam": beam_id,
+                "member_type": memberName2type(member_data_by_id[beam_id].get("name")),
+                "end": member_end,
+            }
+            for beam_id, member_end in joint_member_ends[node]
+        ],
+    })
+    return groups
 
-def _joint_force_maxima(joint_member_ends: dict, forces: dict[int, list[list[float]]], member_data_by_id: dict[int, dict]) -> dict:
-    """Return componentwise absolute member-end maxima grouped by joint degree.
-
-    Forces retain the requested STAAD coordinate system (local or global).
-    Each component is an independent envelope, not a simultaneous force vector.
+def _create_joint_groups(joint_member_ends: Dict[int, List[Tuple[int, int]]], member_data_by_id: dict[int, dict], node_cache: Dict[tuple, int], beam_node_map: Dict[int, Tuple[int, int]], support_nodes: Set[int]) -> dict:
+    """Return joint groups based on the types and numbers of connected members.
     """
-    forces_by_end = {
-        start_end: {beam_id: beam_forces[0] for beam_id, beam_forces in forces.items()},
-        final_end: {beam_id: beam_forces[1] for beam_id, beam_forces in forces.items()},
-    }
-    components = ("Fx", "Fy", "Fz", "Mx", "My", "Mz")
+    members = list(member_data_by_id.values())
+    top_nodes = list(set(node_cache.values()) - set(support_nodes))
+    corner_nodes = _get_corner_nodes(node_cache, top_nodes)
+    edge_nodes = _get_edge_nodes(node_cache, top_nodes)
+    inner_nodes = _get_inner_nodes(node_cache, top_nodes)
+    edge_members = _get_edge_members(members, node_cache, top_nodes)
+    longitudinal_beams = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "beam" and m.get("name", "").startswith("beam-x"), members)))
+    transverse_beams = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "beam" and m.get("name", "").startswith("beam-y"), members)))
+    longitudinal_edge_members = sorted(set(longitudinal_beams) & set(edge_members))
+    transverse_edge_members = sorted(set(transverse_beams) & set(edge_members))
+    columnObjs = list(filter(lambda m: m.get("type", "").lower() == "column", members))
+    columns = list(map(lambda m: m["id"], columnObjs))
+    longitudinal_bracings = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "longitudinal_brace", members)))
+    transverse_bracings = list(map(lambda m: m["id"], filter(lambda m: m.get("type", "").lower() == "transverse_brace", members)))
+
     groups = {}
-    for node_id, member_ends in sorted(joint_member_ends.items()):
-        member_count = len({beam_id for beam_id, _ in member_ends})
-        group = groups.setdefault(str(member_count), {
-            "member_count": member_count,
-            "joints": [],
-            "max_abs_forces": {component: 0.0 for component in components},
-            "max_force_sources": {},
-        })
-        group["joints"].append({
-            "node": node_id,
-            "members": [
-                {
-                    "beam": beam_id,
-                    "member_type": memberName2type(member_data_by_id[beam_id].get("name")),
-                    "end": member_end,
-                    "forces": dict(zip(components, forces_by_end[member_end][beam_id])),
-                }
-                for beam_id, member_end in member_ends
-            ],
-        })
-        for beam_id, member_end in member_ends:
-            forces = forces_by_end[member_end][beam_id]
-            for index, component in enumerate(components):
-                signed_value = forces[index]
-                magnitude = abs(signed_value)
-                if (component not in group["max_force_sources"]
-                        or magnitude > group["max_abs_forces"][component]):
-                    group["max_abs_forces"][component] = magnitude
-                    group["max_force_sources"][component] = {
-                        "node": node_id,
-                        "beam": beam_id,
-                        "end": "start" if member_end == start_end else "end",
-                        "signed_value": signed_value,
-                        "forces": dict(zip(components, forces)),
-                    }
+    # 1. All support nodes
+    for support_node in support_nodes:
+        if len(joint_member_ends[support_node]) == 1:
+            beam_id, member_end = joint_member_ends[support_node][0]
+            if member_data_by_id[beam_id].get("type", "").lower() == "column":
+                add_to_group(groups, "support_column", support_node, joint_member_ends, member_data_by_id)
+        elif len(joint_member_ends[support_node]) == 2:
+            # column and a bracing joint
+            beam_id_node_ends = joint_member_ends[support_node]
+            member_1_type = memberName2type(member_data_by_id[beam_id_node_ends[0][0]].get("name"))
+            member_2_type = memberName2type(member_data_by_id[beam_id_node_ends[1][0]].get("name"))
+            bracing_type = member_1_type if member_1_type != "column" else member_2_type
+            group_name = f"support_column_{bracing_type}"
+            add_to_group(groups, group_name, support_node, joint_member_ends, member_data_by_id)
+        elif len(joint_member_ends[support_node]) == 3:
+            group_name = f"support_column_both_bracing"
+            add_to_group(groups, group_name, support_node, joint_member_ends, member_data_by_id)
+    # 2. All corner nodes
+    for corner_node in corner_nodes:
+        group_name = f"corner_node"
+        # Assumption: corner nodes are treated as a separate group regardless of the number of connected members
+        # No bracings attach to corner nodes
+        add_to_group(groups, group_name, corner_node, joint_member_ends, member_data_by_id)
+    edge_nodes_except_corners = set(edge_nodes) - set(corner_nodes)
+    # 3. Longitudinal edge nodes
+    longitudinal_edge_nodes = [node for node in edge_nodes_except_corners if is_node_on_beams(node, longitudinal_edge_members, beam_node_map)]
+    for edge_node in longitudinal_edge_nodes:
+        # Joint with 4 members (no bracing) by default, will update if more members are connected
+        group_name = f"longitudinal_edge_node_no_bracing"
+        if len(joint_member_ends[edge_node]) == 5:
+            group_name = f"longitudinal_edge_node_with_bracing"
+        elif len(joint_member_ends[edge_node]) == 6:
+            group_name = f"longitudinal_edge_node_with_2_bracings"
+        add_to_group(groups, group_name, edge_node, joint_member_ends, member_data_by_id)
+    # 4. Transverse edge nodes
+    transverse_edge_nodes = [node for node in edge_nodes_except_corners if is_node_on_beams(node, transverse_edge_members, beam_node_map)]
+    for edge_node in transverse_edge_nodes:
+        # Joint with 4 members (no bracing) by default, will update if more members are connected
+        group_name = f"transverse_edge_node_no_bracing"
+        if len(joint_member_ends[edge_node]) == 5:
+            group_name = f"transverse_edge_node_with_bracing"
+        elif len(joint_member_ends[edge_node]) == 6:
+            group_name = f"transverse_edge_node_with_2_bracings"
+        add_to_group(groups, group_name, edge_node, joint_member_ends, member_data_by_id)
+    # 5. Inner nodes: All to nodes not classified as edge or corner nodes
+    # Number of nodes: 5, group name: "inner_node_no_bracing" by default, will update if more members are connected
+    # Other types: Inner nodes with 1 longitudinal bracing, Inner nodes with 2 longitudinal bracings,
+    # Inner nodes with 1 transverse bracing, Inner nodes with 2 transverse bracings,
+    # Inner nodes with 1 longitudinal and 1 transverse bracing
+    # Inner nodes with 2 longitudinal and 1 transverse bracing
+    # Inner nodes with 1 longitudinal and 2 transverse bracings
+    # Inner nodes with 2 longitudinal and 2 transverse bracings
+    # inner nodes are already determined, hence no need to recalculate them
+    #inner_nodes = set(top_nodes) - set(edge_nodes_except_corners) - set(corner_nodes)
+    for node in inner_nodes:
+        group_name = f"inner_node_no_bracing"
+        # determine the number of longitudinal and transverse bracings connected to this inner node
+        beam_id_node_ends = joint_member_ends[node]
+        num_longitudinal_bracings = 0
+        num_transverse_bracings = 0
+        for beam_id, start_or_end in beam_id_node_ends:
+            if beam_id in longitudinal_bracings:
+                num_longitudinal_bracings += 1
+            elif beam_id in transverse_bracings:
+                num_transverse_bracings += 1
+
+        if num_longitudinal_bracings == 1 and num_transverse_bracings == 0:
+            group_name = f"inner_node_with_1_longitudinal_bracing"
+        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 0:
+            group_name = f"inner_node_with_2_longitudinal_bracings"
+        elif num_longitudinal_bracings == 0 and num_transverse_bracings == 1:
+            group_name = f"inner_node_with_1_transverse_bracing"
+        elif num_longitudinal_bracings == 0 and num_transverse_bracings == 2:
+            group_name = f"inner_node_with_2_transverse_bracings"
+        elif num_longitudinal_bracings == 1 and num_transverse_bracings == 1:
+            group_name = f"inner_node_with_1_longitudinal_and_1_transverse_bracing"
+        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 1:
+            group_name = f"inner_node_with_2_longitudinal_and_1_transverse_bracing"
+        elif num_longitudinal_bracings == 1 and num_transverse_bracings == 2:
+            group_name = f"inner_node_with_1_longitudinal_and_2_transverse_bracings"
+        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 2:
+            group_name = f"inner_node_with_2_longitudinal_and_2_transverse_bracings"
+        add_to_group(groups, group_name, node, joint_member_ends, member_data_by_id)
+
     return groups
 
 '''
@@ -1622,7 +1698,10 @@ async def send_to_staad(data: dict) -> dict:
         "support_nodes": list(support_nodes),
         "member_ids_by_type": member_ids_by_type,
         "joint_member_ends": joint_member_ends,
-        "beam_node_map": beam_node_map
+        "beam_node_map": beam_node_map,
+        "joint_groups": _create_joint_groups(
+            joint_member_ends, member_data_by_id, node_cache, beam_node_map, support_nodes
+        ),
     }
     
     # Start analysis
@@ -1765,10 +1844,6 @@ async def send_to_staad(data: dict) -> dict:
         staad_update_status[lc]["node_displacements"] = node_displacements
         staad_update_status[lc]["forces"] = forces
         staad_update_status[lc]["support_reactions"] = support_reactions
-
-        staad_update_status[lc]["joint_force_maxima"] = _joint_force_maxima(
-            joint_member_ends, forces, member_data_by_id
-        )
 
     # Find envelope wise summary of results
     envelope_summary_results: Dict[int, Any] = {}

@@ -1250,6 +1250,26 @@ def find_num_bracings(node: int, joint_member_ends: Dict[int, List[Tuple[int, in
             num_transverse_bracings += 1
     return num_longitudinal_bracings, num_transverse_bracings
 
+def group_name_suffix_from_bracings(num_longitudinal_bracings: int, num_transverse_bracings: int) -> str:
+        group_name = "no_bracing"
+        if num_longitudinal_bracings == 1 and num_transverse_bracings == 0:
+            group_name = f"1_longitudinal_bracing"
+        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 0:
+            group_name = f"2_longitudinal_bracings"
+        elif num_longitudinal_bracings == 0 and num_transverse_bracings == 1:
+            group_name = f"1_transverse_bracing"
+        elif num_longitudinal_bracings == 0 and num_transverse_bracings == 2:
+            group_name = f"2_transverse_bracings"
+        elif num_longitudinal_bracings == 1 and num_transverse_bracings == 1:
+            group_name = f"1_longitudinal_1_transverse_bracing"
+        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 1:
+            group_name = f"2_longitudinal_1_transverse_bracing"
+        elif num_longitudinal_bracings == 1 and num_transverse_bracings == 2:
+            group_name = f"1_longitudinal_2_transverse_bracings"
+        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 2:
+            group_name = f"2_longitudinal_2_transverse_bracings"
+        return group_name
+
 def _create_joint_groups(joint_member_ends: Dict[int, List[Tuple[int, int]]], member_data_by_id: dict[int, dict], node_cache: Dict[tuple, int], beam_node_map: Dict[int, Tuple[int, int]], support_nodes: Set[int]) -> dict:
     """Return joint groups based on the types and numbers of connected members.
     """
@@ -1272,24 +1292,7 @@ def _create_joint_groups(joint_member_ends: Dict[int, List[Tuple[int, int]]], me
     # 1. All support nodes
     for support_node in support_nodes:
         num_longitudinal_bracings, num_transverse_bracings = find_num_bracings(support_node, joint_member_ends, longitudinal_bracings, transverse_bracings)
-        group_name = "support_column"
-        if num_longitudinal_bracings == 1 and num_transverse_bracings == 0:
-            group_name = f"support_node_with_1_longitudinal_bracing"
-        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 0:
-            group_name = f"support_node_with_2_longitudinal_bracings"
-        elif num_longitudinal_bracings == 0 and num_transverse_bracings == 1:
-            group_name = f"support_node_with_1_transverse_bracing"
-        elif num_longitudinal_bracings == 0 and num_transverse_bracings == 2:
-            group_name = f"support_node_with_2_transverse_bracings"
-        elif num_longitudinal_bracings == 1 and num_transverse_bracings == 1:
-            group_name = f"support_node_with_1_longitudinal_and_1_transverse_bracing"
-        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 1:
-            group_name = f"support_node_with_2_longitudinal_and_1_transverse_bracing"
-        elif num_longitudinal_bracings == 1 and num_transverse_bracings == 2:
-            group_name = f"support_node_with_1_longitudinal_and_2_transverse_bracings"
-        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 2:
-            group_name = f"support_node_with_2_longitudinal_and_2_transverse_bracings"
-
+        group_name = f"support_node_{group_name_suffix_from_bracings(num_longitudinal_bracings, num_transverse_bracings)}"
         add_to_group(groups, group_name, support_node, joint_member_ends, member_data_by_id)
     # 2. All corner nodes
     for corner_node in corner_nodes:
@@ -1302,52 +1305,22 @@ def _create_joint_groups(joint_member_ends: Dict[int, List[Tuple[int, int]]], me
     longitudinal_edge_nodes = [node for node in edge_nodes_except_corners if is_node_on_beams(node, longitudinal_edge_members, beam_node_map)]
     for edge_node in longitudinal_edge_nodes:
         # Joint with 4 members (no bracing) by default, will update if more members are connected
-        group_name = f"longitudinal_edge_node_no_bracing"
-        if len(joint_member_ends[edge_node]) == 5:
-            group_name = f"longitudinal_edge_node_with_bracing"
-        elif len(joint_member_ends[edge_node]) == 6:
-            group_name = f"longitudinal_edge_node_with_2_bracings"
+        num_longitudinal_bracings, num_transverse_bracings = find_num_bracings(edge_node, joint_member_ends, longitudinal_bracings, transverse_bracings)
+        group_name = f"longitudinal_edge_node_{group_name_suffix_from_bracings(num_longitudinal_bracings, num_transverse_bracings)}"
         add_to_group(groups, group_name, edge_node, joint_member_ends, member_data_by_id)
     # 4. Transverse edge nodes
     transverse_edge_nodes = [node for node in edge_nodes_except_corners if is_node_on_beams(node, transverse_edge_members, beam_node_map)]
     for edge_node in transverse_edge_nodes:
         # Joint with 4 members (no bracing) by default, will update if more members are connected
-        group_name = f"transverse_edge_node_no_bracing"
-        if len(joint_member_ends[edge_node]) == 5:
-            group_name = f"transverse_edge_node_with_bracing"
-        elif len(joint_member_ends[edge_node]) == 6:
-            group_name = f"transverse_edge_node_with_2_bracings"
+        num_longitudinal_bracings, num_transverse_bracings = find_num_bracings(edge_node, joint_member_ends, longitudinal_bracings, transverse_bracings)
+        group_name = f"transverse_edge_node_{group_name_suffix_from_bracings(num_longitudinal_bracings, num_transverse_bracings)}"
         add_to_group(groups, group_name, edge_node, joint_member_ends, member_data_by_id)
     # 5. Inner nodes: All to nodes not classified as edge or corner nodes
-    # Number of nodes: 5, group name: "inner_node_no_bracing" by default, will update if more members are connected
-    # Other types: Inner nodes with 1 longitudinal bracing, Inner nodes with 2 longitudinal bracings,
-    # Inner nodes with 1 transverse bracing, Inner nodes with 2 transverse bracings,
-    # Inner nodes with 1 longitudinal and 1 transverse bracing
-    # Inner nodes with 2 longitudinal and 1 transverse bracing
-    # Inner nodes with 1 longitudinal and 2 transverse bracings
-    # Inner nodes with 2 longitudinal and 2 transverse bracings
     # inner nodes are already determined, hence no need to recalculate them
     #inner_nodes = set(top_nodes) - set(edge_nodes_except_corners) - set(corner_nodes)
     for node in inner_nodes:
-        group_name = f"inner_node_no_bracing"
         num_longitudinal_bracings, num_transverse_bracings = find_num_bracings(node, joint_member_ends, longitudinal_bracings, transverse_bracings)
-
-        if num_longitudinal_bracings == 1 and num_transverse_bracings == 0:
-            group_name = f"inner_node_with_1_longitudinal_bracing"
-        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 0:
-            group_name = f"inner_node_with_2_longitudinal_bracings"
-        elif num_longitudinal_bracings == 0 and num_transverse_bracings == 1:
-            group_name = f"inner_node_with_1_transverse_bracing"
-        elif num_longitudinal_bracings == 0 and num_transverse_bracings == 2:
-            group_name = f"inner_node_with_2_transverse_bracings"
-        elif num_longitudinal_bracings == 1 and num_transverse_bracings == 1:
-            group_name = f"inner_node_with_1_longitudinal_and_1_transverse_bracing"
-        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 1:
-            group_name = f"inner_node_with_2_longitudinal_and_1_transverse_bracing"
-        elif num_longitudinal_bracings == 1 and num_transverse_bracings == 2:
-            group_name = f"inner_node_with_1_longitudinal_and_2_transverse_bracings"
-        elif num_longitudinal_bracings == 2 and num_transverse_bracings == 2:
-            group_name = f"inner_node_with_2_longitudinal_and_2_transverse_bracings"
+        group_name = f"inner_node_{group_name_suffix_from_bracings(num_longitudinal_bracings, num_transverse_bracings)}"
         add_to_group(groups, group_name, node, joint_member_ends, member_data_by_id)
 
     return groups

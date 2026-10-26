@@ -750,6 +750,11 @@ def _self_test(template_path: str) -> None:
                 print(f"   Connection id={con.id} Visible parameters:")
                 for p in visible_parameters:
                     print(f'Parameter: {p.to_json()}')
+                # Additionally, print only key, value, expression, and description of visible parameters
+                print(f"   Connection id={con.id} Visible parameters (key, value, expression, description):")
+                for p in visible_parameters:
+                    p_needed_keys = {"key": p.key, "value": p.value, "expression": str(p.value), "orig_expression": p.expression, "description": p.description}
+                    print(f'    {json.dumps(p_needed_keys)},')
             print()
         except Exception as exc:
             print(f"   FAIL: {exc}\n")

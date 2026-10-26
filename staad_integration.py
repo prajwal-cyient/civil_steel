@@ -1806,6 +1806,25 @@ async def send_to_staad(data: dict) -> dict:
         member_displacements_summary = summarize_forces_displacements(member_displacements)
         node_displacements_summary = summarize_forces_displacements(node_displacements)
 
+        # Find forces summary for each joint group
+        joint_group_forces_summary = {}
+        joint_groups = staad_update_status["joint_groups"]
+        for joint_group_id, joint_group in joint_groups.items():
+            joint_group_forces_summary[joint_group_id] = {}
+            joints = joint_group["joints"]
+            joint_forces = {}
+            for joint in joints:
+                joint_members = joint["members"]
+                for m in joint_members:
+                    beam_id = m["beam"]
+                    member_type = m["member_type"]
+                    end = m["end"]
+                    if member_type not in joint_forces:
+                        joint_forces[member_type] = {}
+                    joint_forces[member_type][beam_id] = [forces[beam_id][end]]
+            for member_type, member_forces in joint_forces.items():
+                joint_group_forces_summary[joint_group_id][member_type] = summarize_forces_displacements(member_forces)
+
         compute_summary_results(forces, forces_summary,
                             support_reactions, support_reactions_summary, beam_node_map, node_displacements,
                             node_displacements_summary, member_displacements, member_displacements_summary,
@@ -1825,6 +1844,7 @@ async def send_to_staad(data: dict) -> dict:
         staad_update_status[lc]["node_displacements"] = node_displacements
         staad_update_status[lc]["forces"] = forces
         staad_update_status[lc]["support_reactions"] = support_reactions
+        staad_update_status[lc]["joint_group_forces_summary"] = joint_group_forces_summary
 
     # Find envelope wise summary of results
     envelope_summary_results: Dict[int, Any] = {}

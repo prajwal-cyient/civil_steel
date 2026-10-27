@@ -741,6 +741,10 @@ def create_app():
         model_config = ConfigDict(extra="forbid")
         name: str = "Generated load"
         member_loadings: List[MemberLoading] = Field(default_factory=list)
+        # Informational fields from send_to_staad(); not used by design_joint().
+        load_case: Optional[int] = None
+        node: Optional[int] = None
+        governs: List[str] = Field(default_factory=list)
 
     class OperationParameter(BaseModel):
         # Only "key" and "expression" are sent to IDEA StatiCa; the other

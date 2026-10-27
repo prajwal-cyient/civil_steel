@@ -1,8 +1,8 @@
 // Hardcoded IDEA StatiCa request defaults, copied from
 // inner_node_1_longitudinal_1_transverse_bracing.json.
-// TODO: once the STAAD integration is complete, member_updates and
-// load_effects should come from the STAAD response's
-// envelope_load_cases_by_joint_group[envelopeId][jointGroup] instead.
+// member_updates and load_effects here are only a reference sample: the UI
+// replaces them with the STAAD response's
+// envelope_load_cases_by_joint_group[envelopeId][jointGroup].
 // operation_parameters only seeds the editable inputs in the
 // "Idea Statica Connection Design" section; the request uses the UI values.
 const IDEA_STATICA_DEFAULTS = {

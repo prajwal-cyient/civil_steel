@@ -1508,18 +1508,30 @@ sendIdeaBtn.addEventListener('click', async () => {
     ideaStatus.textContent = 'Select a joint group first (Send to STAAD to load joint groups).';
     return;
   }
+  const envelope = str('idea-envelope');
+  if (!envelope) {
+    ideaStatus.className = 'error';
+    ideaStatus.textContent = 'Select an envelope first.';
+    return;
+  }
+  // member_updates and load_effects come from the STAAD response for the
+  // selected envelope and joint group.
+  const staadJointPayload = staadViewResult?.envelope_load_cases_by_joint_group?.[envelope]?.[jointGroup];
+  if (!staadJointPayload?.load_effects?.length) {
+    ideaStatus.className = 'error';
+    ideaStatus.textContent = `No load effects from STAAD for joint group ${jointGroup} in envelope ${envelope}.`;
+    return;
+  }
   const templateDir = IDEA_STATICA_DEFAULTS.template_project_path.replace(/[^/\\]*$/, '');
 
   sendIdeaBtn.disabled = true;
   sendIdeaBtn.textContent = 'Sending…';
 
   try {
-    // TODO: take member_updates/load_effects from
-    // staadViewResult.envelope_load_cases_by_joint_group[envelope][jointGroup]
-    // (envelope from #idea-envelope, joint group from #idea-joint-group)
-    // once the STAAD integration provides them.
     const payload = {
       ...IDEA_STATICA_DEFAULTS,
+      member_updates: staadJointPayload.member_updates || [],
+      load_effects: staadJointPayload.load_effects,
       template_project_path: `${templateDir}${jointGroup}.ideaCon`,
       operation_parameters: buildOperationParameters(),
     };

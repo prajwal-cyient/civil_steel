@@ -616,7 +616,7 @@
         <div class="load-config-hint">Sent to STAAD when you click "Send to STAAD" below (not part of Generate Structure).</div>
       </details>
 
-      <details class="input-section" open>
+      <details class="input-section">
         <summary>Idea Statica Connection Design</summary>
         <div class="field-row">
           <label for="idea-joint-group">Joint group</label>
@@ -1499,6 +1499,17 @@ function buildOperationParameters() {
 sendIdeaBtn.addEventListener('click', async () => {
   ideaStatus.className = '';
   ideaStatus.textContent = '';
+
+  // Each joint group has its own template project, named after the group,
+  // in the same folder as the default template (sample_projects/).
+  const jointGroup = str('idea-joint-group');
+  if (!jointGroup) {
+    ideaStatus.className = 'error';
+    ideaStatus.textContent = 'Select a joint group first (Send to STAAD to load joint groups).';
+    return;
+  }
+  const templateDir = IDEA_STATICA_DEFAULTS.template_project_path.replace(/[^/\\]*$/, '');
+
   sendIdeaBtn.disabled = true;
   sendIdeaBtn.textContent = 'Sending…';
 
@@ -1509,6 +1520,7 @@ sendIdeaBtn.addEventListener('click', async () => {
     // once the STAAD integration provides them.
     const payload = {
       ...IDEA_STATICA_DEFAULTS,
+      template_project_path: `${templateDir}${jointGroup}.ideaCon`,
       operation_parameters: buildOperationParameters(),
     };
 

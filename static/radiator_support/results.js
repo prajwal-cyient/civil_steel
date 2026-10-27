@@ -204,7 +204,8 @@ function renderStaadJointGroups(result) {
 
 function renderIdeaEnvelopes(result) {
   const select = document.getElementById('idea-envelope');
-  const envelopes = result.load_envelopes || [];
+  // IDEA StatiCa connection design only uses strength envelopes.
+  const envelopes = (result.load_envelopes || []).filter(envelope => envelope.envelopeType === 'STRENGTH');
   const placeholder = resultElement('option', envelopes.length ? 'Select an envelope' : 'No envelopes available');
   placeholder.value = '';
   select.replaceChildren(placeholder);

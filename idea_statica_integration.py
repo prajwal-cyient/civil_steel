@@ -478,10 +478,22 @@ def design_joint(data: dict) -> dict:
     operation_parameter_updates = data.get("operation_parameters", [])
     output_dir = data["output_dir"]
     save_project_path = data.get("save_project_path")
+    if not os.path.isfile(template_path):
+        raise IdeaStaticaJointError(f"Template project not found: {template_path}")
     os.makedirs(output_dir, exist_ok=True)
 
     with _get_client() as api_client:
-        api_client.project.open_project_from_filepath(template_path)
+        try:
+            api_client.project.open_project_from_filepath(template_path)
+        except Exception as exc:
+            # ConnectionApiClient.__exit__ closes the project whenever
+            # api_client.project is set, even if nothing was opened, and
+            # close_project(None) then fails and masks this error. Clearing
+            # it makes __exit__ skip the close.
+            api_client.project = None
+            raise IdeaStaticaJointError(
+                f"Could not open template project {template_path}: {type(exc).__name__}: {exc}"
+            ) from exc
         project_id = api_client.project.active_project_id
         settings = api_client.settings.get_settings(project_id)
         #print(f"   Retrieved project settings: {to_json_convention_string(settings)}\n")

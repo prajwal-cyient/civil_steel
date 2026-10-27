@@ -1366,11 +1366,10 @@ def find_connected_members_forces(node_id: int, joint_member_ends: Dict[int, Lis
 Calculate the max/min of forces for each component and assign other elements accordingly.
 This function is typically used to summarize the extreme values and their corresponding entities for further analysis or reporting.
 '''
-def find_extreme_forces(forces: dict[int, list[list[float]]], forces_summary: list[Dict[str, Any]], summary_key: str, force_key: str, beam_node_map: Dict[int, Tuple[int, int]], lc: str, lc_title: str, joint_member_ends: Dict[int, List[Tuple[int, int]]], summary_results: Dict[str, Any]) -> Dict[str, Any]:
+def find_extreme_forces(forces: dict[int, list[list[float]]], forces_summary: list[Dict[str, Any]], summary_key: str, force_key: str, beam_node_map: Dict[int, Tuple[int, int]], lc: str, lc_title: str, joint_member_ends: Dict[int, List[Tuple[int, int]]], summary_results: Dict[str, Any], ends: List[int] = [0, 1]) -> Dict[str, Any]:
     force_components = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
     force_key_index = force_components.index(force_key)
     summary_value_key = f'{summary_key}_{force_key}'
-    ends = [0, 1]
     for start_or_end in ends:
         comparison = forces_summary[start_or_end][summary_key][force_key_index] > summary_results["forces"][summary_value_key][force_key] if summary_key == "max" else forces_summary[start_or_end][summary_key][force_key_index] < summary_results["forces"][summary_value_key][force_key]
         if comparison:
@@ -1494,6 +1493,18 @@ def initialize_summary_results() -> Dict[str, Any]:
                                                "min_Mz": {"node": None, "load_case": None, "load_case_title": None, "Fx": None, "Fy": None, "Fz": None, "Mx": None, "My": None, "Mz": float("inf")}
                         }
                     }
+    return summary_results
+
+def initialize_forces_summary_results(force_types: list[str]) -> Dict[str, Any]:
+    summary_results = {"forces": {}}
+    all_force_types = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
+    for force_type in force_types:
+        summary_results["forces"][f"max_{force_type}"] = {"beam": None, "node": None, "load_case": None, "load_case_title": None, force_type: float("-inf")}
+        summary_results["forces"][f"min_{force_type}"] = {"beam": None, "node": None, "load_case": None, "load_case_title": None, force_type: float("inf")}
+        for other_force_type in all_force_types:
+            if other_force_type != force_type:
+                summary_results["forces"][f"max_{force_type}"][other_force_type] = None
+                summary_results["forces"][f"min_{force_type}"][other_force_type] = None
     return summary_results
 
 def compute_summary_results(forces, forces_summary,
@@ -1760,6 +1771,20 @@ async def send_to_staad(data: dict) -> dict:
     loadCaseMap = {load.GetLoadCaseTitle(lc): lc for lc in load.GetLoadCombinationCaseNumbers()} # GetPrimaryLoadCaseNumbers
     print(f"Load case map: {loadCaseMap}")
 
+    joint_groups_member_types_map: dict[str, set[str]] = {}
+    joint_groups = staad_update_status["joint_groups"]
+    for joint_group_id, joint_group in joint_groups.items():
+        joint_groups_member_types_map[joint_group_id] = set()
+        joint_members = joint_group["joints"][0]["members"]
+        for joint_member in joint_members:
+            member_type = joint_member["member_type"]
+            joint_groups_member_types_map[joint_group_id].add(member_type)
+
+    memberType_Forces_map: dict[str, list[str]] = {"beam_longitudinal": ["Fx", "Fy", "Fz"],
+                                                   "beam_transverse": ["Fx", "Fy", "Fz"],
+                                                   "bracing_longitudinal": ["Fx"],
+                                                   "bracing_transverse": ["Fx"],}
+
     summary_results = initialize_summary_results()
     for lc_title, lc in loadCaseMap.items():
         print(f"Processing load case: {lc_title} (ID: {lc})")
@@ -1848,12 +1873,15 @@ async def send_to_staad(data: dict) -> dict:
 
     # Find envelope wise summary of results
     envelope_summary_results: Dict[int, Any] = {}
+    all_joint_groups = joint_group_forces_summary.keys()
+    envelope_summary_results_by_joint_group_member_type: Dict[int, Dict[str, Dict[str, Any]]] = {}
     for envelopeDetail in load_envelopes:
         envelopeId = envelopeDetail["envelopeId"]
         envelopeType = envelopeDetail["envelopeType"]
         loadCases = envelopeDetail["loadCases"]
         print(f"Processing envelope {envelopeId} of type {envelopeType} with load cases {loadCases}.")
         env_summary_results = initialize_summary_results()
+        envelope_summary_results_by_joint_group_member_type[envelopeId] = {joint_group: {member_type: initialize_forces_summary_results(memberType_Forces_map[member_type]) for member_type in joint_groups_member_types_map[joint_group] if member_type in memberType_Forces_map} for joint_group in all_joint_groups}
         for lc in loadCases:
             lc_title = load.GetLoadCaseTitle(lc)
             print(f"Processing load case {lc} {lc_title} in envelope {envelopeId}")
@@ -1865,10 +1893,26 @@ async def send_to_staad(data: dict) -> dict:
             support_reactions_summary = staad_update_status[lc]["summary_support_reactions"]
             member_displacements_summary = staad_update_status[lc]["summary_member_displacements"]
             node_displacements_summary = staad_update_status[lc]["summary_node_displacements"]
+            joint_group_forces_summary = staad_update_status[lc]["joint_group_forces_summary"]
             compute_summary_results(forces, forces_summary,
                             support_reactions, support_reactions_summary, beam_node_map, node_displacements,
                             node_displacements_summary, member_displacements, member_displacements_summary,
                             lc, lc_title, joint_member_ends, env_summary_results)
+            # Update envelope summary results by joint group and member type
+            summary_keys = ["max", "min"]
+            for joint_group_id, summary_by_member_type in joint_group_forces_summary.items():
+                for member_type, forces_summary_by_joint_type_member_type in summary_by_member_type.items():
+                    if member_type not in memberType_Forces_map:
+                        continue
+                    force_components = memberType_Forces_map[member_type]
+                    for component in force_components:
+                        for extreme in summary_keys:
+                            # TODO: Forces needs a fix. they need to be from joint_forces
+                            # TODO: beam_node_map also needs to be one dimensional or a start_or_end needs to be passed
+                            find_extreme_forces(forces, forces_summary_by_joint_type_member_type, extreme, component,
+                                                beam_node_map, lc, lc_title, joint_member_ends,
+                                                envelope_summary_results_by_joint_group_member_type[envelopeId][joint_group_id][member_type],
+                                                [0])
         node_displacements_limits = {"min_X": abs(env_summary_results['displacements']['min_X']['X']),
                                      "max_X": abs(env_summary_results['displacements']['max_X']['X']),
                                      "min_Z": abs(env_summary_results['displacements']['min_Z']['Z']),
@@ -1905,6 +1949,7 @@ async def send_to_staad(data: dict) -> dict:
     staad_update_status["member_ratios"] = member_ratios
     staad_update_status["member_ratios_by_type"] = member_ratios_by_type
     staad_update_status["envelope_summary_results"] = envelope_summary_results
+    staad_update_status["envelope_summary_results_by_joint_group_member_type"] = envelope_summary_results_by_joint_group_member_type
     staad_update_status["results_local_or_global"] = results_local
     staad_update_status["units"] = {"force": "kN", "moment": "kN-m", "displacement": "m"}
     staad_update_status["summary_results"] = summary_results

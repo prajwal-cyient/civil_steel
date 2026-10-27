@@ -1,5 +1,5 @@
 {
-  "template_project_path": "sample_projects/braced_bothside_template.ideaCon",
+  "template_project_path": "sample_projects/inner_node_1_longitudinal_1_transverse_bracing.ideaCon",
   "connection_selector": {"name": "CON1"},
   "member_updates": [
     {
@@ -41,7 +41,8 @@
       "gama_pitch": -40
     }
   ],
-  "load_effect": {
+  "load_effects": [
+    {
     "name": "LC1 - generated",
     "member_loadings": [
       {
@@ -115,7 +116,83 @@
         "position": "End"
       }
     ]
-  },
+    },
+    {
+    "name": "LC2 - generated",
+    "member_loadings": [
+      {
+        "member_name": "column",
+        "n": -29.365,
+        "vy": 0.1,
+        "vz": -0.005,
+        "mx": 0.006,
+        "my": 0.0,
+        "mz": 0.0,
+        "position": "End"
+      },
+      {
+        "member_name": "beam_longitudinal",
+        "n": 16.53,
+        "vy": 1.76,
+        "vz": -0.16,
+        "mx": 0.0,
+        "my": 0.0,
+        "mz": 0.6,
+        "position": "Begin"
+      },
+      {
+        "member_name": "beam_longitudinal",
+        "n": 12.488,
+        "vy": -1.842,
+        "vz": 0.016,
+        "mx": 0.0,
+        "my": 0.017,
+        "mz": 0.81,
+        "position": "End"
+      },
+      {
+        "member_name": "beam_transverse",
+        "n": 12.167,
+        "vy": 0.25,
+        "vz": -0.01,
+        "mx": -0.0001,
+        "my": 0.0147,
+        "mz": 0.1235,
+        "position": "Begin"
+      },
+      {
+        "member_name": "beam_transverse",
+        "n": 14.551,
+        "vy": 0.202,
+        "vz": -0.012,
+        "mx": 0.00,
+        "my": 0.0001,
+        "mz": 0.106,
+        "position": "End"
+      },
+      {
+        "member_name": "bracing_longitudinal",
+        "n": 23.6,
+        "vy": 0.152,
+        "vz": 0.0,
+        "mx": 0.0,
+        "my": 0.0,
+        "mz": 0.0,
+        "position": "End"
+      },
+      {
+        "member_name": "bracing_transverse",
+        "n": -15.92,
+        "vy": 0.193,
+        "vz": 0.0,
+        "mx": 0.0,
+        "my": 0.0,
+        "mz": 0.0,
+        "position": "End"
+      }
+    ]
+    }
+  ],
   "output_dir": "output_CON1",
   "save_project_path": "output_CON1/CON1_designed.ideaCon",
   "operation_parameters": [

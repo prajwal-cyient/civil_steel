@@ -474,7 +474,7 @@ def design_joint(data: dict) -> dict:
     template_path = data["template_project_path"]
     connection_selector = data["connection_selector"]
     member_updates = data.get("member_updates", [])
-    load_effect_spec = data.get("load_effect")
+    load_effect_specs = data.get("load_effects")
     operation_parameter_updates = data.get("operation_parameters", [])
     output_dir = data["output_dir"]
     save_project_path = data.get("save_project_path")
@@ -484,7 +484,7 @@ def design_joint(data: dict) -> dict:
         api_client.project.open_project_from_filepath(template_path)
         project_id = api_client.project.active_project_id
         settings = api_client.settings.get_settings(project_id)
-        print(f"   Retrieved project settings: {to_json_convention_string(settings)}\n")
+        #print(f"   Retrieved project settings: {to_json_convention_string(settings)}\n")
 
         connection = _resolve_connection(api_client, project_id, connection_selector)
         connection_id = connection.id
@@ -530,9 +530,9 @@ def design_joint(data: dict) -> dict:
                 member.model_config["validate_assignment"] = True
             api_client.member.update_member(project_id, connection_id, member)
         print(f"Updated members for connection {connection_id}")
-        print(f"Applying load effect for connection {connection_id}")
         # ---- Load effect ----
-        if load_effect_spec:
+        for load_effect_spec in load_effect_specs:
+            print(f"Applying load effect for connection {connection_id}: {load_effect_spec.get('name', '')}")
             member_loadings: List[ConLoadEffectMemberLoad] = []
             for loading in load_effect_spec.get("member_loadings", []):
                 member = _resolve_member(members, loading["member_name"])
@@ -562,7 +562,7 @@ def design_joint(data: dict) -> dict:
                     member_loadings=member_loadings,
                 ),
             )
-            print(f"Applied load effect for connection {connection_id}")
+            print(f"Applied load effect for connection {connection_id}: {load_effect_spec.get('name', '')}")
 
         # ---- Operation parameters (plate/bolt/weld dimensions) ----
         if operation_parameter_updates:

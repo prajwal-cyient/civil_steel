@@ -99,6 +99,7 @@ All keys are optional except "title". "member_names" refers to the
 import argparse
 import asyncio
 import json
+from math import atan2, pi
 import sys
 import time
 import traceback
@@ -1772,12 +1773,32 @@ async def send_to_staad(data: dict) -> dict:
     print(f"Load case map: {loadCaseMap}")
 
     joint_groups_member_types_map: dict[str, set[str]] = {}
+    joint_groups_member_metadata_map: dict[str, list[dict[str, Any]]] = {}
     joint_groups = staad_update_status["joint_groups"]
     for joint_group_id, joint_group in joint_groups.items():
         joint_groups_member_types_map[joint_group_id] = set()
+        joint_groups_member_metadata_map[joint_group_id] = []
         joint_members = joint_group["joints"][0]["members"]
         for joint_member in joint_members:
             member_type = joint_member["member_type"]
+            beam_id = joint_member["beam"]
+            beam_profile = member_data_by_id[beam_id].get("profile")
+            beam_material = member_data_by_id[beam_id].get("material")
+            if member_type not in joint_groups_member_types_map[joint_group_id]:
+                ideastatica_member_update_data = {
+                    "member_name": member_type,
+                    "cross_section_mprl_name": beam_profile,
+                    "material_mprl_name": beam_material
+                }
+                if member_type == 'bracing_longitudinal':
+                    column_height = grid_spec['col_height_mm']
+                    bay_long = grid_spec["bay_long_mm"]
+                    ideastatica_member_update_data["gama_pitch"] = atan2(column_height, bay_long)*180/pi
+                elif member_type == 'bracing_transverse':
+                    column_height = grid_spec['col_height_mm']
+                    bay_trans = grid_spec["bay_trans_mm"]
+                    ideastatica_member_update_data["gama_pitch"] = atan2(column_height, bay_trans)*180/pi
+                joint_groups_member_metadata_map[joint_group_id].append(ideastatica_member_update_data)
             joint_groups_member_types_map[joint_group_id].add(member_type)
 
     memberType_Forces_map: dict[str, list[str]] = {"beam_longitudinal": ["Fx", "Fy", "Fz"],
@@ -1834,6 +1855,7 @@ async def send_to_staad(data: dict) -> dict:
         # Find forces summary for each joint group
         joint_group_forces_summary = {}
         joint_groups = staad_update_status["joint_groups"]
+        joint_forces_by_group = {}
         for joint_group_id, joint_group in joint_groups.items():
             joint_group_forces_summary[joint_group_id] = {}
             joints = joint_group["joints"]
@@ -1846,7 +1868,8 @@ async def send_to_staad(data: dict) -> dict:
                     end = m["end"]
                     if member_type not in joint_forces:
                         joint_forces[member_type] = {}
-                    joint_forces[member_type][beam_id] = [forces[beam_id][end]]
+                    joint_forces[member_type][beam_id] = [forces[beam_id][start_end], forces[beam_id][final_end]]
+            joint_forces_by_group[joint_group_id] = joint_forces
             for member_type, member_forces in joint_forces.items():
                 joint_group_forces_summary[joint_group_id][member_type] = summarize_forces_displacements(member_forces)
 
@@ -1870,6 +1893,7 @@ async def send_to_staad(data: dict) -> dict:
         staad_update_status[lc]["forces"] = forces
         staad_update_status[lc]["support_reactions"] = support_reactions
         staad_update_status[lc]["joint_group_forces_summary"] = joint_group_forces_summary
+        staad_update_status[lc]["joint_forces_by_group"] = joint_forces_by_group
 
     # Find envelope wise summary of results
     envelope_summary_results: Dict[int, Any] = {}
@@ -1910,10 +1934,13 @@ async def send_to_staad(data: dict) -> dict:
                         for extreme in summary_keys:
                             # TODO: Forces needs a fix. they need to be from joint_forces
                             # TODO: beam_node_map also needs to be one dimensional or a start_or_end needs to be passed
+                            # staad_update_status[lc]["joint_forces_by_group"][joint_group_id][member_type] gives KeyError for some beam ids
                             find_extreme_forces(forces, forces_summary_by_joint_type_member_type, extreme, component,
                                                 beam_node_map, lc, lc_title, joint_member_ends,
                                                 envelope_summary_results_by_joint_group_member_type[envelopeId][joint_group_id][member_type],
-                                                [0])
+                                                [0, 1])
+                            # Set the node and connected_forces using joint_groups
+
         node_displacements_limits = {"min_X": abs(env_summary_results['displacements']['min_X']['X']),
                                      "max_X": abs(env_summary_results['displacements']['max_X']['X']),
                                      "min_Z": abs(env_summary_results['displacements']['min_Z']['Z']),
@@ -1924,10 +1951,17 @@ async def send_to_staad(data: dict) -> dict:
         envelope_summary_results[envelopeId] = env_summary_results
         # Determine the unique load cases for each joint group
         # This prepares the payload for the idea statica API for each joint group and current envelope
-        load_cases_by_joint_group: dict[str, list[dict[str, Any]]] = {}
+        load_cases_by_joint_group: dict[str, Any] = {}
         idea_statica_force_component_names = ["n", "vy", "vz", "mx", "my", "mz"]
         for joint_group_id, joint_group_data in envelope_summary_results_by_joint_group_member_type[envelopeId].items():
-            load_cases_by_joint_group[joint_group_id] = []
+            load_cases_by_joint_group[joint_group_id] = {"member_updates": [], "load_effects": [],
+                                                         "template_project_path": f'sample_projects/{joint_group_id}.ideaCon',
+                                                         "connection_selector": {"name": "CON1"},
+                                                         "output_dir": "output_CON1",
+                                                         "save_project_path": "output_CON1/CON1_designed.ideaCon",
+                                                         "operation_parameters": []}
+            load_cases_by_joint_group[joint_group_id]["member_updates"] = joint_groups_member_metadata_map[joint_group_id]
+
             unique_load_cases_by_joint_group: set[int] = set()
             for member_type, member_data in joint_group_data.items():
                 for force_key, force_data in member_data.get("forces").items():
@@ -1947,7 +1981,7 @@ async def send_to_staad(data: dict) -> dict:
                             idea_statica_forces['member_name'] = beam_type
                             idea_statica_forces['position'] = connected_beam_end
                             load_case_all_data['member_loadings'].append(idea_statica_forces)
-                        load_cases_by_joint_group[joint_group_id].append(load_case_all_data)
+                        load_cases_by_joint_group[joint_group_id]["load_effects"].append(load_case_all_data)
         envelope_load_cases_by_joint_group[envelopeId] = load_cases_by_joint_group
 
     staad_update_status["min_fail_ratio"] = output.GetMemberSteelDesignMinFailureRatio()
@@ -2031,7 +2065,7 @@ async def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate a beam/column/bracing grid from a JSON spec."
     )
-    parser.add_argument("--input", help="Path to input JSON file")
+    parser.add_argument("--input", help="Path to input JSON file", default="./sample_projects/generated_grid_8x5_no_mirror_bracing.json")
     parser.add_argument("--output", help="Path to output JSON file", default="analysis_output.json")
     args = parser.parse_args()
     input_json_path = args.input

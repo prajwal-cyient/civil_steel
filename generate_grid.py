@@ -224,6 +224,12 @@ except ImportError as exc:
     print("STAAD integration is unavailable on this server "
          f"(staad_integration.py could not be imported: {exc})"
         )
+try:
+    from idea_statica_integration import design_joint
+except ImportError as exc:
+    print("IDEA StatiCa integration is unavailable on this server "
+         f"(idea_statica_integration.py could not be imported: {exc})"
+        )
 
 def load_input(path):
     with open(path, "r") as f:
@@ -695,6 +701,69 @@ def create_app():
         members_split_beams: List[Member]
         load_configuration: Optional[Dict[str, Any]] = None
 
+    class ConnectionSelector(BaseModel):
+        # Exactly one of name/id/index is expected (see
+        # idea_statica_integration._resolve_connection()).
+        model_config = ConfigDict(extra="forbid")
+        name: Optional[str] = None
+        id: Optional[int] = None
+        index: Optional[int] = None
+
+    class PlateReference(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        plate_side: str
+        member: str
+        part_type: str
+
+    class MemberUpdate(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        member_name: str
+        cross_section_mprl_name: str
+        material_mprl_name: str
+        # Degrees; converted to radians by design_joint().
+        gama_pitch: Optional[float] = None
+        aligned_plate: Optional[PlateReference] = None
+        related_plate: Optional[PlateReference] = None
+
+    class MemberLoading(BaseModel):
+        # Forces in kN / moments in kNm (design_joint() scales to N / Nm).
+        model_config = ConfigDict(extra="forbid")
+        member_name: str
+        n: float = 0
+        vy: float = 0
+        vz: float = 0
+        mx: float = 0
+        my: float = 0
+        mz: float = 0
+        position: Optional[str] = None
+
+    class LoadEffect(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        name: str = "Generated load"
+        member_loadings: List[MemberLoading] = Field(default_factory=list)
+
+    class OperationParameter(BaseModel):
+        # Only "key" and "expression" are sent to IDEA StatiCa; the other
+        # fields in the template (value, orig_expression, description) are
+        # informational and passed through untouched.
+        model_config = ConfigDict(extra="allow")
+        key: str
+        expression: str
+
+    class ToIdeaStaticaRequest(BaseModel):
+        # Mirrors braced_bothside_template.json (see design_joint()'s
+        # docstring in idea_statica_integration.py for the full schema).
+        model_config = ConfigDict(extra="allow")
+        template_project_path: str
+        connection_selector: ConnectionSelector
+        member_updates: List[MemberUpdate] = Field(default_factory=list)
+        load_effects: List[LoadEffect] = Field(default_factory=list)
+        output_dir: str
+        save_project_path: Optional[str] = None
+        operation_parameters: List[OperationParameter] = Field(default_factory=list)
+        extract_raw_results: bool = False
+        extract_pdf_report: bool = False
+
     app = FastAPI(title="Structural Grid Generator API")
 
     # Serves any assets referenced from the UI (e.g. /static/... paths)
@@ -754,6 +823,20 @@ def create_app():
 
         try:
             result = await send_to_staad(payload)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+        return result
+
+    # curl -X POST http://localhost:8080/api/v1/to_ideastatica -H "Content-Type: application/json" -d @inner_node_1_longitudinal_1_transverse_bracing.json
+    @app.post("/api/v1/to_ideastatica")
+    def to_ideastatica(request: ToIdeaStaticaRequest):
+        # exclude_none: design_joint() checks optional member_update keys
+        # (gama_pitch, aligned_plate, related_plate) by presence, not value.
+        payload = request.model_dump(exclude_none=True)
+
+        try:
+            result = design_joint(payload)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
 

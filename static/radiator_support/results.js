@@ -202,6 +202,21 @@ function renderStaadJointGroups(result) {
   select.disabled = !names.length;
 }
 
+function renderIdeaEnvelopes(result) {
+  const select = document.getElementById('idea-envelope');
+  const envelopes = result.load_envelopes || [];
+  const placeholder = resultElement('option', envelopes.length ? 'Select an envelope' : 'No envelopes available');
+  placeholder.value = '';
+  select.replaceChildren(placeholder);
+  for (const envelope of envelopes) {
+    const option = resultElement('option', `Envelope ${envelope.envelopeId}${envelope.envelopeType ? ` - ${envelope.envelopeType}` : ''}`);
+    option.value = String(envelope.envelopeId);
+    select.append(option);
+  }
+  select.value = '';
+  select.disabled = !envelopes.length;
+}
+
 function staadForceTable(parent, title, forces, units) {
   parent.append(resultElement('h3', title));
   if (!Array.isArray(forces)) {
@@ -242,6 +257,7 @@ function renderStaadTooltip(parent, result, loadCaseId, member, nodeId) {
 function renderStaadResults(result) {
   renderStaadLoadCases(result);
   renderStaadJointGroups(result);
+  renderIdeaEnvelopes(result);
   const content = openResultPanel('staad');
   renderIntegrationStatus(content, result, true);
   content.append(resultElement('h3', 'Load Envelopes'));
@@ -278,6 +294,34 @@ function renderTeklaResults(result) {
   renderIntegrationStatus(content, result);
   const extra = Object.fromEntries(Object.entries(result).filter(([key]) => !['created', 'failed', 'errors'].includes(key)));
   if (Object.keys(extra).length) resultData(resultSection(content, 'Additional Results', true), extra);
+}
+
+function renderIdeaStaticaResults(result) {
+  const content = openResultPanel('idea');
+  content.append(resultElement('p', `Connection ${result.connection_id}: ${result.passed ? 'all checks passed.' : 'one or more checks failed.'}`,
+    `result-notice ${result.passed ? 'result-success' : 'result-failure'}`));
+
+  content.append(resultElement('h3', 'Check Summary'));
+  const checks = result.check_summary?.summary || [];
+  resultTable(content, checks.map(check => ({
+    name: check.name,
+    check_value: check.check_value,
+    check_status: check.check_status,
+    skipped: check.skipped,
+  })), undefined, key => ({ name: 'Name', check_value: 'Check Value', check_status: 'Check Status', skipped: 'Skipped' })[key]);
+  // Flag failed, non-skipped checks so they stand out in the table.
+  content.querySelectorAll('tbody tr').forEach((row, index) => {
+    if (checks[index] && !checks[index].check_status && !checks[index].skipped) row.classList.add('result-failure');
+  });
+
+  content.append(resultElement('h3', 'Operation Parameters'));
+  // Some parameters (e.g. booleans) come back with an empty value; show
+  // the expression IDEA StatiCa resolved instead.
+  resultTable(content, (result.check_summary?.operation_parameters || []).map(param => ({
+    key: param.key,
+    description: param.description,
+    value: param.value === '' ? param.expression : param.value,
+  })), undefined, key => ({ key: 'Key', description: 'Description', value: 'Value' })[key]);
 }
 
 function initializePaneDividers() {

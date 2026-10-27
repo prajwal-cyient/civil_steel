@@ -624,7 +624,19 @@
             <option value="">No joint groups available</option>
           </select>
         </div>
-        <div class="load-config-hint">Send to STAAD to load joint groups. Select a group to highlight its joints and connected members.</div>
+        <div class="field-row">
+          <label for="idea-envelope">Envelope</label>
+          <select id="idea-envelope" style="width:100%; min-width:0; flex:2;" disabled>
+            <option value="">No envelopes available</option>
+          </select>
+        </div>
+        <div class="load-config-hint">Send to STAAD to load joint groups and envelopes. Select a group to highlight its joints and connected members.</div>
+
+        <div class="material-group">
+          <div class="group-label">Operation parameters</div>
+          <div id="idea-operation-params"></div>
+        </div>
+        <div class="load-config-hint">Sent to IDEA StatiCa when you click "Send to IdeaStatica" below. Connection CON1, member updates and load effects are fixed for now.</div>
       </details>
 
       <button id="generate-btn" type="button">Generate Structure</button>
@@ -660,6 +672,10 @@
         <button id="send-staad-btn" class="action-btn" type="button" disabled>Send to STAAD</button>
       </div>
       <div class="action-block">
+        <div id="idea-status" class="action-status"></div>
+        <button id="send-idea-btn" class="action-btn" type="button">Send to IdeaStatica</button>
+      </div>
+      <div class="action-block">
         <div id="tekla-status" class="action-status"></div>
         <button id="update-tekla-btn" class="action-btn" type="button" disabled>Update Tekla</button>
       </div>
@@ -676,10 +692,15 @@
       <summary>Tekla Results</summary>
       <div id="tekla-results-content" class="result-content" aria-live="polite"></div>
     </details>
+    <details id="idea-results-panel" class="result-panel" hidden>
+      <summary>Idea Statica Results</summary>
+      <div id="idea-results-content" class="result-content" aria-live="polite"></div>
+    </details>
   </aside>
 </div>
 
 <script src="/static/radiator_support/results.js"></script>
+<script src="/static/radiator_support/idea_statica_defaults.js"></script>
 <script type="importmap">
 {
   "imports": {
@@ -878,6 +899,7 @@ const TYPE_COLORS = {
 function clearStructureView() {
   staadViewResult = null;
   renderStaadJointGroups({});
+  renderIdeaEnvelopes({});
   staadMemberLines.clear();
   staadJointMeshes.length = 0;
   staadTooltip.hidden = true;
@@ -1436,6 +1458,81 @@ sendStaadBtn.addEventListener('click', async () => {
   } finally {
     sendStaadBtn.disabled = false;
     sendStaadBtn.textContent = 'Send to STAAD';
+  }
+});
+
+/* ---------------------------------------------------------------
+   Send to IdeaStatica button
+--------------------------------------------------------------- */
+
+const sendIdeaBtn = document.getElementById('send-idea-btn');
+const ideaStatus = document.getElementById('idea-status');
+const ideaParamList = document.getElementById('idea-operation-params');
+
+// One text input per operation parameter, labelled by its description.
+// Several descriptions repeat (e.g. "Weld sizes"), so the parameter key
+// is shown as a tooltip on the label. Text inputs (not number) because
+// expressions may be non-numeric, e.g. "M16 8.8" or "True".
+IDEA_STATICA_DEFAULTS.operation_parameters.forEach((param, index) => {
+  const row = document.createElement('div');
+  row.className = 'field-row';
+  const label = document.createElement('label');
+  label.htmlFor = `idea-param-${index}`;
+  label.textContent = param.description;
+  label.title = param.key;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.id = `idea-param-${index}`;
+  input.dataset.key = param.key;
+  input.value = param.expression;
+  row.append(label, input);
+  ideaParamList.append(row);
+});
+
+function buildOperationParameters() {
+  return [...ideaParamList.querySelectorAll('input')].map(input => ({
+    key: input.dataset.key,
+    expression: input.value,
+  }));
+}
+
+sendIdeaBtn.addEventListener('click', async () => {
+  ideaStatus.className = '';
+  ideaStatus.textContent = '';
+  sendIdeaBtn.disabled = true;
+  sendIdeaBtn.textContent = 'Sending…';
+
+  try {
+    // TODO: take member_updates/load_effects from
+    // staadViewResult.envelope_load_cases_by_joint_group[envelope][jointGroup]
+    // (envelope from #idea-envelope, joint group from #idea-joint-group)
+    // once the STAAD integration provides them.
+    const payload = {
+      ...IDEA_STATICA_DEFAULTS,
+      operation_parameters: buildOperationParameters(),
+    };
+
+    const res = await fetch('/api/v1/to_ideastatica', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(`Server returned ${res.status}:\n${detail}`);
+    }
+
+    const result = await res.json();
+    renderIdeaStaticaResults(result);
+    ideaStatus.className = result.passed ? 'ok' : 'error';
+    ideaStatus.textContent = `Connection ${result.connection_id} ${result.passed ? 'passed' : 'failed'} checks.`;
+  } catch (err) {
+    ideaStatus.className = 'error';
+    ideaStatus.textContent = String(err.message || err);
+  } finally {
+    sendIdeaBtn.disabled = false;
+    sendIdeaBtn.textContent = 'Send to IdeaStatica';
   }
 });
 </script>

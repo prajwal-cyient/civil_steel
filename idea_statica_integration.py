@@ -107,10 +107,10 @@ because the API rejects loads placed at the joint-attached end.
 
 Sample cmd to run this utility:
 To view the parameters of a connection without performing a design, use:
-python idea_statica_integration.py sample_projects/Transverese_bracing_conn_detail.ideaCon
+python idea_statica_integration.py sample_projects/inner_node_1_longitudinal_1_transverse_bracing.ideaCon
 
 To perform a design using the JSON input, use: (NOTE: The json file contains idea statica connection file)
-python idea_statica_integration.py --design Transverese_bracing_conn_detail.json.json
+python idea_statica_integration.py --design inner_node_1_longitudinal_1_transverse_bracing.json
 """
 
 import argparse

@@ -1875,6 +1875,7 @@ async def send_to_staad(data: dict) -> dict:
     envelope_summary_results: Dict[int, Any] = {}
     all_joint_groups = joint_group_forces_summary.keys()
     envelope_summary_results_by_joint_group_member_type: Dict[int, Dict[str, Dict[str, Any]]] = {}
+    envelope_load_cases_by_joint_group: Dict[int, Dict[str, List[int]]] = {}
     for envelopeDetail in load_envelopes:
         envelopeId = envelopeDetail["envelopeId"]
         envelopeType = envelopeDetail["envelopeType"]
@@ -1921,6 +1922,33 @@ async def send_to_staad(data: dict) -> dict:
         env_summary_results['node_displacements_limits'] = node_displacements_limits
         env_summary_results['node_displacements_limits_exceed_col_height_200'] = node_displacements_limits_exceed_col_height_200
         envelope_summary_results[envelopeId] = env_summary_results
+        # Determine the unique load cases for each joint group
+        # This prepares the payload for the idea statica API for each joint group and current envelope
+        load_cases_by_joint_group: dict[str, list[dict[str, Any]]] = {}
+        idea_statica_force_component_names = ["n", "vy", "vz", "mx", "my", "mz"]
+        for joint_group_id, joint_group_data in envelope_summary_results_by_joint_group_member_type[envelopeId].items():
+            load_cases_by_joint_group[joint_group_id] = []
+            unique_load_cases_by_joint_group: set[int] = set()
+            for member_type, member_data in joint_group_data.items():
+                for force_key, force_data in member_data.get("forces").items():
+                    lc = force_data.get("load_case")
+                    if lc not in unique_load_cases_by_joint_group:
+                        unique_load_cases_by_joint_group.add(lc)
+                        lc_title = force_data.get("load_case_title", "")
+                        node_id = force_data.get("node")
+                        load_case_all_data = {"load_case": lc, "name": f'STAAD_node_{node_id}_{lc_title}', 'member_loadings': []}
+                        connected_forces = force_data.get("connected_forces")
+                        for connected_force in connected_forces or []:
+                            connected_beam_id = connected_force.get("beam")
+                            connected_beam_end = "Begin" if connected_force.get("beam") == 0 else "End"
+                            connected_force_components = connected_force.get("forces")
+                            idea_statica_forces = dict(zip(idea_statica_force_component_names, connected_force_components))
+                            beam_type = memberName2type(member_data_by_id[connected_beam_id].get("name"))
+                            idea_statica_forces['member_name'] = beam_type
+                            idea_statica_forces['position'] = connected_beam_end
+                            load_case_all_data['member_loadings'].append(idea_statica_forces)
+                        load_cases_by_joint_group[joint_group_id].append(load_case_all_data)
+        envelope_load_cases_by_joint_group[envelopeId] = load_cases_by_joint_group
 
     staad_update_status["min_fail_ratio"] = output.GetMemberSteelDesignMinFailureRatio()
     staad_update_status["max_fail_ratio"] = output.GetMemberSteelDesignMaxFailureRatio()
@@ -1950,6 +1978,7 @@ async def send_to_staad(data: dict) -> dict:
     staad_update_status["member_ratios_by_type"] = member_ratios_by_type
     staad_update_status["envelope_summary_results"] = envelope_summary_results
     staad_update_status["envelope_summary_results_by_joint_group_member_type"] = envelope_summary_results_by_joint_group_member_type
+    staad_update_status["envelope_load_cases_by_joint_group"] = envelope_load_cases_by_joint_group
     staad_update_status["results_local_or_global"] = results_local
     staad_update_status["units"] = {"force": "kN", "moment": "kN-m", "displacement": "m"}
     staad_update_status["summary_results"] = summary_results

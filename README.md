@@ -1,6 +1,49 @@
 # civil-steel-standard-web
 Web App to design Steel Standard structures in Tekla, Staad.Pro and Idea Statica
 
+## Cleaning open models
+
+These utilities are **destructive** and save changes automatically. Back up
+important models first. Importing either module has no application side effects;
+calling its synchronous `main()` performs cleanup without prompting.
+
+```python
+from tekla_cleanup import main as clean_tekla
+from staad_cleanup import main as clean_staad
+
+clean_tekla()
+clean_staad()
+```
+
+They can also be run separately with `python tekla_cleanup.py` or
+`python staad_cleanup.py`.
+
+- [tekla_cleanup.py](./tekla_cleanup.py) uses the existing Tekla connection setup
+  (`pythonnet`, `TEKLA_BIN_PATH`). It deletes all enumerated model objects except
+  grids (including radial grids), grid surfaces/planes and Tekla's `DefaultGroup`
+  load group (reported explicitly, since Tekla does not allow deleting it).
+  Components are
+  connections/details that can generate parts, bolts and welds; these are removed
+  along with the structural objects. It commits and saves the open model.
+  It does not remove drawings, catalogs, attributes or project-directory files.
+- [staad_cleanup.py](./staad_cleanup.py) uses `openstaadpy` and requires an open,
+  saved analytical `.std` model with no analysis running. It saves current edits,
+  creates a unique `*.before-cleanup-*.std.bak` backup beside the input, opens
+  a temporary copy of [empty_staad_project.std](./sample_projects/empty_staad_project.std)
+  and waits up to 30 seconds for STAAD's asynchronous file opening to make it
+  active and empty. It then replaces the original input
+  with that template, reopens the original path, verifies it and saves. The saved
+  input must match the template's tokens (including its title and job information).
+  This clears geometry, loads, supports,
+  materials/properties, groups, units, original job information, and analysis/design
+  commands. Physical models are rejected. External result files and other
+  project-directory files are not deleted; the backup contains the input only.
+
+Connection, deletion, verification and save errors propagate to the caller.
+Cleanup is not transactional: on failure, inspect the open model before retrying;
+for STAAD, the printed backup path holds the saved pre-cleanup input. If switching
+back to the original file fails, the staging `.std` is retained and its path printed.
+
 ## STAAD results viewer
 
 After **Send to STAAD**, the 3D preview is replaced with the returned

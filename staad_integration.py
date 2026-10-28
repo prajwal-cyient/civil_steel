@@ -109,6 +109,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 try:
     from openstaadpy import os_analytical
     from openstaadpy.os_analytical.openstaadroot import OSProperty, OSGeometry, OSSupport, OSLoad, OSCommand, OSOutput, OSDesign, OSTable, OSView, OsErrorBase
+    from staad_cleanup import main as clean_staad
 except ImportError:  # pragma: no cover - only available on Windows w/ pywin32
     os_analytical = None
 
@@ -1675,6 +1676,8 @@ async def send_to_staad(data: dict) -> dict:
     to this, a property-assignment failure incorrectly marked the whole
     member as failed even when its geometry had already landed.
     """
+    # Clean the STAAD.Pro model before adding new members
+    clean_staad()
     members = data.get("members_split_beams", [])
     load_configuration = data.get("load_configuration")
     grid_spec = data.get("grid")
@@ -2112,7 +2115,7 @@ async def main() -> None:
         description="Generate a beam/column/bracing grid from a JSON spec."
     )
     parser.add_argument("--input", help="Path to input JSON file", default="./sample_projects/generated_grid_8x5_no_mirror_bracing.json")
-    parser.add_argument("--output", help="Path to output JSON file", default="analysis_output.json")
+    parser.add_argument("--output", help="Path to output JSON file", default="analysis_output_staad.json")
     args = parser.parse_args()
     input_json_path = args.input
     if not input_json_path:
@@ -2121,7 +2124,7 @@ async def main() -> None:
     with open(input_json_path, "r") as f:
         input_data = json.load(f)
     print(f"Loaded input JSON from {input_json_path}:")
-    print(json.dumps(input_data, indent=2))
+    #print(json.dumps(input_data, indent=2))
     print("Proceeding with STAAD.Pro self-test...")
     analysis_output = await send_to_staad(input_data)  # Assuming there's a function to send the input data to STAAD.Pro
     if args.output:

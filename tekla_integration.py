@@ -15,6 +15,8 @@ grid-generation tool works fine on machines without Tekla or pythonnet
 installed.
 """
 
+import argparse
+import json
 import os
 import shutil
 import sys
@@ -54,6 +56,8 @@ from Tekla.Structures.Model.UI import Picker  # noqa: E402
 from Tekla.Structures.Model.UI import ModelObjectSelector
 from Tekla.Structures import AutoDirectionTypeEnum, DetailTypeEnum, DetailTypeEnum, PositionTypeEnum
 from System.Collections import Hashtable, ArrayList
+
+from tekla_cleanup import main as clean_tekla
 
 # ── Errors ────────────────────────────────────────────────────────────────
 
@@ -457,6 +461,8 @@ def send_to_tekla(data: dict) -> dict:
         If Tekla Structures isn't running / reachable. This aborts before
         any members are created, since nothing could be inserted anyway.
     """
+    # Clean the Tekla model before adding new members
+    clean_tekla()
     members = data.get("members", [])
     grid = data.get('grid', {})
     model = _get_connected_model()
@@ -697,44 +703,40 @@ def pick_and_print_attributes() -> None:
 def _self_test() -> None:
     print("=== tekla_integration.py self-test ===\n")
 
+    parser = argparse.ArgumentParser(
+        description="Generate a beam/column/bracing grid from a JSON spec."
+    )
+    parser.add_argument("--input", help="Path to input JSON file", default="./sample_projects/generated_grid_8x5_no_mirror_bracing.json")
+    parser.add_argument("--output", help="Path to output JSON file", default="analysis_output_tekla.json")
+    parser.add_argument("--tekla-bin-path", help="Path to Tekla Structures bin directory", default="C:\\TeklaStructures\\2025.0\\bin")
+    parser.add_argument("--pick-object", help="Prompt to pick an object in Tekla", action="store_true")
+    args = parser.parse_args()
 
-    print(f"1. Connecting to Tekla Structures (bin path: {tekla_bin_path}) ...")
-    try:
-        model = _get_connected_model()
-        print("   PASS: connected to a running Tekla Structures model.\n")
-    except Exception as exc:
-        print(f"   FAIL: {exc}\n")
-        print("Aborting further tests — nothing else can succeed without a connection.")
+    if args.pick_object:
+        print("Pick an object in Tekla to retrieve its attributes...")
+        try:
+            model = _get_connected_model()
+            pick_and_print_attributes()
+        except Exception as exc:
+            print(f"   FAIL: {exc}\n")
         return
 
-    test_profile = "HEA140"
-    print(f"2. Looking up catalog HEIGHT for profile '{test_profile}' ...")
-    try:
-        height = get_profile_height(test_profile)
-        if height is None:
-            print(f"   FAIL: profile '{test_profile}' not found in the catalog (or has no HEIGHT).\n")
-        else:
-            print(f"   PASS: HEIGHT = {height} mm\n")
-    except Exception as exc:
-        print(f"   FAIL: {exc}\n")
-
-    print(f"3. Looking up catalog WIDTH for profile '{test_profile}' ...")
-    try:
-        width = get_profile_width(test_profile)
-        if width is None:
-            print(f"   FAIL: profile '{test_profile}' not found in the catalog (or has no WIDTH).\n")
-        else:
-            print(f"   PASS: WIDTH = {width} mm\n")
-    except Exception as exc:
-        print(f"   FAIL: {exc}\n")
-
-    try:
-        pick_and_print_attributes()
-    except Exception as exc:
-        print(f"   FAIL: {exc}\n")
+    input_json_path = args.input
+    if not input_json_path:
+        print("Error: --input argument is required.")
+        return
+    with open(input_json_path, "r") as f:
+        input_data = json.load(f)
+    print(f"Loaded input JSON from {input_json_path}:")
+    #print(json.dumps(input_data, indent=2))
+    print("Proceeding with Tekla self-test...")
+    analysis_output = send_to_tekla(input_data)
+    if args.output:
+        with open(args.output, "w") as f:
+            json.dump(analysis_output, f, indent=2)
+        print(f"Analysis output written to {args.output}")
 
     print("=== self-test complete ===")
-
 
 if __name__ == "__main__":
     _self_test()

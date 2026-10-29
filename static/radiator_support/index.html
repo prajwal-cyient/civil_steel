@@ -636,7 +636,7 @@
           <div class="group-label">Operation parameters</div>
           <div id="idea-operation-params"></div>
         </div>
-        <div class="load-config-hint">Sent to IDEA StatiCa when you click "Send to IdeaStatica" below. Connection CON1, member updates and load effects are fixed for now.</div>
+        <div class="load-config-hint">Sent to IDEA StatiCa when you click "Send to IdeaStatica" below. Parameters depend on the selected joint group. Member updates and load effects come from the STAAD results for the selected envelope and joint group.</div>
       </details>
 
       <button id="generate-btn" type="button">Generate Structure</button>
@@ -900,6 +900,7 @@ function clearStructureView() {
   staadViewResult = null;
   renderStaadJointGroups({});
   renderIdeaEnvelopes({});
+  renderIdeaOperationParameters('');
   staadMemberLines.clear();
   staadJointMeshes.length = 0;
   staadTooltip.hidden = true;
@@ -1155,6 +1156,7 @@ function highlightStaadJoints(nodeIds, memberIds) {
 
 function selectStaadJoint(nodeId) {
   document.getElementById('idea-joint-group').value = '';
+  renderIdeaOperationParameters('');
   const ends = nodeId === null ? [] : staadViewResult.joint_member_ends?.[nodeId] || [];
   highlightStaadJoints(nodeId === null ? [] : [nodeId], ends.map(([id]) => id));
   document.getElementById('staad-joint-selection').textContent = nodeId === null
@@ -1167,6 +1169,7 @@ function selectStaadJointGroup(name) {
     selectStaadJoint(null);
     return;
   }
+  renderIdeaOperationParameters(name);
   const joints = staadViewResult.joint_groups[name].joints;
   highlightStaadJoints(joints.map(joint => joint.node), joints.flatMap(joint => joint.members.map(member => member.beam)));
   document.getElementById('staad-joint-selection').textContent = `${name}: ${joints.length} joints selected.`;
@@ -1469,25 +1472,38 @@ const sendIdeaBtn = document.getElementById('send-idea-btn');
 const ideaStatus = document.getElementById('idea-status');
 const ideaParamList = document.getElementById('idea-operation-params');
 
-// One text input per operation parameter, labelled by its description.
-// Several descriptions repeat (e.g. "Weld sizes"), so the parameter key
-// is shown as a tooltip on the label. Text inputs (not number) because
-// expressions may be non-numeric, e.g. "M16 8.8" or "True".
-IDEA_STATICA_DEFAULTS.operation_parameters.forEach((param, index) => {
-  const row = document.createElement('div');
-  row.className = 'field-row';
-  const label = document.createElement('label');
-  label.htmlFor = `idea-param-${index}`;
-  label.textContent = param.description;
-  label.title = param.key;
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.id = `idea-param-${index}`;
-  input.dataset.key = param.key;
-  input.value = param.expression;
-  row.append(label, input);
-  ideaParamList.append(row);
-});
+// One text input per operation parameter of the selected joint group's
+// template, labelled by its description. Several descriptions repeat
+// (e.g. "Weld sizes"), so the parameter key is shown as a tooltip on the
+// label. Text inputs (not number) because expressions may be non-numeric,
+// e.g. "M16 8.8" or "True". Blank when no joint group is selected or its
+// parameters aren't known yet.
+function renderIdeaOperationParameters(jointGroup) {
+  const params = IDEA_STATICA_OPERATION_PARAMETERS_BY_JOINT_GROUP[jointGroup] || [];
+  ideaParamList.replaceChildren();
+  params.forEach((param, index) => {
+    const row = document.createElement('div');
+    row.className = 'field-row';
+    const label = document.createElement('label');
+    label.htmlFor = `idea-param-${index}`;
+    label.textContent = param.description;
+    label.title = param.key;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.id = `idea-param-${index}`;
+    input.dataset.key = param.key;
+    input.value = param.expression;
+    row.append(label, input);
+    ideaParamList.append(row);
+  });
+  if (jointGroup && !params.length) {
+    const hint = document.createElement('div');
+    hint.className = 'load-config-hint';
+    hint.textContent = `Operation parameters for ${jointGroup} are not defined yet.`;
+    ideaParamList.append(hint);
+  }
+}
+renderIdeaOperationParameters('');
 
 function buildOperationParameters() {
   return [...ideaParamList.querySelectorAll('input')].map(input => ({

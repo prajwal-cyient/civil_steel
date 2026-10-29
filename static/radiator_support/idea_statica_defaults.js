@@ -3,8 +3,6 @@
 // member_updates and load_effects here are only a reference sample: the UI
 // replaces them with the STAAD response's
 // envelope_load_cases_by_joint_group[envelopeId][jointGroup].
-// operation_parameters only seeds the editable inputs in the
-// "Idea Statica Connection Design" section; the request uses the UI values.
 const IDEA_STATICA_DEFAULTS = {
   "template_project_path": "sample_projects/inner_node_1_longitudinal_1_transverse_bracing.ideaCon",
   "connection_selector": {
@@ -202,8 +200,16 @@ const IDEA_STATICA_DEFAULTS = {
     }
   ],
   "output_dir": "output_CON1",
-  "save_project_path": "output_CON1/CON1_designed.ideaCon",
-  "operation_parameters": [
+  "save_project_path": "output_CON1/CON1_designed.ideaCon"
+};
+
+// Operation parameters exposed by each joint group's template
+// (sample_projects/<joint group>.ideaCon), keyed by joint group name.
+// They only seed the editable inputs in the "Idea Statica Connection Design"
+// section; the request uses the UI values. Joint groups not listed here
+// show no parameters.
+const IDEA_STATICA_OPERATION_PARAMETERS_BY_JOINT_GROUP = {
+  "inner_node_1_longitudinal_1_transverse_bracing": [
     {
       "key": "GRD_d",
       "description": "Grid bolt dia",
@@ -318,6 +324,88 @@ const IDEA_STATICA_DEFAULTS = {
       "key": "Bolt_Type",
       "description": "Bolt Type",
       "expression": "M16 8.8"
+    }
+  ],
+  "inner_node_1_longitudinal_bracing": [
+    {
+      "key": "GRD_d",
+      "description": "Grid bolt dia",
+      "expression": "0.016"
+    },
+    {
+      "key": "EP_d",
+      "description": "Endplate bolt dia",
+      "expression": "0.016"
+    },
+    {
+      "key": "EP_pl_th",
+      "description": "Endplate thickness",
+      "expression": "0.012"
+    },
+    {
+      "key": "Stiff_th",
+      "description": "Stiffener thickness",
+      "expression": "0.008"
+    },
+    {
+      "key": "Stiff_sel",
+      "description": "Stiffener requirement",
+      "expression": "True"
+    },
+    {
+      "key": "EP_weld",
+      "description": "Endplate to column Weld sizes",
+      "expression": "0.005"
+    },
+    {
+      "key": "Stiff_bot_weld(web)",
+      "description": "Bottom stiffener Web Weld sizes",
+      "expression": "0.005"
+    },
+    {
+      "key": "Stiff_bot_weld(flange)",
+      "description": "Bottom stiffener flange Weld sizes",
+      "expression": "0.008"
+    },
+    {
+      "key": "Stiff_top_weld(web)",
+      "description": "Top Stiffener web Weld sizes",
+      "expression": "0.005"
+    },
+    {
+      "key": "Stiff_top_weld(flange)",
+      "description": "Top Stiffener flange Weld sizes",
+      "expression": "0.005"
+    },
+    {
+      "key": "theta",
+      "description": "theta of bracing with column",
+      "expression": "0.5235987755982988"
+    },
+    {
+      "key": "CPL_d",
+      "description": "Gusset bolt dia",
+      "expression": "0.016"
+    },
+    {
+      "key": "CPL_th",
+      "description": "Gusset and tongue plate thickness",
+      "expression": "0.012"
+    },
+    {
+      "key": "CPL_weld",
+      "description": "CPL Weld sizes",
+      "expression": "0.008"
+    },
+    {
+      "key": "CPL_tongue_weld",
+      "description": "CPL Weld tongue sizes",
+      "expression": "0.008"
+    },
+    {
+      "key": "CPL_overlap_length",
+      "description": "CPL_Overlap",
+      "expression": "0.1"
     }
   ]
 };

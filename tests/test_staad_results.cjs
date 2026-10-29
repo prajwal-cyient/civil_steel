@@ -143,6 +143,8 @@ test('joint selection highlights exactly the reported members and restores class
   ]));
   context.staadJointMeshes = [{ material: material(456), userData: { nodeId: '900004', baseColor: 456 } }];
   context.staadTooltip = { hidden: false };
+  const paramRenders = [];
+  context.renderIdeaOperationParameters = jointGroup => paramRenders.push(jointGroup);
   loadViewerFunction(context, 'highlightStaadJoints');
   loadViewerFunction(context, 'selectStaadJoint');
   context.selectStaadJoint('900004');
@@ -185,6 +187,8 @@ test('joint selection highlights exactly the reported members and restores class
   assert.ok([...context.staadMemberLines.values()].every(line => line.material.opacity === 1 && line.material.color.value === 123));
   context.selectStaadJointGroup('');
   assert.ok(context.staadJointMeshes.every(joint => joint.material.color.value === joint.userData.baseColor));
+  // Operation parameters follow the selected joint group; clicking a single joint clears them.
+  assert.deepEqual(paramRenders, ['', '', 'corner_node', '', 'empty_group', '']);
 });
 
 test('clearing the viewer removes and disposes geometry, labels and STAAD state', () => {
@@ -202,8 +206,11 @@ test('clearing the viewer removes and disposes geometry, labels and STAAD state'
   context.labelsGroup = { traverse(callback) {
     callback({ isCSS2DObject: true, element: { remove() { disposed.push('label'); } } });
   } };
+  const paramRenders = [];
+  context.renderIdeaOperationParameters = jointGroup => paramRenders.push(jointGroup);
   loadViewerFunction(context, 'clearStructureView');
   context.clearStructureView();
+  assert.deepEqual(paramRenders, ['']);
   assert.deepEqual(disposed, ['geometry', 'material', 'label']);
   assert.equal(removed.length, 2);
   assert.equal(context.staadViewResult, null);

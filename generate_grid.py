@@ -515,6 +515,7 @@ def generate_members(cfg):
                 "class": long_brace_class,
                 "type": "longitudinal_brace",
                 "name": f"bracing-long-{j}-{bay_1based}",
+                "is_mirrored": mirror,
             })
             p1 = transform_to_staad_co_ordinates(point(bottom_i, j, brace_bottom_z_staad))
             p2 = transform_to_staad_co_ordinates(point(top_i, j, trans_beam_z)) # brace_top_z
@@ -526,6 +527,7 @@ def generate_members(cfg):
                 "class": long_brace_class,
                 "type": "longitudinal_brace",
                 "name": f"bracing-long-{j}-{bay_1based}",
+                "is_mirrored": mirror,
             })
 
     # ---- Transverse bracing ----
@@ -565,6 +567,7 @@ def generate_members(cfg):
                 "class": trans_brace_class,
                 "type": "transverse_brace",
                 "name": f"bracing-trans-{i}-{bay_1based}",
+                "is_mirrored": mirror,
             })
             p1 = transform_to_staad_co_ordinates(point(i, bottom_j, brace_bottom_z_staad))
             p2 = transform_to_staad_co_ordinates(point(i, top_j, trans_beam_z)) # brace_top_z
@@ -576,6 +579,7 @@ def generate_members(cfg):
                 "class": trans_brace_class,
                 "type": "transverse_brace",
                 "name": f"bracing-trans-{i}-{bay_1based}",
+                "is_mirrored": mirror
             })
 
     members_tekla = columns + beams_tekla + braces

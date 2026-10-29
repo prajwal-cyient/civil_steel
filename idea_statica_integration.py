@@ -411,11 +411,14 @@ def _set_parameters(
         IdeaParameterUpdate(key=u["key"], expression=_quote_expression_if_needed(str(u["expression"])))
         for u in updates
     ]
-    response = api_client.parameter.update(project_id, connection_id, param_updates)
-    print(f"parameter.update response: {to_json_convention_string(response)}")  # TODO: remove after debugging
-    if response.failed_validations:
-        raise IdeaStaticaJointError(f"Parameter update failed validation: {response.failed_validations}")
-    return response
+    try:
+        response = api_client.parameter.update(project_id, connection_id, param_updates)
+        print(f"parameter.update response: {to_json_convention_string(response)}")  # TODO: remove after debugging
+        if response.failed_validations:
+            raise IdeaStaticaJointError(f"Parameter update failed validation: {response.failed_validations}")
+        return response
+    except Exception as e:
+        raise IdeaStaticaJointError(f"Failed to set parameters: {e}") from e
 
 
 # ── Public API ───────────────────────────────────────────────────────────
@@ -478,6 +481,14 @@ def design_joint(data: dict) -> dict:
     operation_parameter_updates = data.get("operation_parameters", [])
     output_dir = data["output_dir"]
     save_project_path = data.get("save_project_path")
+    template_basename = os.path.splitext(os.path.basename(template_path))[0]
+    if not save_project_path:
+        # get it using the output dir and template path
+        save_project_path = os.path.join(output_dir, 'out_' + os.path.basename(template_path))
+    summary_file = os.path.join(output_dir, 'summary_' + template_basename + '.json')
+    iom_connection_data_file = os.path.join(output_dir, 'iom_connection_data_' + template_basename + '.json')
+
+    output_messages = []
     if not os.path.isfile(template_path):
         raise IdeaStaticaJointError(f"Template project not found: {template_path}")
     os.makedirs(output_dir, exist_ok=True)
@@ -509,7 +520,8 @@ def design_joint(data: dict) -> dict:
             try:
                 member = _resolve_member(members, update["member_name"])
             except Exception as e:
-                print(f"Warning: Not able to resolve member {update['member_name']}. Ignoring update.: {e}")
+                output_messages.append(f"Warning: Member update: Not able to resolve member {update['member_name']}. Ignoring update.: {e}")
+                print(output_messages[-1])
                 continue
             cross_section_id = _resolve_cross_section_id(
                 api_client, project_id,
@@ -547,7 +559,12 @@ def design_joint(data: dict) -> dict:
             print(f"Applying load effect for connection {connection_id}: {load_effect_spec.get('name', '')}")
             member_loadings: List[ConLoadEffectMemberLoad] = []
             for loading in load_effect_spec.get("member_loadings", []):
-                member = _resolve_member(members, loading["member_name"])
+                try:
+                    member = _resolve_member(members, loading["member_name"])
+                except Exception as e:
+                    output_messages.append(f"Warning: Load effect: Not able to resolve member {loading['member_name']}. Ignoring loading.: {e}")
+                    print(output_messages[-1])
+                    continue
                 # The joint's fixed end can't take a load; position is
                 # derived from the member's actual free end, not guessed.
                 specified_position = loading.get("position", "")
@@ -579,8 +596,12 @@ def design_joint(data: dict) -> dict:
         # ---- Operation parameters (plate/bolt/weld dimensions) ----
         if operation_parameter_updates:
             print(f"Setting operation parameters for connection {connection_id}")
-            _set_parameters(api_client, project_id, connection_id, operation_parameter_updates)
-            print(f"Set operation parameters for connection {connection_id}")
+            try:
+                _set_parameters(api_client, project_id, connection_id, operation_parameter_updates)
+                print(f"Set operation parameters for connection {connection_id}")
+            except Exception as e:
+                output_messages.append(f"Warning: Param update: Failed to set operation parameters for connection {connection_id}: {e}")
+                print(output_messages[-1])
         operation_parameters = [
             {
                 "key": p.key,
@@ -617,13 +638,11 @@ def design_joint(data: dict) -> dict:
             for c in (result.result_summary or [])
         ]
         check_summary = {"summary": check_summary, "operation_parameters": operation_parameters}
-        summary_file = os.path.join(output_dir, "check_summary.json")
         with open(summary_file, "w") as f:
             json.dump(check_summary, f, indent=2)
         print(f"Extracted check summary for connection {connection_id}")
 
         print(f"Extracting IOM connection data for connection {connection_id}")
-        iom_connection_data_file = os.path.join(output_dir, "iom_connection_data.json")
         start = time.time()
         connection_data = api_client.export.export_iom_connection_data(project_id, connection_id)
         print(f"Extracted IOM connection data for connection {connection_id} in {time.time() - start:.2f} seconds")
@@ -637,7 +656,7 @@ def design_joint(data: dict) -> dict:
             # ---- Extract results ----
             print(f"Extracting raw results for connection {connection_id}")
             start = time.time()
-            raw_results_file = os.path.join(output_dir, "raw_cbfem_results.json")
+            raw_results_file = os.path.join(output_dir, "raw_results_" + template_basename + ".json")
             raw_json_list = api_client.calculation.get_raw_json_results(project_id, [connection_id])
             with open(raw_results_file, "w") as f:
                 f.write(raw_json_list[0])
@@ -646,7 +665,7 @@ def design_joint(data: dict) -> dict:
         extract_pdf_report = data.get("extract_pdf_report", False)
         if extract_pdf_report:
             print(f"Generating report PDF for connection {connection_id}")
-            report_pdf_file = os.path.join(output_dir, "report.pdf")
+            report_pdf_file = os.path.join(output_dir, "report_" + template_basename + ".pdf")
             start = time.time()
             api_client.report.save_report_pdf(project_id, connection_id, report_pdf_file)
             print(f"Generated report PDF for connection {connection_id} in {time.time() - start:.2f} seconds")
@@ -654,6 +673,7 @@ def design_joint(data: dict) -> dict:
         "connection_id": connection_id,
         "passed": result.passed,
         "check_summary": check_summary,
+        "output_messages": output_messages,
         "check_summary_file": summary_file,
         "raw_results_file": raw_results_file if extract_raw_results else None,
         "iom_connection_data_file": iom_connection_data_file,

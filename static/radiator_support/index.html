@@ -1523,6 +1523,7 @@ sendIdeaBtn.addEventListener('click', async () => {
     return;
   }
   const templateDir = IDEA_STATICA_DEFAULTS.template_project_path.replace(/[^/\\]*$/, '');
+  const outputDir = IDEA_STATICA_DEFAULTS.output_dir;
 
   sendIdeaBtn.disabled = true;
   sendIdeaBtn.textContent = 'Sending…';
@@ -1533,6 +1534,7 @@ sendIdeaBtn.addEventListener('click', async () => {
       member_updates: staadJointPayload.member_updates || [],
       load_effects: staadJointPayload.load_effects,
       template_project_path: `${templateDir}${jointGroup}.ideaCon`,
+      save_project_path: "",
       operation_parameters: buildOperationParameters(),
     };
 

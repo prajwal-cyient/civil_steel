@@ -574,6 +574,8 @@ def memberData2type(member_data: dict) -> str:
     p1, p2 = member_data.get("p1"), member_data.get("p2")
     if not p1 or not p2:
         return member_type
+    # Determine if the member is a mirrored bracing based on its coordinates.
+    # TODO: use the is_mirrored field from member_data instead of inferring from coordinates
     if member_type == "bracing_longitudinal" and p2[2] < p1[2]:
         return "bracing_longitudinal_mirrored"
     if member_type == "bracing_transverse" and p2[0] < p1[0]:
@@ -1264,7 +1266,8 @@ def add_to_group(groups: dict, group_name: str, node: int, joint_member_ends: Di
         "members": [
             {
                 "beam": beam_id,
-                "member_type": memberData2type(member_data_by_id[beam_id]),
+                "member_type": memberName2type(member_data_by_id[beam_id].get("name")),
+                "is_mirrored": member_data_by_id[beam_id].get("is_mirrored", False),
                 "end": member_end,
             }
             for beam_id, member_end in joint_member_ends[node]
@@ -1890,28 +1893,36 @@ async def send_to_staad(data: dict) -> dict:
         joint_groups_member_types_map[joint_group_id] = set()
         joint_groups_member_metadata_map[joint_group_id] = []
         joint_members = joint_group["joints"][0]["members"]
+        suffix_for_multiple_members_of_same_type: dict[str, int] = {}
+        unique_joint_members: set[str] = set()
         for joint_member in joint_members:
             member_type = joint_member["member_type"]
+            if member_type in joint_groups_member_types_map[joint_group_id] and member_type not in ['column', 'beam_transverse', 'beam_longitudinal']:
+                suffix_for_multiple_members_of_same_type[member_type] = suffix_for_multiple_members_of_same_type.get(member_type, 0) + 1
             beam_id = joint_member["beam"]
             beam_profile = member_data_by_id[beam_id].get("profile")
             beam_material = member_data_by_id[beam_id].get("material")
-            if member_type not in joint_groups_member_types_map[joint_group_id]:
-                ideastatica_member_update_data = {
-                    # IDEA StatiCa can't set aligned_plate/related_plate yet, and updating beam_transverse (even to the
-                    # same cross-section) corrupts them, so the template's placeholder member is updated instead.
-                    "member_name": "beam_transverse_placeholder" if member_type == "beam_transverse" else member_type,
-                    "cross_section_mprl_name": tekla2ideastatica_profile(beam_profile),
-                    "material_mprl_name": beam_material
-                }
-                if member_type.startswith('bracing_longitudinal'):
-                    column_height = grid_spec['col_height_mm']
-                    bay_long = grid_spec["bay_long_mm"]
-                    ideastatica_member_update_data["gama_pitch"] = -atan2(column_height, bay_long)*180/pi
-                elif member_type.startswith('bracing_transverse'):
-                    column_height = grid_spec['col_height_mm']
-                    bay_trans = grid_spec["bay_trans_mm"]
-                    ideastatica_member_update_data["gama_pitch"] = -atan2(column_height, bay_trans)*180/pi
-                joint_groups_member_metadata_map[joint_group_id].append(ideastatica_member_update_data)
+            suffix_for_multiple_members = suffix_for_multiple_members_of_same_type.get(member_type, 0)
+            member_name = member_type + (f"_{suffix_for_multiple_members}" if suffix_for_multiple_members > 0 else "")
+            if member_name in unique_joint_members:
+                continue
+            unique_joint_members.add(member_name)
+            ideastatica_member_update_data = {
+                # IDEA StatiCa can't set aligned_plate/related_plate yet, and updating beam_transverse (even to the
+                # same cross-section) corrupts them, so the template's placeholder member is updated instead.
+                "member_name": "beam_transverse_placeholder" if member_type == "beam_transverse" else member_name,
+                "cross_section_mprl_name": tekla2ideastatica_profile(beam_profile),
+                "material_mprl_name": beam_material
+            }
+            if member_type.startswith('bracing_longitudinal'):
+                column_height = grid_spec['col_height_mm']
+                bay_long = grid_spec["bay_long_mm"]
+                ideastatica_member_update_data["gama_pitch"] = -atan2(column_height, bay_long)*180/pi
+            elif member_type.startswith('bracing_transverse'):
+                column_height = grid_spec['col_height_mm']
+                bay_trans = grid_spec["bay_trans_mm"]
+                ideastatica_member_update_data["gama_pitch"] = -atan2(column_height, bay_trans)*180/pi
+            joint_groups_member_metadata_map[joint_group_id].append(ideastatica_member_update_data)
             joint_groups_member_types_map[joint_group_id].add(member_type)
 
     summary_results = initialize_summary_results()

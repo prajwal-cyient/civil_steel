@@ -827,6 +827,9 @@ controls.dampingFactor = 0.08;
 let structureGroup = null;
 let labelsGroup = null;
 let staadViewResult = null;
+// Joint groups designed in IDEA StatiCa, sent with "Update Tekla":
+// { <joint group>: { joints: [...from STAAD joint_groups], operation_parameters: [...from IDEA check_summary] } }
+let ideaJointGroupsForTekla = {};
 const staadMemberLines = new Map();
 const staadJointMeshes = [];
 const staadTooltip = document.getElementById('staad-tooltip');
@@ -898,6 +901,7 @@ const TYPE_COLORS = {
 
 function clearStructureView() {
   staadViewResult = null;
+  ideaJointGroupsForTekla = {};
   renderStaadJointGroups({});
   renderIdeaEnvelopes({});
   renderIdeaOperationParameters('');
@@ -1334,7 +1338,7 @@ updateTeklaBtn.addEventListener('click', async () => {
     const res = await fetch('/api/v1/to_tekla', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(lastGeneratedResult),
+      body: JSON.stringify({ ...lastGeneratedResult, joint_groups: ideaJointGroupsForTekla }),
     });
 
     if (!res.ok) {
@@ -1566,6 +1570,11 @@ sendIdeaBtn.addEventListener('click', async () => {
     }
 
     const result = await res.json();
+    const designedJointGroup = result.joint_group || jointGroup;
+    ideaJointGroupsForTekla[designedJointGroup] = {
+      joints: staadViewResult?.joint_groups?.[designedJointGroup]?.joints || [],
+      operation_parameters: result.check_summary?.operation_parameters || [],
+    };
     renderIdeaStaticaResults(result);
     ideaStatus.className = result.passed ? 'ok' : 'error';
     ideaStatus.textContent = `Connection ${result.connection_id} ${result.passed ? 'passed' : 'failed'} checks.`;

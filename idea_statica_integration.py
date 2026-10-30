@@ -482,6 +482,7 @@ def design_joint(data: dict) -> dict:
     output_dir = data["output_dir"]
     save_project_path = data.get("save_project_path")
     template_basename = os.path.splitext(os.path.basename(template_path))[0]
+    joint_group_name = data.get("joint_group_name", template_basename)
     if not save_project_path:
         # get it using the output dir and template path
         save_project_path = os.path.join(output_dir, 'out_' + os.path.basename(template_path))
@@ -671,6 +672,7 @@ def design_joint(data: dict) -> dict:
             print(f"Generated report PDF for connection {connection_id} in {time.time() - start:.2f} seconds")
     return {
         "connection_id": connection_id,
+        "joint_group": joint_group_name,
         "passed": result.passed,
         "check_summary": check_summary,
         "output_messages": output_messages,

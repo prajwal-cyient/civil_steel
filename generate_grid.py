@@ -694,6 +694,9 @@ def create_app():
         model_config = ConfigDict(extra="allow")
         members: List[Member]
         grid: Optional[Dict[str, Any]] = None
+        # Joint groups designed in IDEA StatiCa:
+        # {<joint group>: {"joints": [...], "operation_parameters": [...]}}
+        joint_groups: Dict[str, Any] = Field(default_factory=dict)
 
     class ToStaadRequest(BaseModel):
         # Same idea as ToTeklaRequest, but STAAD gets the piecewise
@@ -812,7 +815,8 @@ def create_app():
         # "members" is already the continuous-beam representation (see
         # generate_members()'s return shape).
         payload = {"members": [m.model_dump(by_alias=True) for m in request.members],
-                   'grid': request.grid}
+                   'grid': request.grid,
+                   'joint_groups': request.joint_groups}
 
         try:
             result = send_to_tekla(payload)

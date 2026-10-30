@@ -465,6 +465,10 @@ def send_to_tekla(data: dict) -> dict:
     clean_tekla()
     members = data.get("members", [])
     grid = data.get('grid', {})
+    # Joint groups designed in IDEA StatiCa: {<joint group>: {"joints": [...], "operation_parameters": [...]}}
+    # TODO: use these to create the connections; printed for now.
+    joint_groups = data.get("joint_groups", {})
+    print(f"joint_groups: {json.dumps(joint_groups, indent=2)}")
     model = _get_connected_model()
     _copy_missing_connection_attributes(model)
 

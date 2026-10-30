@@ -1267,6 +1267,7 @@ def add_to_group(groups: dict, group_name: str, node: int, joint_member_ends: Di
             {
                 "beam": beam_id,
                 "name": member_data_by_id[beam_id].get("name"),
+                "tekla_name": member_data_by_id[beam_id].get("tekla_name"),
                 "member_type": memberName2type(member_data_by_id[beam_id].get("name")),
                 "is_mirrored": member_data_by_id[beam_id].get("is_mirrored", False),
                 "end": member_end,

@@ -1767,7 +1767,7 @@ async def send_to_staad(data: dict) -> dict:
             if n1 not in support_nodes:
                 support._support.AssignSupportToNode(int(n1), fixed_support_id)
                 support_nodes.add(n1)
-        elif memberType in ["longitudinal_brace", "transverse_brace"]:
+        elif memberType in ["bracing_longitudinal", "bracing_transverse", "bracing_longitudinal_mirrored", "bracing_transverse_mirrored"]:
             property.AssignMemberSpecToBeam([beam_no], truss_spec_id)
 
     load_applied = 0

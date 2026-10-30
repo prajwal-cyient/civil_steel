@@ -411,6 +411,7 @@ def generate_members(cfg):
                 "class": column_class,
                 "type": "column",
                 "name": f"column-{j}-{i}",
+                "tekla_name": f"column-{j}-{i}",
             })
 
     # ---- Longitudinal (x-direction) beams, sitting directly on the columns ----
@@ -443,6 +444,7 @@ def generate_members(cfg):
                 "class": beam_class,
                 "type": "beam",
                 "name": f"beam-x-{j}-{i}",
+                "tekla_name": f"beam-x-{j}",
             })
 
     # ---- Transverse (y-direction) beams, sitting on top of the longitudinal beams ----
@@ -476,6 +478,7 @@ def generate_members(cfg):
                 "class": beam_class,
                 "type": "beam",
                 "name": f"beam-y-{j}-{i}",
+                "tekla_name": f"beam-y-{i}",
             })
 
     # ---- Longitudinal bracing ----
@@ -528,6 +531,7 @@ def generate_members(cfg):
                 "type": "longitudinal_brace",
                 "name": f"bracing-long-{j}-{bay_1based}",
                 "is_mirrored": mirror,
+                "tekla_name": f"bracing-long-{j}-{bay_1based}",
             })
 
     # ---- Transverse bracing ----
@@ -579,7 +583,8 @@ def generate_members(cfg):
                 "class": trans_brace_class,
                 "type": "transverse_brace",
                 "name": f"bracing-trans-{i}-{bay_1based}",
-                "is_mirrored": mirror
+                "is_mirrored": mirror,
+                "tekla_name": f"bracing-trans-{i}-{bay_1based}",
             })
 
     members_tekla = columns + beams_tekla + braces

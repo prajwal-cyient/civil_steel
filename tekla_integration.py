@@ -323,7 +323,60 @@ def generate_y_axis_labels(n_trans_bays: int) -> list:
     """
     return [_index_to_letters(i) for i in range(1, n_trans_bays + 2)]
 
-def add_base_connection(model: Model, column: Beam, connection_number: int, detail_name: str, design_code: str, grid_specs: dict, attribute_file: str = "baseplate_1004"):
+# Maps IDEA StatiCa operation parameters of a joint group's template to Tekla connection attributes:
+# joint group -> [(operation parameter key, Tekla connection number, Tekla attribute, bracing)], where
+# bracing is "longitudinal"/"transverse" for connection 20 (column to bracing) and None otherwise.
+# Joint groups not listed here keep the attribute-file values.
+TEKLA_CONNECTION_PARAMETER_MAP = {
+    "inner_node_1_longitudinal_1_transverse_bracing": [
+        ("GRD_d", 30, "diameter", None),
+        ("EP_d", 144, "diameter", None),
+        ("EP_pl_th", 144, "tpl1", None),
+        ("Stiff_th", 30, "tpl3", None),
+        ("Stiff_th", 144, "l1", None),
+        ("Stiff_th", 144, "l2", None),
+        ("CPL_d", 20, "diameter", "longitudinal"),
+        ("CPL_th", 20, "tpl1", "longitudinal"),
+        ("CPL2_d", 20, "diameter", "transverse"),
+        ("CPL2_th", 20, "tpl1", "transverse"),
+    ],
+}
+# IDEA StatiCa parameter values are in m; Tekla connection attributes are in mm.
+IDEA_TO_TEKLA_LENGTH_FACTOR = 1000.0
+
+def connection_attributes(joint_groups: dict, joint_group_ids, connection_number: int, bracing: Optional[str] = None) -> dict:
+    """
+    Returns {Tekla attribute: value in mm} for one Tekla connection, from the IDEA StatiCa
+    operation parameters of the given joint groups (see TEKLA_CONNECTION_PARAMETER_MAP).
+    """
+    attributes = {}
+    for joint_group_id in joint_group_ids:
+        values = {p["key"]: p.get("value") for p in joint_groups[joint_group_id].get("operation_parameters", [])}
+        for key, number, attribute, bracing_direction in TEKLA_CONNECTION_PARAMETER_MAP.get(joint_group_id, []):
+            if number == connection_number and bracing_direction == bracing and values.get(key) is not None:
+                attributes[attribute] = float(values[key]) * IDEA_TO_TEKLA_LENGTH_FACTOR
+    return attributes
+
+def joint_group_columns(joint_groups: dict) -> dict:
+    """Returns {joint group: set of Tekla column names} for the columns at the group's joints."""
+    return {
+        joint_group_id: {member["tekla_name"] for joint in joint_group.get("joints", []) for member in joint["members"]
+                         if member.get("member_type") == "column"}
+        for joint_group_id, joint_group in joint_groups.items()
+    }
+
+def joint_group_beam_pairs(joint_groups: dict) -> dict:
+    """Returns {joint group: set of (Tekla longitudinal beam name, Tekla transverse beam name)} meeting at the group's joints."""
+    pairs = {}
+    for joint_group_id, joint_group in joint_groups.items():
+        pairs[joint_group_id] = set()
+        for joint in joint_group.get("joints", []):
+            longitudinal = {m["tekla_name"] for m in joint["members"] if m.get("member_type") == "beam_longitudinal"}
+            transverse = {m["tekla_name"] for m in joint["members"] if m.get("member_type") == "beam_transverse"}
+            pairs[joint_group_id].update((x, y) for x in longitudinal for y in transverse)
+    return pairs
+
+def add_base_connection(model: Model, column: Beam, connection_number: int, detail_name: str, design_code: str, grid_specs: dict, attribute_file: str = "baseplate_1004", attributes: Optional[dict] = None):
     """
     Adds a base connection (base plate) to the given column in the currently running Tekla Structures model.
 
@@ -341,12 +394,16 @@ def add_base_connection(model: Model, column: Beam, connection_number: int, deta
         The grid specifications, including base plate offset above column base.
     attribute_file : str, optional
         The attribute file to load for the base connection detail, by default "baseplate_1004"
+    attributes : dict, optional
+        {attribute name: value} set on the detail after loading the attribute file.
     """
 
     detailObj = Detail()
     detailObj.Name = detail_name
     detailObj.Number = connection_number
     detailObj.LoadAttributesFromFile(attribute_file)
+    for param_name, param_value in (attributes or {}).items():
+        detailObj.SetAttribute(param_name, float(param_value))
     detailObj.PositionType = PositionTypeEnum.MIDDLE_PLANE
     detailObj.AutoDirectionType = AutoDirectionTypeEnum.AUTODIR_DETAIL
     detailObj.UpVector = Vector(1000, 0, 0) # OR 1000, this does not seem to matter for base plate
@@ -359,14 +416,18 @@ def add_base_connection(model: Model, column: Beam, connection_number: int, deta
     base_point = base_point + Vector(0, 0, grid_specs.get('base_plate_offset_above_column_base_mm', 30))  # offset the base point slightly above the column base
     detailObj.SetReferencePoint(base_point)
 
-    if detailObj.Insert():
+    inserted = detailObj.Insert()
+    if attributes:
+        print(f"[debug] detail {detailObj.Number} id={detailObj.Identifier.ID} '{detail_name}': "
+              f"column={column.Name} (id={column.Identifier.ID}), attributes={attributes}, inserted={inserted}")
+    if inserted:
         #print("✅ Base plate created")
         pass
     else:
         print("❌ Failed to create base plate")
     #model.CommitChanges()
 
-def add_column2beam_connection(model: Model, secondary: Beam, primary: Beam, connection_number: int, detail_name: str, design_code: str, grid_specs: dict, classCode: int, attribute_file: str = "column_longitudinal_beam", upVector: Vector = Vector(1000, 0, 0)):
+def add_column2beam_connection(model: Model, secondary: Beam, primary: Beam, connection_number: int, detail_name: str, design_code: str, grid_specs: dict, classCode: int, attribute_file: str = "column_longitudinal_beam", upVector: Vector = Vector(1000, 0, 0), attributes: Optional[dict] = None):
     """
     Adds a column-to-beam connection to the currently running Tekla Structures model.
 
@@ -390,6 +451,8 @@ def add_column2beam_connection(model: Model, secondary: Beam, primary: Beam, con
         The attribute file to load for the connection detail, by default "column2beam_1004"
     upVector : Vector, optional
         The connection up vector, defaulting to the standard X direction.
+    attributes : dict, optional
+        {attribute name: value} set on the connection after loading the attribute file.
     """
 
     # ✅ Create Connection
@@ -398,6 +461,8 @@ def add_column2beam_connection(model: Model, secondary: Beam, primary: Beam, con
     connectionObj.Number = connection_number
     # ✅ Load attributes
     connectionObj.LoadAttributesFromFile(attribute_file)
+    for param_name, param_value in (attributes or {}).items():
+        connectionObj.SetAttribute(param_name, float(param_value))
     #connectionObj.SetAttribute("cut_beam", 0)
     #connectionObj.SetAttribute("beam_cont", 1)
     connectionObj.Class = classCode
@@ -424,7 +489,12 @@ def add_column2beam_connection(model: Model, secondary: Beam, primary: Beam, con
     secondaries.Add(secondary)
     connectionObj.set_SecondaryObjects(secondaries)
 
-    if connectionObj.Insert():
+    inserted = connectionObj.Insert()
+    if attributes:
+        print(f"[debug] connection {connectionObj.Number} id={connectionObj.Identifier.ID} '{detail_name}': "
+              #f"primary={primary.Name} (id={primary.Identifier.ID}), secondary={secondary.Name} (id={secondary.Identifier.ID}), "
+              f"attributes={attributes}, inserted={inserted}")
+    if inserted:
         #print("✅ Column-to-beam connection created")
         pass
     else:
@@ -466,9 +536,11 @@ def send_to_tekla(data: dict) -> dict:
     members = data.get("members", [])
     grid = data.get('grid', {})
     # Joint groups designed in IDEA StatiCa: {<joint group>: {"joints": [...], "operation_parameters": [...]}}
-    # TODO: use these to create the connections; printed for now.
+    # Their operation parameters set the attributes of the connections at their joints.
     joint_groups = data.get("joint_groups", {})
     print(f"joint_groups: {json.dumps(joint_groups, indent=2)}")
+    columns_by_joint_group = joint_group_columns(joint_groups)
+    beam_pairs_by_joint_group = joint_group_beam_pairs(joint_groups)
     model = _get_connected_model()
     _copy_missing_connection_attributes(model)
 
@@ -523,6 +595,7 @@ def send_to_tekla(data: dict) -> dict:
             errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
 
         member_name = member.get("name", "")
+        column_joint_groups = [joint_group_id for joint_group_id, column_names in columns_by_joint_group.items() if member_name in column_names]
         name_parts = member_name.split("-")
         if len(name_parts) >= 2:
             longitudinal_beam = longitudinal_beams.get(f"beam-x-{name_parts[1]}")
@@ -534,10 +607,11 @@ def send_to_tekla(data: dict) -> dict:
                         column,
                         longitudinal_beam,
                         144,
-                        f"{member_name} longitudinal beam connection",
+                        f"{member_name} beam-x-{name_parts[1]} longitudinal beam connection",
                         "144",
                         grid,
-                        6
+                        6,
+                        attributes=connection_attributes(joint_groups, column_joint_groups, 144),
                     )
                 except Exception as exc:
                     errors.append({"name": member_name, "error": str(exc)})
@@ -566,6 +640,8 @@ def send_to_tekla(data: dict) -> dict:
                         grid,
                         1,
                         "bracing_column",
+                        attributes=connection_attributes(joint_groups, column_joint_groups, 20,
+                                                         "longitudinal" if brace_name.startswith("bracing-long") else "transverse"),
                     )
                 except Exception as exc:
                     errors.append({"name": member_name, "error": str(exc)})
@@ -579,6 +655,8 @@ def send_to_tekla(data: dict) -> dict:
             longitudinal_beam = longitudinal_beams.get(f"beam-x-{transverse_index}")
             if longitudinal_beam is None:
                 continue
+            beam_pair = (f"beam-x-{transverse_index}", f"beam-y-{longitudinal_index}")
+            beam_pair_joint_groups = [joint_group_id for joint_group_id, pairs in beam_pairs_by_joint_group.items() if beam_pair in pairs]
             try:
                 add_column2beam_connection(
                     model,
@@ -590,6 +668,7 @@ def send_to_tekla(data: dict) -> dict:
                     grid,
                     1,
                     "longitudinal_beam_transverse_beam",
+                    attributes=connection_attributes(joint_groups, beam_pair_joint_groups, 30),
                 )
             except Exception as exc:
                 errors.append({

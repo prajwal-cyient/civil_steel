@@ -346,6 +346,21 @@ TEKLA_CONNECTION_PARAMETER_MAP = {
         ("CPL2_th", 20, "tpl2", "transverse"),
         ("CPL2_overlap_length", 20, "in", "transverse"),
     ],
+    "inner_node_1_longitudinal_bracing": [
+        ("GRD_d", 30, "diameter", None),
+        ("EP_d", 144, "diameter", None),
+        ("EP_pl_th", 144, "tpl1", None),
+        ("Stiff_th", 30, "tpl3", None),
+        ("Stiff_th", 144, "l1", None),
+        ("Stiff_th", 144, "l2", None),
+        ("Stiff_sel", 30, "sel", None), # Stiffener selection for connection 30. If False, the stiffener is not used. Set tpl3 to 0.
+        ("Stiff_sel", 144, "sel", None), # Stiffener selection for connection 144. If False, the stiffener is not used. Set l1 and l2 to 0.
+        ("CPL_d", 20, "diameter", "longitudinal"),
+        ("CPL_th", 20, "tpl1", "longitudinal"),
+        ("CPL_th", 20, "tpl2", "longitudinal"),
+        ("CPL_overlap_length", 20, "in", "longitudinal"),
+    ],
+
 }
 # IDEA StatiCa parameter values are in m; Tekla connection attributes are in mm.
 IDEA_TO_TEKLA_LENGTH_FACTOR = 1000.0

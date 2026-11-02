@@ -1480,8 +1480,13 @@ const ideaParamList = document.getElementById('idea-operation-params');
 // template, labelled by its description. Several descriptions repeat
 // (e.g. "Weld sizes"), so the parameter key is shown as a tooltip on the
 // label. Text inputs (not number) because expressions may be non-numeric,
-// e.g. "M16 8.8" or "True". Blank when no joint group is selected or its
-// parameters aren't known yet.
+// e.g. "M16 8.8". Boolean parameters (expression "True"/"False", e.g.
+// Stiff_sel) get a checkbox instead. Blank when no joint group is selected
+// or its parameters aren't known yet.
+function isBooleanExpression(expression) {
+  return /^(true|false)$/i.test(String(expression).trim());
+}
+
 function renderIdeaOperationParameters(jointGroup) {
   const params = IDEA_STATICA_OPERATION_PARAMETERS_BY_JOINT_GROUP[jointGroup] || [];
   ideaParamList.replaceChildren();
@@ -1493,10 +1498,15 @@ function renderIdeaOperationParameters(jointGroup) {
     label.textContent = param.description;
     label.title = param.key;
     const input = document.createElement('input');
-    input.type = 'text';
     input.id = `idea-param-${index}`;
     input.dataset.key = param.key;
-    input.value = param.expression;
+    if (isBooleanExpression(param.expression)) {
+      input.type = 'checkbox';
+      input.checked = String(param.expression).trim().toLowerCase() === 'true';
+    } else {
+      input.type = 'text';
+      input.value = param.expression;
+    }
     row.append(label, input);
     ideaParamList.append(row);
   });
@@ -1512,7 +1522,7 @@ renderIdeaOperationParameters('');
 function buildOperationParameters() {
   return [...ideaParamList.querySelectorAll('input')].map(input => ({
     key: input.dataset.key,
-    expression: input.value,
+    expression: input.type === 'checkbox' ? (input.checked ? 'True' : 'False') : input.value,
   }));
 }
 

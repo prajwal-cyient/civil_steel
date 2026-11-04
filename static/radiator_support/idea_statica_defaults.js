@@ -267,27 +267,27 @@ const IDEA_STATICA_OPERATION_PARAMETERS_BY_JOINT_GROUP = {
     },
     {
       "key": "CPL_d",
-      "description": "Gusset bolt dia",
+      "description": "Gusset bolt dia (Longitudinal)",
       "expression": "0.016"
     },
     {
       "key": "CPL_th",
-      "description": "Gusset and tongue plate thickness",
+      "description": "Gusset and tongue plate thickness (Longitudinal)",
       "expression": "0.012"
     },
     {
       "key": "CPL_weld",
-      "description": "Weld sizes",
+      "description": "Weld sizes (Longitudinal)",
       "expression": "0.005"
     },
     {
       "key": "CPL_overlap_length",
-      "description": "CPL_Overlap",
+      "description": "CPL Overlap (Longitudinal)",
       "expression": "0.1"
     },
     {
       "key": "CPL_tongue_weld",
-      "description": "Weld sizes",
+      "description": "Weld sizes (Longitudinal)",
       "expression": "0.005"
     },
     {
@@ -297,27 +297,27 @@ const IDEA_STATICA_OPERATION_PARAMETERS_BY_JOINT_GROUP = {
     },
     {
       "key": "CPL2_d",
-      "description": "Gusset bolt dia",
+      "description": "Gusset bolt dia (Transverse)",
       "expression": "0.016"
     },
     {
       "key": "CPL2_th",
-      "description": "Gusset and tongue plate thickness",
+      "description": "Gusset and tongue plate thickness (Transverse)",
       "expression": "0.012"
     },
     {
       "key": "CPL2_weld",
-      "description": "Weld sizes",
+      "description": "Weld sizes (Transverse)",
       "expression": "0.005"
     },
     {
       "key": "CPL2_tongue_weld",
-      "description": "Weld sizes",
+      "description": "Weld sizes (Transverse)",
       "expression": "0.005"
     },
     {
       "key": "CPL2_overlap_length",
-      "description": "CPL_Overlap",
+      "description": "CPL Overlap (Transverse)",
       "expression": "0.1"
     },
     {
@@ -404,7 +404,7 @@ const IDEA_STATICA_OPERATION_PARAMETERS_BY_JOINT_GROUP = {
     },
     {
       "key": "CPL_overlap_length",
-      "description": "CPL_Overlap",
+      "description": "CPL Overlap",
       "expression": "0.1"
     }
   ]

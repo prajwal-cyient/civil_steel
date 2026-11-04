@@ -319,10 +319,9 @@ function renderIdeaStaticaResults(result) {
   // Some parameters (e.g. booleans) come back with an empty value; show
   // the expression IDEA StatiCa resolved instead.
   resultTable(content, (result.check_summary?.operation_parameters || []).map(param => ({
-    key: param.key,
-    description: param.description,
-    value: param.value === '' ? param.expression : param.value,
-  })), undefined, key => ({ key: 'Key', description: 'Description', value: 'Value' })[key]);
+    description: param.description + '(' + param.key + ')',
+    value: param.expression // param.value === '' ? param.expression : param.value,
+  })), undefined, key => ({ description: 'Description', value: 'Value' })[key]);
 }
 
 function initializePaneDividers() {

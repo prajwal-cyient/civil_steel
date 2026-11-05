@@ -107,6 +107,30 @@ def _copy_missing_connection_attributes(model: Model) -> int:
     print(f'Copied {copied_count} connection attributes from {source_dir} to {attributes_dir}.')
     return copied_count
 
+def _copy_missing_tekla_package_dbs(model: Model) -> int:
+    source_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tekla_package_dbs")
+    if not os.path.isdir(source_dir):
+        raise FileNotFoundError(f"Tekla package DB source directory not found: {source_dir}")
+
+    model_path = model.GetInfo().ModelPath
+    packages_dir = model_path
+    os.makedirs(packages_dir, exist_ok=True)
+
+    copied_count = 0
+    for current_dir, _, filenames in os.walk(source_dir):
+        relative_dir = os.path.relpath(current_dir, source_dir)
+        destination_dir = packages_dir if relative_dir == "." else os.path.join(packages_dir, relative_dir)
+        os.makedirs(destination_dir, exist_ok=True)
+
+        for filename in filenames:
+            source_file = os.path.join(current_dir, filename)
+            destination_file = os.path.join(destination_dir, filename)
+            if os.path.exists(destination_file):
+                continue
+            shutil.copy2(source_file, destination_file)
+            copied_count += 1
+    print(f'Copied {copied_count} Tekla package DBs from {source_dir} to {packages_dir}.')
+    return copied_count
 
 # delete all grids
 def delete_all_grids(model: Model):
@@ -638,6 +662,7 @@ def send_to_tekla(data: dict) -> dict:
     beam_pairs_by_joint_group = joint_group_beam_pairs(joint_groups)
     model = _get_connected_model()
     _copy_missing_connection_attributes(model)
+    _copy_missing_tekla_package_dbs(model)
 
     coordinateX = f'0.00 {grid["n_long_bays"]}*{grid["bay_long_mm"]}'
     coordinateY = f'0.00 {grid["n_trans_bays"]}*{grid["bay_trans_mm"]}'

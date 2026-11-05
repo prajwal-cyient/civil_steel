@@ -591,7 +591,8 @@ def add_column2beam_connection(model: Model, secondary: Beam, primary: Beam, con
     connectionObj.UpVector = upVector
 
     # ✅ Positioning
-    #connectionObj.PositionType = PositionTypeEnum.COLLISION_PLANE
+    if connection_number in [144]:
+        connectionObj.PositionType = PositionTypeEnum.COLLISION_PLANE
 
     # ✅ Auto direction
     #connectionObj.AutoDirectionType = AutoDirectionTypeEnum.AUTODIR_FROM_ATTRIBUTE_FILE

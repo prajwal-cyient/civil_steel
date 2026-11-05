@@ -17,6 +17,7 @@ installed.
 
 import argparse
 import json
+import math
 import os
 import shutil
 import sys
@@ -239,6 +240,9 @@ def _create_beam(member: dict) -> Beam:
 
 # ── Public API ───────────────────────────────────────────────────────────
 
+# For HEAXXX, the I shaped profiles, following properties are available:
+# HEIGHT, WIDTH, WEB_THICKNESS, FLANGE_THICKNESS, ROUNDING_RADIUS_1, ROUNDING_RADIUS_2, FLANGE_SLOPE_RATIO
+# For CFRHS120X120X5: HEIGHT, WIDTH, PLATE_THICKNESS, ROUNDING_RADIUS
 def _get_profile_parameter(profile_name: str, property_name: str) -> Optional[float]:
     """Shared lookup used by get_profile_height() and get_profile_width()."""
     profile_item = LibraryProfileItem()
@@ -297,6 +301,23 @@ def get_profile_width(profile_name: str) -> Optional[float]:
     """
     return _get_profile_parameter(profile_name, "WIDTH")
 
+def get_profile_web_thickness(profile_name: str) -> Optional[float]:
+    """
+    Look up a profile's web thickness (mm) from the Tekla catalog.
+
+    Parameters
+    ----------
+    profile_name : str
+        The Tekla profile string (e.g. "HEA140", "CFRHS120X120X5").
+
+    Returns
+    -------
+    Optional[float]
+        The profile's WEB_THICK catalog parameter, or None if the profile
+        couldn't be found or has no WEB_THICK parameter.
+    """
+    return _get_profile_parameter(profile_name, "WEB_THICKNESS")
+
 def _index_to_letters(n: int) -> str:
     """
     Converts a positive 1-based integer to spreadsheet-style base-26
@@ -322,6 +343,30 @@ def generate_y_axis_labels(n_trans_bays: int) -> list:
     lines for n_trans_bays bays).
     """
     return [_index_to_letters(i) for i in range(1, n_trans_bays + 2)]
+
+# Get bolt parameters from bolt diameter
+def get_bolt_parameters(bolt_dia: float) -> dict:
+    """
+    Returns standard bolt parameters based on the bolt diameter.
+
+    Parameters
+    ----------
+    bolt_dia : float
+        The bolt diameter.
+
+    Returns
+    -------
+    dict
+        A dictionary containing standard bolt parameters such as pitch, edge distance, etc.
+    """
+    tolerance = 2 if bolt_dia <= 27 else 3
+    hole_dia = bolt_dia + tolerance
+    edge_distance_table = {12: 25, 16: 30, 20: 35, 24: 40, 27: 45, 30: 50, 36: 60, 40: 65}
+    return {
+        "tolerance": tolerance,
+        "edge_distance": edge_distance_table.get(bolt_dia, 1.5 * bolt_dia),
+        "hole_dia": hole_dia,
+    }
 
 # Maps IDEA StatiCa operation parameters of a joint group's template to Tekla connection attributes:
 # joint group -> [(operation parameter key, Tekla connection number, Tekla attribute, bracing)], where
@@ -602,11 +647,11 @@ def send_to_tekla(data: dict) -> dict:
             if member_type == "column":
                 columns.append((member, beam))
             elif member_type == "beam" and member_name.startswith("beam-x-"):
-                longitudinal_beams[member_name] = beam
+                longitudinal_beams[member_name] = (member, beam)
             elif member_type == "beam" and member_name.startswith("beam-y-"):
-                transverse_beams[member_name] = beam
+                transverse_beams[member_name] = (member, beam)
             elif member_type in ("longitudinal_brace", "transverse_brace"):
-                braces[member_name] = beam
+                braces[member_name] = (member, beam)
         except Exception as exc:  # keep going; report this member and move on
             errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
 
@@ -617,6 +662,9 @@ def send_to_tekla(data: dict) -> dict:
             # Base connection for the column (BN)
             connection_name = f"{member.get('name', 'Column')} base plate"
             connection_number = 1004
+            #TODO: Compute connection attributes for the base connection
+            # TODO: Obtain idea statica connection attributes for the base connection
+            connection_attributes_from_idea_statica = {}
             add_base_connection(
                 model,
                 column,
@@ -624,6 +672,7 @@ def send_to_tekla(data: dict) -> dict:
                 connection_name,
                 str(connection_number),
                 grid,
+                attributes=connection_attributes_from_idea_statica,
             )
         except Exception as exc:
             errors.append({"name": member.get("name", "<unnamed>"), "error": str(exc)})
@@ -634,10 +683,52 @@ def send_to_tekla(data: dict) -> dict:
         if len(name_parts) >= 2:
             longitudinal_beam = longitudinal_beams.get(f"beam-x-{name_parts[1]}")
             if longitudinal_beam is not None:
+                longitudinal_beam_member, longitudinal_beam = longitudinal_beam
                 try:
                     # Add connection between column and longitudinal beam
                     connection_name = f"{member_name} beam-x-{name_parts[1]} longitudinal beam connection"
                     connection_number = 144
+                    connection_attributes_from_idea_statica = connection_attributes(joint_groups, column_joint_groups, connection_number)
+                    # set computed connection parameters
+                    column_profile = member.get('profile')
+                    longitudinal_beam_profile = longitudinal_beam_member.get('profile')
+                    column_profile_width = get_profile_width(column_profile)
+                    column_profile_height = get_profile_height(column_profile)
+                    longitudinal_beam_profile_width = get_profile_width(longitudinal_beam_profile)
+                    longitudinal_beam_profile_height = get_profile_height(longitudinal_beam_profile)
+                    # bpl6 is negative half of the difference between the column profile width and the stiffner thickness (l1 or l2 of connection 144)
+                    assembly_type = 1
+                    l1 = connection_attributes_from_idea_statica.get("l1", 10)
+                    bpl6 = -0.5*(column_profile_width - l1)
+                    bpl7 = bpl6
+                    # lbd is floor of (column profile height + 2*2.5*bolt_dia, 5)
+                    # bolt_dia is EP_d ==> diameter in connection 144
+                    bolt_dia = connection_attributes_from_idea_statica.get("diameter", 16)
+                    bolt_parameters = get_bolt_parameters(bolt_dia)
+                    rb1 = bolt_parameters.get("edge_distance")
+                    rb2 = bolt_parameters.get("edge_distance")
+                    hole_dia = bolt_parameters.get("hole_dia")
+                    lbd = math.floor((column_profile_height + 2*2.5*bolt_dia)/5)*5
+                    # lwd is floor longitudinal beam profile width- rb1 - rb2/(nw-1), 5)
+                    # rb1, rb2 are edge distances for the bolts along longitudinal beam
+                    # nb is the number of bolts along the longitudinal direction
+                    # nw is the number of bolts along transverse direction
+                    # TODO: nb, nw are supposed to come from Idea Statica connection attributes
+                    # For now, we will assume default values for nb and nw to be 2
+                    nb = 2
+                    nw = 2
+                    lwd = math.floor((longitudinal_beam_profile_width - rb1 - rb2)/(nw-1)/5)*5
+                    tolerance = bolt_parameters.get("tolerance")
+                    # w1, w2: 0.5*(profile width - profile web thickness) - 10
+                    profile_web_thickness = get_profile_web_thickness(longitudinal_beam_profile)
+                    w1 = 0.5 * (longitudinal_beam_profile_width - profile_web_thickness) - 10
+                    w2 = w1
+                    computed_attributes = {"assembly_type": assembly_type, "bpl6": bpl6, "bpl7": bpl7, 
+                                           #"lbd": lbd, "lwd": lwd, "nb": nb, "nw": nw,
+                                           "rb1": rb1, "rb2": rb2,
+                                           "rw1": rb1, "rw2": rb2, "tolerance": tolerance, "w1": w1, "w2": w2, }
+                    # merge computed_attributes into connection_attributes_from_idea_statica
+                    connection_attributes_from_idea_statica.update(computed_attributes)
                     add_column2beam_connection(
                         model,
                         column,
@@ -647,10 +738,13 @@ def send_to_tekla(data: dict) -> dict:
                         str(connection_number),
                         grid,
                         6,
-                        attributes=connection_attributes(joint_groups, column_joint_groups, 144),
+                        attributes=connection_attributes_from_idea_statica,
                     )
                 except Exception as exc:
                     errors.append({"connection": f"{connection_number} {connection_name}", "name": member_name, "error": str(exc)})
+                    import traceback
+                    traceback.print_exc()
+                    print(f"Connection attribues: {connection_attributes_from_idea_statica}")
 
         if len(name_parts) >= 3:
             column_j, column_i = map(int, name_parts[1:3])
@@ -664,10 +758,14 @@ def send_to_tekla(data: dict) -> dict:
                 brace = braces.get(brace_name)
                 if brace is None:
                     continue
+                brace_member, brace = brace
                 try:
                     # Add connection between column and adjacent brace
                     connection_name = f"{member_name} {brace_name} connection"
                     connection_number = 20
+                    connection_attributes_from_idea_statica = connection_attributes(joint_groups, column_joint_groups, connection_number,
+                                                         "longitudinal" if brace_name.startswith("bracing-long") else "transverse")
+                    # TODO: Computed attribues
                     add_column2beam_connection(
                         model,
                         brace,
@@ -678,8 +776,7 @@ def send_to_tekla(data: dict) -> dict:
                         grid,
                         1,
                         "bracing_column",
-                        attributes=connection_attributes(joint_groups, column_joint_groups, 20,
-                                                         "longitudinal" if brace_name.startswith("bracing-long") else "transverse"),
+                        attributes=connection_attributes_from_idea_statica,
                     )
                 except Exception as exc:
                     errors.append({"connection": f"{connection_number} {connection_name}", "name": member_name, "error": str(exc)})
@@ -689,15 +786,19 @@ def send_to_tekla(data: dict) -> dict:
         transverse_beam = transverse_beams.get(f"beam-y-{longitudinal_index}")
         if transverse_beam is None:
             continue
+        transverse_beam_member, transverse_beam = transverse_beam
         for transverse_index in range(grid["n_trans_bays"] + 1):
             longitudinal_beam = longitudinal_beams.get(f"beam-x-{transverse_index}")
             if longitudinal_beam is None:
                 continue
+            longitudinal_beam_member, longitudinal_beam = longitudinal_beam
             beam_pair = (f"beam-x-{transverse_index}", f"beam-y-{longitudinal_index}")
             beam_pair_joint_groups = [joint_group_id for joint_group_id, pairs in beam_pairs_by_joint_group.items() if beam_pair in pairs]
             try:
                 connection_name = f"beam-x-{transverse_index} beam-y-{longitudinal_index} connection"
                 connection_number = 30
+                connection_attributes_from_idea_statica = connection_attributes(joint_groups, beam_pair_joint_groups, connection_number)
+                # TODO: Computed attribues
                 add_column2beam_connection(
                     model,
                     transverse_beam,
@@ -708,7 +809,7 @@ def send_to_tekla(data: dict) -> dict:
                     grid,
                     1,
                     "longitudinal_beam_transverse_beam",
-                    attributes=connection_attributes(joint_groups, beam_pair_joint_groups, 30),
+                    attributes=connection_attributes_from_idea_statica,
                 )
             except Exception as exc:
                 errors.append({

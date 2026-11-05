@@ -453,6 +453,24 @@ def joint_group_beam_pairs(joint_groups: dict) -> dict:
             pairs[joint_group_id].update((x, y) for x in longitudinal for y in transverse)
     return pairs
 
+# Component attributes are typed in Tekla, and pythonnet picks the
+# SetAttribute overload (string/int/double) from the Python type. Setting a
+# string or int attribute through the double overload is silently ignored
+# and the field shows blank in the dialog. Bolt counts are int; bolt
+# spacings are strings because they may hold lists, e.g. "80 80" or "2*80".
+TEKLA_INT_ATTRIBUTES = {"nb", "nw"}
+TEKLA_STRING_ATTRIBUTES = {"lbd", "lwd"}
+
+def set_component_attribute(component, param_name: str, param_value):
+    if param_name in TEKLA_INT_ATTRIBUTES:
+        component.SetAttribute(param_name, int(round(float(param_value))))
+    elif param_name in TEKLA_STRING_ATTRIBUTES:
+        if isinstance(param_value, (int, float)):
+            param_value = f"{float(param_value):g}"
+        component.SetAttribute(param_name, str(param_value))
+    else:
+        component.SetAttribute(param_name, float(param_value))
+
 def add_base_connection(model: Model, column: Beam, connection_number: int, detail_name: str, design_code: str, grid_specs: dict, attribute_file: str = "baseplate_1004", attributes: Optional[dict] = None):
     """
     Adds a base connection (base plate) to the given column in the currently running Tekla Structures model.
@@ -480,7 +498,7 @@ def add_base_connection(model: Model, column: Beam, connection_number: int, deta
     detailObj.Number = connection_number
     detailObj.LoadAttributesFromFile(attribute_file)
     for param_name, param_value in (attributes or {}).items():
-        detailObj.SetAttribute(param_name, float(param_value))
+        set_component_attribute(detailObj, param_name, param_value)
     detailObj.PositionType = PositionTypeEnum.MIDDLE_PLANE
     detailObj.AutoDirectionType = AutoDirectionTypeEnum.AUTODIR_DETAIL
     detailObj.UpVector = Vector(1000, 0, 0) # OR 1000, this does not seem to matter for base plate
@@ -539,7 +557,7 @@ def add_column2beam_connection(model: Model, secondary: Beam, primary: Beam, con
     # ✅ Load attributes
     connectionObj.LoadAttributesFromFile(attribute_file)
     for param_name, param_value in (attributes or {}).items():
-        connectionObj.SetAttribute(param_name, float(param_value))
+        set_component_attribute(connectionObj, param_name, param_value)
     #connectionObj.SetAttribute("cut_beam", 0)
     #connectionObj.SetAttribute("beam_cont", 1)
     connectionObj.Class = classCode
@@ -701,14 +719,14 @@ def send_to_tekla(data: dict) -> dict:
                     l1 = connection_attributes_from_idea_statica.get("l1", 10)
                     bpl6 = -0.5*(column_profile_width - l1)
                     bpl7 = bpl6
-                    # lbd is floor of (column profile height + 2*2.5*bolt_dia, 5)
+                    # lbd is floor of (column profile height + 2*1.5*bolt_dia, 5)
                     # bolt_dia is EP_d ==> diameter in connection 144
                     bolt_dia = connection_attributes_from_idea_statica.get("diameter", 16)
                     bolt_parameters = get_bolt_parameters(bolt_dia)
                     rb1 = bolt_parameters.get("edge_distance")
                     rb2 = bolt_parameters.get("edge_distance")
                     hole_dia = bolt_parameters.get("hole_dia")
-                    lbd = math.floor((column_profile_height + 2*2.5*bolt_dia)/5)*5
+                    lbd = math.floor((column_profile_height + 2*1.5*bolt_dia)/5)*5
                     # lwd is floor longitudinal beam profile width- rb1 - rb2/(nw-1), 5)
                     # rb1, rb2 are edge distances for the bolts along longitudinal beam
                     # nb is the number of bolts along the longitudinal direction
@@ -724,7 +742,7 @@ def send_to_tekla(data: dict) -> dict:
                     w1 = 0.5 * (longitudinal_beam_profile_width - profile_web_thickness) - 10
                     w2 = w1
                     computed_attributes = {"assembly_type": assembly_type, "bpl6": bpl6, "bpl7": bpl7, 
-                                           #"lbd": lbd, "lwd": lwd, "nb": nb, "nw": nw,
+                                           "lbd": lbd, "lwd": lwd, "nb": nb, "nw": nw,
                                            "rb1": rb1, "rb2": rb2,
                                            "rw1": rb1, "rw2": rb2, "tolerance": tolerance, "w1": w1, "w2": w2, }
                     # merge computed_attributes into connection_attributes_from_idea_statica

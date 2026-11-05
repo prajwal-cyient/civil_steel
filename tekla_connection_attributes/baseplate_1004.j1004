@@ -73,7 +73,7 @@ joint_attributes.thread_in -2147483648
 joint_attributes.Finish12 ""
 joint_attributes.gdist5 -2147483648.000000
 joint_attributes.tolerance 2.000000
-joint_attributes.diameter 24.000000
+joint_attributes.diameter 16.000000
 joint_attributes.screwdin "ISO4014"
 joint_attributes.lpl4 -2147483648
 joint_attributes.lpl3 -2147483648

@@ -523,7 +523,7 @@ def add_base_connection(model: Model, column: Beam, connection_number: int, deta
     detailObj.LoadAttributesFromFile(attribute_file)
     for param_name, param_value in (attributes or {}).items():
         set_component_attribute(detailObj, param_name, param_value)
-    detailObj.PositionType = PositionTypeEnum.MIDDLE_PLANE
+    detailObj.PositionType = PositionTypeEnum.BOX_PLANE
     detailObj.AutoDirectionType = AutoDirectionTypeEnum.AUTODIR_DETAIL
     detailObj.UpVector = Vector(1000, 0, 0) # OR 1000, this does not seem to matter for base plate
     detailObj.DetailType = DetailTypeEnum.END

@@ -1,0 +1,17 @@
+# Web server
+fastapi>=0.115
+uvicorn>=0.30
+pydantic>=2.7
+
+# Tekla Structures (Open API is loaded from the Tekla install via pythonnet;
+# set TEKLA_BIN_PATH if Tekla is not in C:\TeklaStructures\2025.0\bin)
+pythonnet>=3.0
+
+# STAAD.Pro (OpenSTAAD). openstaadpy is not on PyPI; install it separately
+# from the STAAD.Pro installation (see README, Installation).
+pywin32>=306
+comtypes>=1.4
+
+# IDEA StatiCa Connection REST API client.
+# Must exactly match the installed IDEA StatiCa version.
+ideastatica-connection-api==26.0.5.1427

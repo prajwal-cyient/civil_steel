@@ -1,6 +1,63 @@
 # civil-steel-standard-web
 Web App to design Steel Standard structures in Tekla, Staad.Pro and Idea Statica
 
+## Installation
+
+Prerequisites (Windows):
+- Python 3.10 or newer, on `PATH`.
+- Tekla Structures, STAAD.Pro and IDEA StatiCa Connection installed and
+  licensed. Each tool is only needed for its own "Send to ..." button; the
+  server starts without them.
+
+1. Create and activate a virtual environment in the project folder
+   (Command Prompt):
+
+   ```bat
+   cd path\to\civil-steel-standard-web
+   python -m venv .venv
+   .venv\Scripts\activate.bat
+   ```
+
+   In PowerShell, activate with `.venv\Scripts\Activate.ps1` instead. If
+   script execution is blocked, run
+   `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
+
+2. Install the packages into the venv:
+
+   ```bat
+   python -m pip install --upgrade pip
+   pip install -r requirements.txt
+   ```
+
+   `openstaadpy` is not on PyPI; it ships with STAAD.Pro. Install it into the
+   venv from the STAAD.Pro installation (adjust the path and version to your
+   install):
+
+   ```bat
+   pip install "C:\Program Files\Bentley\Engineering\STAAD.Pro 2025\STAAD\OpenSTAADPy\Setup\openstaadpy-25.0.1.1.tar.gz"
+   ```
+
+   `ideastatica-connection-api` must exactly match the installed IDEA StatiCa
+   version; edit its pin in `requirements.txt` if yours differs. Tekla has no
+   pip package: its Open API DLLs are loaded through `pythonnet` from
+   `C:\TeklaStructures\2025.0\bin`, or from the `TEKLA_BIN_PATH` environment
+   variable if set.
+
+3. Start the web server:
+
+   ```bat
+   start_server.bat
+   ```
+
+   The script activates `.venv` itself if it exists, so it can also be
+   started by double-clicking it.
+
+   Then open http://localhost:8080/radiator_support in your browser.
+
+Before using the integrations, open Tekla Structures with a model and
+STAAD.Pro, and start IDEA StatiCa's `IdeaStatiCa.ConnectionRestApi.exe`
+(default URL `http://localhost:5000`, override with `IDEA_STATICA_BASE_URL`).
+
 ## Cleaning open models
 
 These utilities are **destructive** and save changes automatically. Back up

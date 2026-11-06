@@ -38,7 +38,7 @@ python idea_statica_integration.py --design inner_node_1_longitudinal_1_transver
 curl -X POST http://localhost:8080/api/v1/to_ideastatica -H "Content-Type: application/json" -d @inner_node_1_longitudinal_1_transverse_bracing.json
 ```
 
-There is no linter config and no requirements file. Dependencies: `fastapi`, `uvicorn` and `pydantic` (server). Each integration also needs its own package: `pythonnet` for Tekla, `openstaadpy`/`pywin32` for STAAD, and `ideastatica-connection-api` for IDEA StatiCa. The SDK version must exactly match the installed IDEA StatiCa version.
+There is no linter config. Dependencies are listed in `requirements.txt`: `fastapi`, `uvicorn` and `pydantic` (server). Each integration also needs its own package: `pythonnet` for Tekla, `openstaadpy`/`pywin32` for STAAD, and `ideastatica-connection-api` for IDEA StatiCa. The SDK version must exactly match the installed IDEA StatiCa version.
 
 Python tests don't import the integration modules, because those modules load Windows/COM/.NET dependencies at import time. Instead, each test `ast`-parses `staad_integration.py`, pulls out the named functions and constants, and `exec`s them in isolation. If a test helper is renamed, or its signature changes, the test's extraction list or call sites must be updated too.
 

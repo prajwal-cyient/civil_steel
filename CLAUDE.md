@@ -24,7 +24,6 @@ src/
     generate_grid.py           generate_members(cfg) + CLI
     tekla_integration.py       send_to_tekla()
     staad_integration.py       send_to_staad()
-    import_path_util.py        adds src/ to sys.path so the modules above run as plain scripts
     frame_specs.json           sample grid spec
   static/
     radiator_support/          web UI for this structure type

@@ -29,7 +29,7 @@ function setup() {
       },
     },
   });
-  const source = fs.readFileSync(path.join(__dirname, '..', 'static', 'radiator_support', 'results.js'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'static', 'radiator_support', 'results.js'), 'utf8');
   vm.runInContext(source.replace('initializePaneDividers();', ''), context);
   return { context, elements };
 }
@@ -39,7 +39,7 @@ function text(element) {
 }
 
 function loadViewerFunction(context, name) {
-  const html = fs.readFileSync(path.join(__dirname, '..', 'static', 'radiator_support', 'index.html'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'static', 'radiator_support', 'index.html'), 'utf8');
   const start = html.indexOf(`function ${name}(`);
   assert.notEqual(start, -1);
   vm.runInContext(html.slice(start, html.indexOf('\n}', start) + 2), context);

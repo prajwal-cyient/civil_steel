@@ -1286,7 +1286,7 @@ genBtn.addEventListener('click', async () => {
 
   try {
     const payload = buildPayload();
-    const res = await fetch('/api/v1/generate_radiator_support', {
+    const res = await fetch('/api/v1/radiator_support/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -1336,7 +1336,7 @@ updateTeklaBtn.addEventListener('click', async () => {
   updateTeklaBtn.textContent = 'Sending…';
 
   try {
-    const res = await fetch('/api/v1/to_tekla', {
+    const res = await fetch('/api/v1/radiator_support/to_tekla', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...lastGeneratedResult, joint_groups: ideaJointGroupsForTekla }),
@@ -1428,7 +1428,7 @@ sendStaadBtn.addEventListener('click', async () => {
       load_configuration: loadConfiguration,
     };
 
-    const res = await fetch('/api/v1/to_staad', {
+    const res = await fetch('/api/v1/radiator_support/to_staad', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

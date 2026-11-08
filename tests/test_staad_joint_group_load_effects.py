@@ -3,7 +3,7 @@ from pathlib import Path
 import unittest
 
 
-source_path = Path(__file__).resolve().parents[1] / "staad_integration.py"
+source_path = Path(__file__).resolve().parents[1] / "src" / "radiator_support" / "staad_integration.py"
 source_tree = ast.parse(source_path.read_text(encoding="utf-8"))
 helpers = [
     node for node in source_tree.body

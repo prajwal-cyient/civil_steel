@@ -6,44 +6,8 @@ Generates a regular 3D grid of columns, beams, and diagonal bracing from a
 JSON spec and writes the result (input config + generated members) to a
 JSON file.
 
-Usage (CLI mode):
+Usage:
     python generate_grid.py --input input.json --output output.json
-
-Usage (API mode):
-    python generate_grid.py --port 8000
-    # then POST a JSON body (same shape as the input file below) to:
-    #   http://<host>:8000/api/v1/generate_radiator_support
-    # or open the web UI in a browser:
-    #   http://<host>:8000/radiator_support
-    # --input/--output/--show are ignored when --port is given.
-    #
-    # The web UI is served from static/radiator_support/index.html, which
-    # must live in a "static" folder next to this script.
-    #
-    # POST /api/v1/to_tekla accepts the same JSON that
-    # /api/v1/generate_radiator_support returned (grid + members +
-    # members_split_beams + summary) and sends every member in "members"
-    # into a running Tekla Structures model via
-    # tekla_integration.send_to_tekla(). That module must live next to
-    # this script and requires pythonnet + Tekla Structures installed
-    # (Windows only); see tekla_integration.py for details.
-    #
-    # POST /api/v1/to_staad accepts {"members_split_beams": [...],
-    # "load_configuration": {...}} (both present in the same generated
-    # JSON) and sends the piecewise members plus load configuration into
-    # a running STAAD.Pro session via staad_integration.send_to_staad().
-    # That module must live next to this script and requires pywin32 +
-    # STAAD.Pro installed (Windows only); see staad_integration.py for
-    # details, including its load_configuration schema and — importantly
-    # — which parts of that module are unverified best-effort.
-    #
-    # NOTE: generate_members() looks up beam/column profile dimensions
-    # via tekla_integration.get_profile_height()/get_profile_width(). If
-    # Tekla isn't reachable (or tekla_integration.py can't be imported),
-    # those lookups silently return 0 rather than raising, so the rest of
-    # this script can still be exercised on a machine without Tekla — the
-    # beam-stacking heights and continuous-beam length extensions just
-    # won't be physically correct until Tekla is actually reachable.
 
 Input JSON format:
 {
@@ -127,7 +91,7 @@ ELEVATIONS (z) AND BEAM-ON-BEAM STACKING
 ------------------------------------------
   - beam_height is the beam_profile's cross-section HEIGHT, looked up
     live from the Tekla catalog (see _lookup_profile_height() /
-    tekla_integration.get_profile_height()). If Tekla isn't reachable,
+    common.tekla_common.get_profile_height()). If Tekla isn't reachable,
     this silently resolves to 0 rather than raising (see the NOTE in the
     API usage section above).
   - The column base is raised off the starting point by both the
@@ -149,7 +113,7 @@ LENGTH EXTENSIONS (continuous beams only)
 --------------------------------------------
   - column_width and beam_width are the column_profile's and
     beam_profile's cross-section WIDTH, looked up live from the Tekla
-    catalog (tekla_integration.get_profile_width()); 0 if unavailable.
+    catalog (common.tekla_common.get_profile_width()); 0 if unavailable.
   - Each continuous longitudinal beam ("members", not
     "members_split_beams") has its p2 (the high-i end) extended by the
     full column_width; p1 is unchanged.
@@ -212,24 +176,6 @@ import argparse
 import json
 from math import sqrt
 import sys
-try:
-    from tekla_integration import send_to_tekla
-except ImportError as exc:
-    print("Tekla integration is unavailable on this server "
-         f"(tekla_integration.py could not be imported: {exc})"
-        )
-try:
-    from staad_integration import send_to_staad
-except ImportError as exc:
-    print("STAAD integration is unavailable on this server "
-         f"(staad_integration.py could not be imported: {exc})"
-        )
-try:
-    from idea_statica_integration import design_joint
-except ImportError as exc:
-    print("IDEA StatiCa integration is unavailable on this server "
-         f"(idea_statica_integration.py could not be imported: {exc})"
-        )
 
 def load_input(path):
     with open(path, "r") as f:
@@ -255,7 +201,7 @@ def _lookup_profile_param(profile_name: str, getter) -> float:
 def _lookup_profile_height(profile_name: str) -> float:
     """Look up a profile's catalog HEIGHT (mm) via Tekla; 0 if unavailable."""
     try:
-        from tekla_integration import get_profile_height
+        from common.tekla_common import get_profile_height
     except ImportError:
         return 0
     return _lookup_profile_param(profile_name, get_profile_height)
@@ -264,7 +210,7 @@ def _lookup_profile_height(profile_name: str) -> float:
 def _lookup_profile_width(profile_name: str) -> float:
     """Look up a profile's catalog WIDTH (mm) via Tekla; 0 if unavailable."""
     try:
-        from tekla_integration import get_profile_width
+        from common.tekla_common import get_profile_width
     except ImportError:
         return 0
     return _lookup_profile_param(profile_name, get_profile_width)
@@ -609,295 +555,14 @@ def generate_members(cfg):
         "summary": summary,
     }
 
-def create_app():
-    """
-    Build the FastAPI app. Imports are done lazily here so that plain CLI
-    usage (--input/--output/--show) doesn't require fastapi/pydantic to be
-    installed at all.
-    """
-    from fastapi import FastAPI, HTTPException
-    from fastapi.staticfiles import StaticFiles
-    from fastapi.responses import FileResponse
-    from pydantic import BaseModel, ConfigDict, Field
-    from typing import Any, Dict, List, Optional
-    import pathlib
-
-    # Static assets (the radiator-support web UI) live in a "static"
-    # folder next to this script, regardless of the current working
-    # directory the server is launched from.
-    base_dir = pathlib.Path(__file__).resolve().parent
-    static_dir = base_dir / "static"
-
-    class BraceBay(BaseModel):
-        # Strict: only "bay" and "mirror" are accepted per brace entry.
-        model_config = ConfigDict(extra="forbid")
-        bay: int
-        mirror: bool = False
-
-    class GridConfig(BaseModel):
-        # Strict: only known grid fields are accepted; anything else in
-        # "grid" is a validation error. Required fields must be present.
-        model_config = ConfigDict(extra="forbid")
-
-        n_long_bays: int
-        n_trans_bays: int
-        bay_long_mm: float
-        bay_trans_mm: float
-        col_height_mm: float
-        starting_point: List[float] = Field(..., min_length=3, max_length=3)
-
-        longitudinal_brace_bays: List[BraceBay] = Field(default_factory=list)
-        transverse_brace_bays: List[BraceBay] = Field(default_factory=list)
-        vertical_base_eccentricity_mm: float = 0
-        base_plate_offset_above_column_base_mm: float = 0
-        gusset_plate_thickness_mm: float = 0
-        embedded_plate_thickness_mm: float = 0
-        bracing_distance_from_column_mm: float = 0
-        total_structure_height: float = Field(..., gt=0)
-        longitudinal_beam_extra_mm: float = Field(..., gt=0)
-
-        beam_material: str
-        column_material: str
-        longitudinal_brace_material: str
-        transverse_brace_material: str
-
-        beam_profile: str
-        column_profile: str
-        longitudinal_brace_profile: str
-        transverse_brace_profile: str
-
-        beamClass: str
-        columnClass: str
-        longitudinalClass: str
-        transverseClass: str
-
-    class GenerateRequest(BaseModel):
-        # Permissive at the top level: any additional keys (e.g. future
-        # "loading" config) are accepted and passed through untouched.
-        model_config = ConfigDict(extra="allow")
-        grid: GridConfig
-
-    class Member(BaseModel):
-        # Permissive: this mirrors whatever generate_members() produced,
-        # so unknown/extra fields (added later) are simply passed through
-        # to send_to_tekla() rather than rejected.
-        model_config = ConfigDict(extra="allow")
-        p1: List[float] = Field(..., min_length=3, max_length=3)
-        p2: List[float] = Field(..., min_length=3, max_length=3)
-        profile: str
-        material: str
-        type: str
-        name: str
-        class_: str = Field(alias="class")
-
-    class ToTeklaRequest(BaseModel):
-        # This is the same JSON the UI already has in hand after calling
-        # /api/v1/generate_radiator_support (grid + members +
-        # members_split_beams + summary), so only "members" (the
-        # continuous-beam list) is required here; everything else is
-        # passed through untouched.
-        model_config = ConfigDict(extra="allow")
-        members: List[Member]
-        grid: Optional[Dict[str, Any]] = None
-        # Joint groups designed in IDEA StatiCa:
-        # {<joint group>: {"joints": [...], "operation_parameters": [...]}}
-        joint_groups: Dict[str, Any] = Field(default_factory=dict)
-
-    class ToStaadRequest(BaseModel):
-        # Same idea as ToTeklaRequest, but STAAD gets the piecewise
-        # ("members_split_beams") representation, plus an optional,
-        # loosely-typed "load_configuration" (see staad_integration.py's
-        # module docstring for its schema).
-        model_config = ConfigDict(extra="allow")
-        grid: Optional[Dict[str, Any]] = None
-        members_split_beams: List[Member]
-        load_configuration: Optional[Dict[str, Any]] = None
-
-    class ConnectionSelector(BaseModel):
-        # Exactly one of name/id/index is expected (see
-        # idea_statica_integration._resolve_connection()).
-        model_config = ConfigDict(extra="forbid")
-        name: Optional[str] = None
-        id: Optional[int] = None
-        index: Optional[int] = None
-
-    class PlateReference(BaseModel):
-        model_config = ConfigDict(extra="forbid")
-        plate_side: str
-        member: str
-        part_type: str
-
-    class MemberUpdate(BaseModel):
-        model_config = ConfigDict(extra="allow")
-        member_name: str
-        cross_section_mprl_name: str
-        material_mprl_name: str
-        # Degrees; converted to radians by design_joint().
-        gama_pitch: Optional[float] = None
-        aligned_plate: Optional[PlateReference] = None
-        related_plate: Optional[PlateReference] = None
-
-    class MemberLoading(BaseModel):
-        # Forces in kN / moments in kNm (design_joint() scales to N / Nm).
-        model_config = ConfigDict(extra="forbid")
-        member_name: str
-        n: float = 0
-        vy: float = 0
-        vz: float = 0
-        mx: float = 0
-        my: float = 0
-        mz: float = 0
-        position: Optional[str] = None
-
-    class LoadEffect(BaseModel):
-        model_config = ConfigDict(extra="forbid")
-        name: str = "Generated load"
-        member_loadings: List[MemberLoading] = Field(default_factory=list)
-        # Informational fields from send_to_staad(); not used by design_joint().
-        load_case: Optional[int] = None
-        node: Optional[int] = None
-        governs: List[str] = Field(default_factory=list)
-
-    class OperationParameter(BaseModel):
-        # Only "key" and "expression" are sent to IDEA StatiCa; the other
-        # fields in the template (value, orig_expression, description) are
-        # informational and passed through untouched.
-        model_config = ConfigDict(extra="allow")
-        key: str
-        expression: str
-
-    class ToIdeaStaticaRequest(BaseModel):
-        # Mirrors braced_bothside_template.json (see design_joint()'s
-        # docstring in idea_statica_integration.py for the full schema).
-        model_config = ConfigDict(extra="allow")
-        template_project_path: str
-        connection_selector: ConnectionSelector
-        member_updates: List[MemberUpdate] = Field(default_factory=list)
-        load_effects: List[LoadEffect] = Field(default_factory=list)
-        output_dir: str
-        save_project_path: Optional[str] = None
-        operation_parameters: List[OperationParameter] = Field(default_factory=list)
-        extract_raw_results: bool = False
-        extract_pdf_report: bool = False
-
-    app = FastAPI(title="Structural Grid Generator API")
-
-    # Serves any assets referenced from the UI (e.g. /static/... paths)
-    # if the page is later split into multiple files.
-    if static_dir.is_dir():
-        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-
-    @app.get("/radiator_support")
-    def radiator_support_ui():
-        return FileResponse(str(static_dir / "radiator_support" / "index.html"))
-
-    @app.get("/favicon.ico")
-    def favicon():
-        return FileResponse(str(static_dir / "favicon.ico"))
-
-    @app.post("/api/v1/generate_radiator_support")
-    def generate_radiator_support(request: GenerateRequest):
-        cfg = request.grid.model_dump()
-
-        try:
-            result = generate_members(cfg)
-        except RuntimeError as exc:
-            # Tekla unreachable, or the beam profile's height couldn't be
-            # resolved from the catalog.
-            raise HTTPException(status_code=502, detail=str(exc))
-        except ValueError as exc:
-            # total_structure_height too small for the given profiles.
-            raise HTTPException(status_code=400, detail=str(exc))
-
-        # Preserve any extra top-level fields the caller sent alongside
-        # "grid" (e.g. future loading config), merged with the generated
-        # grid/members/summary.
-        extra_fields = request.model_dump(exclude={"grid"})
-        return {**extra_fields, **result}
-
-    @app.post("/api/v1/to_tekla")
-    def to_tekla(request: ToTeklaRequest):
-        # "members" is already the continuous-beam representation (see
-        # generate_members()'s return shape).
-        payload = {"members": [m.model_dump(by_alias=True) for m in request.members],
-                   'grid': request.grid,
-                   'joint_groups': request.joint_groups}
-
-        try:
-            result = send_to_tekla(payload)
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=str(exc))
-
-        return result
-
-    @app.post("/api/v1/to_staad")
-    async def to_staad(request: ToStaadRequest):
-        payload = {
-            "grid": request.grid,
-            "members_split_beams": [m.model_dump(by_alias=True) for m in request.members_split_beams],
-            "load_configuration": request.load_configuration,
-        }
-
-        try:
-            result = await send_to_staad(payload)
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=str(exc))
-
-        return result
-
-    # curl -X POST http://localhost:8080/api/v1/to_ideastatica -H "Content-Type: application/json" -d @inner_node_1_longitudinal_1_transverse_bracing.json
-    @app.post("/api/v1/to_ideastatica")
-    def to_ideastatica(request: ToIdeaStaticaRequest):
-        # exclude_none: design_joint() checks optional member_update keys
-        # (gama_pitch, aligned_plate, related_plate) by presence, not value.
-        payload = request.model_dump(exclude_none=True)
-
-        try:
-            result = design_joint(payload)
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=str(exc))
-
-        return result
-
-    return app
-
-
-def start_api_server(port):
-    try:
-        import uvicorn
-    except ImportError:
-        print(
-            "fastapi and uvicorn are required for --port "
-            "(pip install fastapi uvicorn)",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    app = create_app()
-    uvicorn.run(app, host="0.0.0.0", port=port)
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Generate a beam/column/bracing grid from a JSON spec."
     )
-    parser.add_argument("--input", help="Path to input JSON file")
-    parser.add_argument("--output", help="Path to write output JSON file")
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=None,
-        help=(
-            "If specified, ignore --input/--output/--show and instead start "
-            "an API server on 0.0.0.0:PORT exposing "
-            "POST /api/v1/generate_radiator_support"
-        ),
-    )
-    args = parser.parse_args()
+    parser.add_argument("--input", type=str, default="frame_specs.json", help="Path to input JSON file")
+    parser.add_argument("--output", type=str, default="generated_grid.json", help="Path to write output JSON file")
 
-    if args.port is not None:
-        start_api_server(args.port)
-        return
+    args = parser.parse_args()
 
     if not args.input or not args.output:
         parser.error("--input and --output are required unless --port is specified")

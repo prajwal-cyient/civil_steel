@@ -1,3 +1,4 @@
+import ast
 import contextlib
 import importlib
 import io
@@ -9,8 +10,32 @@ from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-import staad_cleanup
-import tekla_cleanup
+SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+# common.staad_common guards its openstaadpy import, so it imports safely here.
+import common.staad_common as staad_common  # noqa: E402
+
+# common.tekla_common loads pythonnet and the Tekla .NET assemblies at import
+# time, so extract clean_tekla() on its own (as the STAAD tests do) and run it
+# against a namespace that supplies a mocked _get_connected_model().
+TEKLA_COMMON_PATH = SRC_DIR / "common" / "tekla_common.py"
+_tekla_tree = ast.parse(TEKLA_COMMON_PATH.read_text(encoding="utf-8"))
+_clean_tekla_def = next(
+    node for node in _tekla_tree.body
+    if isinstance(node, ast.FunctionDef) and node.name == "clean_tekla"
+)
+tekla_namespace = {}
+exec("import getpass", tekla_namespace)
+exec(
+    compile(ast.Module(body=[_clean_tekla_def], type_ignores=[]), str(TEKLA_COMMON_PATH), "exec"),
+    tekla_namespace,
+)
+
+
+def clean_tekla():
+    return tekla_namespace["clean_tekla"]()
 
 
 class Enumerator:
@@ -68,8 +93,11 @@ class TeklaCleanupTests(unittest.TestCase):
         self.model.CommitChanges.return_value = True
         self.handler = Mock()
         self.handler.Save.return_value = True
-        integration = ModuleType("tekla_integration")
-        integration._get_connected_model = Mock(return_value=self.model)
+        connected_model = patch.dict(
+            tekla_namespace, {"_get_connected_model": Mock(return_value=self.model)}
+        )
+        connected_model.start()
+        self.addCleanup(connected_model.stop)
         api = ModuleType("Tekla.Structures.Model")
         api.BaseComponent = BaseComponent
         api.GridBase = GridBase
@@ -77,7 +105,6 @@ class TeklaCleanupTests(unittest.TestCase):
         api.LoadGroup = LoadGroup
         api.ModelHandler = Mock(return_value=self.handler)
         self.modules = patch.dict(sys.modules, {
-            "tekla_integration": integration,
             "Tekla": ModuleType("Tekla"),
             "Tekla.Structures": ModuleType("Tekla.Structures"),
             "Tekla.Structures.Model": api,
@@ -94,7 +121,7 @@ class TeklaCleanupTests(unittest.TestCase):
         return True
 
     def test_components_first_and_grids_preserved_and_saved(self):
-        tekla_cleanup.main()
+        clean_tekla()
         self.assertEqual(self.order, [4, 3])
         self.assertEqual(self.objects, [self.grid, self.plane])
         self.grid.Delete.assert_not_called()
@@ -108,21 +135,21 @@ class TeklaCleanupTests(unittest.TestCase):
             self.delete(self.part)
             return True
         self.component.Delete.side_effect = delete_component
-        tekla_cleanup.main()
+        clean_tekla()
         self.part.Delete.assert_not_called()
 
     def test_failed_delete_raises_without_saving(self):
         self.part.Delete.side_effect = None
         self.part.Delete.return_value = False
         with self.assertRaisesRegex(RuntimeError, "Cannot delete object IDs: 3"):
-            tekla_cleanup.main()
+            clean_tekla()
         self.handler.Save.assert_not_called()
 
     def test_success_return_without_deletion_does_not_loop_forever(self):
         self.part.Delete.side_effect = None
         self.part.Delete.return_value = True
         with self.assertRaisesRegex(RuntimeError, "cleanup incomplete"):
-            tekla_cleanup.main()
+            clean_tekla()
 
     def test_dependent_objects_are_retried(self):
         self.assembly = ModelObject(5)
@@ -130,7 +157,7 @@ class TeklaCleanupTests(unittest.TestCase):
         self.assembly.Delete = Mock(side_effect=lambda: (
             False if self.part in self.objects else self.delete(self.assembly)
         ))
-        tekla_cleanup.main()
+        clean_tekla()
         self.assertEqual(self.assembly.Delete.call_count, 2)
 
     def test_unexpected_grid_deletion_is_reported(self):
@@ -140,30 +167,30 @@ class TeklaCleanupTests(unittest.TestCase):
             return True
         self.component.Delete.side_effect = delete_component
         with self.assertRaisesRegex(RuntimeError, "grids changed"):
-            tekla_cleanup.main()
+            clean_tekla()
         self.handler.Save.assert_not_called()
 
     def test_commit_failure_is_reported(self):
         self.model.CommitChanges.return_value = False
         with self.assertRaisesRegex(RuntimeError, "could not be committed"):
-            tekla_cleanup.main()
+            clean_tekla()
         self.handler.Save.assert_not_called()
 
     def test_save_failure_is_reported(self):
         self.handler.Save.return_value = False
         with self.assertRaisesRegex(RuntimeError, "saving the model failed"):
-            tekla_cleanup.main()
+            clean_tekla()
 
     def test_grid_only_model_is_saved(self):
         self.objects = [self.grid, self.plane]
-        tekla_cleanup.main()
+        clean_tekla()
         self.handler.Save.assert_called_once()
 
     def test_default_load_group_is_preserved(self):
         group = LoadGroup(23997309, "DefaultGroup")
         group.Delete = Mock(return_value=False)
         self.objects.append(group)
-        tekla_cleanup.main()
+        clean_tekla()
         group.Delete.assert_not_called()
         self.assertEqual(self.objects, [self.grid, self.plane, group])
         self.handler.Save.assert_called_once()
@@ -172,17 +199,17 @@ class TeklaCleanupTests(unittest.TestCase):
         group = LoadGroup(6, "Wind")
         group.Delete = Mock(side_effect=lambda: self.delete(group))
         self.objects.append(group)
-        tekla_cleanup.main()
+        clean_tekla()
         group.Delete.assert_called_once()
         self.assertNotIn(group, self.objects)
 
 
 class StaadCleanupTests(unittest.TestCase):
     def setUp(self):
-        clock = patch.object(staad_cleanup.time, "monotonic", side_effect=itertools.count(0, 5))
+        clock = patch.object(staad_common.time, "monotonic", side_effect=itertools.count(0, 5))
         clock.start()
         self.addCleanup(clock.stop)
-        sleep = patch.object(staad_cleanup.time, "sleep")
+        sleep = patch.object(staad_common.time, "sleep")
         sleep.start()
         self.addCleanup(sleep.stop)
         temporary = tempfile.TemporaryDirectory()
@@ -190,7 +217,7 @@ class StaadCleanupTests(unittest.TestCase):
         self.directory = Path(temporary.name)
         self.path = self.directory / "project.std"
         self.original = "STAAD SPACE\nJOINT COORDINATES\n1 0 0 0\nFINISH\n"
-        self.empty_model = staad_cleanup.EMPTY_MODEL_PATH.read_bytes()
+        self.empty_model = staad_common.EMPTY_MODEL_PATH.read_bytes()
         self.path.write_text(self.original, encoding="ascii")
         self.staad = Mock()
         self.filename = str(self.path)
@@ -222,7 +249,7 @@ class StaadCleanupTests(unittest.TestCase):
             if not self.backups():
                 self.path.write_text(original_save, encoding="ascii")
         self.staad.SaveModel.side_effect = save
-        staad_cleanup.main()
+        staad_common.clean_staad()
         self.assertEqual(self.path.read_bytes(), self.empty_model)
         self.assertEqual(self.backups()[0].read_text(), original_save)
         self.assertEqual(self.filename, str(self.path))
@@ -234,40 +261,40 @@ class StaadCleanupTests(unittest.TestCase):
         self.assertEqual(opened_paths[1], self.path)
 
     def test_repeated_cleanup_keeps_previous_backup(self):
-        staad_cleanup.main()
-        staad_cleanup.main()
+        staad_common.clean_staad()
+        staad_common.clean_staad()
         self.assertEqual(len(self.backups()), 2)
         self.assertIn(self.original, [path.read_text() for path in self.backups()])
 
     def test_no_open_file_rejected(self):
         self.filename = ""
         with self.assertRaisesRegex(RuntimeError, "must have a saved"):
-            staad_cleanup.main()
+            staad_common.clean_staad()
         self.staad.SaveModel.assert_not_called()
 
     def test_missing_file_rejected(self):
         self.path.unlink()
         with self.assertRaisesRegex(RuntimeError, "Not an existing"):
-            staad_cleanup.main()
+            staad_common.clean_staad()
         self.staad.SaveModel.assert_not_called()
 
     def test_physical_model_rejected(self):
         self.staad.IsPhysicalModel.return_value = True
         with self.assertRaisesRegex(RuntimeError, "Physical models"):
-            staad_cleanup.main()
+            staad_common.clean_staad()
         self.staad.SaveModel.assert_not_called()
 
     def test_running_analysis_rejected(self):
         self.staad.IsAnalyzing.return_value = True
         with self.assertRaisesRegex(RuntimeError, "analysis to finish"):
-            staad_cleanup.main()
+            staad_common.clean_staad()
         self.staad.SaveModel.assert_not_called()
 
     def test_failed_switch_does_not_overwrite(self):
         # A stale current filename must prevent replacement of the original.
         self.staad.OpenSTAADFile.side_effect = None
         with self.assertRaisesRegex(RuntimeError, "did not open the requested empty model"):
-            staad_cleanup.main()
+            staad_common.clean_staad()
         self.assertEqual(self.path.read_text(), self.original)
 
     def test_failed_reopen_reports_backup(self):
@@ -277,7 +304,7 @@ class StaadCleanupTests(unittest.TestCase):
         self.staad.OpenSTAADFile.side_effect = open_staging_only
         with contextlib.redirect_stdout(io.StringIO()) as output:
             with self.assertRaisesRegex(RuntimeError, "did not open the requested empty model"):
-                staad_cleanup.main()
+                staad_common.clean_staad()
         self.assertIn(str(self.backups()[0]), output.getvalue())
         self.assertIn("staging input retained", output.getvalue())
         self.assertTrue(Path(self.filename).exists())
@@ -286,7 +313,7 @@ class StaadCleanupTests(unittest.TestCase):
     def test_residual_geometry_rejected(self):
         self.staad.Geometry.GetPlateCount.return_value = 1
         with self.assertRaisesRegex(RuntimeError, "geometry counts: \\(0, 0, 1, 0\\)"):
-            staad_cleanup.main()
+            staad_common.clean_staad()
         self.assertEqual(self.staad.SaveModel.call_count, 1)
 
     def test_saved_nonempty_input_rejected(self):
@@ -294,18 +321,18 @@ class StaadCleanupTests(unittest.TestCase):
             self.path.write_text(self.original, encoding="ascii")
         self.staad.SaveModel.side_effect = save
         with self.assertRaisesRegex(RuntimeError, "differs from"):
-            staad_cleanup.main()
+            staad_common.clean_staad()
 
     def test_missing_template_rejected_before_save(self):
-        with patch.object(staad_cleanup, "EMPTY_MODEL_PATH", self.directory / "missing.std"):
+        with patch.object(staad_common, "EMPTY_MODEL_PATH", self.directory / "missing.std"):
             with self.assertRaises(FileNotFoundError):
-                staad_cleanup.main()
+                staad_common.clean_staad()
         self.staad.SaveModel.assert_not_called()
 
     def test_final_model_geometry_is_verified(self):
         self.staad.Geometry.GetNodeCount.side_effect = lambda: int(self.filename == str(self.path))
         with self.assertRaisesRegex(RuntimeError, "geometry counts: \\(1, 0, 0, 0\\)"):
-            staad_cleanup.main()
+            staad_common.clean_staad()
         self.assertEqual(self.staad.SaveModel.call_count, 1)
 
     def test_asynchronous_open_waits_for_path_and_empty_geometry(self):
@@ -315,29 +342,27 @@ class StaadCleanupTests(unittest.TestCase):
         def complete_open(_seconds):
             self.filename = pending[0]
         self.staad.OpenSTAADFile.side_effect = delayed_open
-        staad_cleanup.time.sleep.side_effect = complete_open
+        staad_common.time.sleep.side_effect = complete_open
         # A matching filename can be visible before geometry is refreshed.
         self.staad.Geometry.GetNodeCount.side_effect = [3, 0, 2, 0]
-        staad_cleanup.main()
+        staad_common.clean_staad()
         self.assertEqual(self.path.read_bytes(), self.empty_model)
         self.assertEqual(self.filename, str(self.path))
 
     def test_save_exception_propagates_before_reset(self):
         self.staad.SaveModel.side_effect = OSError("save failed")
         with self.assertRaisesRegex(OSError, "save failed"):
-            staad_cleanup.main()
+            staad_common.clean_staad()
         self.staad.CloseSTAADFile.assert_not_called()
         self.assertEqual(self.path.read_text(), self.original)
 
 
 class ImportSafetyTests(unittest.TestCase):
-    def test_imports_do_not_load_application_dependencies(self):
-        with patch.dict(sys.modules, {
-            "tekla_integration": None, "openstaadpy": None,
-            "Tekla.Structures.Model": None,
-        }):
-            importlib.reload(tekla_cleanup)
-            importlib.reload(staad_cleanup)
+    # common.tekla_common is not covered: it loads pythonnet and the Tekla
+    # assemblies at import time by design.
+    def test_staad_common_import_does_not_load_openstaadpy(self):
+        with patch.dict(sys.modules, {"openstaadpy": None}):
+            importlib.reload(staad_common)
 
 
 if __name__ == "__main__":

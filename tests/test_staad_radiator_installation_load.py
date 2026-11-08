@@ -1,11 +1,23 @@
 import ast
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
 
-source_path = Path(__file__).resolve().parents[1] / "staad_integration.py"
-source_tree = ast.parse(source_path.read_text(encoding="utf-8"))
+# The helpers under test are split between the radiator-support module and
+# the shared STAAD module it star-imports (common.staad_common), so pull the
+# named functions/constants out of both.
+src_dir = Path(__file__).resolve().parents[1] / "src"
+source_path = src_dir / "radiator_support" / "staad_integration.py"
+common_source_path = src_dir / "common" / "staad_common.py"
+source_tree = ast.Module(
+    body=[
+        *ast.parse(common_source_path.read_text(encoding="utf-8")).body,
+        *ast.parse(source_path.read_text(encoding="utf-8")).body,
+    ],
+    type_ignores=[],
+)
 helpers = [
     node for node in source_tree.body
     if isinstance(node, ast.FunctionDef) and node.name in {
@@ -36,6 +48,9 @@ helper_module = ast.fix_missing_locations(
     ast.Module(body=[future_annotations, *constants, *helpers], type_ignores=[])
 )
 exec(compile(helper_module, str(source_path), "exec"), namespace)
+# staad_integration.py also calls some shared helpers qualified as
+# staad_common.<name>; resolve those against the same extracted functions.
+namespace["staad_common"] = SimpleNamespace(**namespace)
 apply_radiator_installation_load = namespace["_apply_radiator_installation_load"]
 
 

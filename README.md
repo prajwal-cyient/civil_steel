@@ -65,17 +65,17 @@ important models first. Importing either module has no application side effects;
 calling its synchronous `main()` performs cleanup without prompting.
 
 ```python
-from tekla_cleanup import main as clean_tekla
-from staad_cleanup import main as clean_staad
+from common.tekla_common import clean_tekla
+from common.staad_common import clean_staad
 
 clean_tekla()
 clean_staad()
 ```
 
-They can also be run separately with `python tekla_cleanup.py` or
-`python staad_cleanup.py`.
+They can also be run separately with `python src/common/tekla_common.py --clean` or
+`python src/common/staad_common.py --clean`.
 
-- [tekla_cleanup.py](./tekla_cleanup.py) uses the existing Tekla connection setup
+- [tekla_common.py](./src/common/tekla_common.py) uses the existing Tekla connection setup
   (`pythonnet`, `TEKLA_BIN_PATH`). It deletes all enumerated model objects except
   grids (including radial grids), grid surfaces/planes and Tekla's `DefaultGroup`
   load group (reported explicitly, since Tekla does not allow deleting it).
@@ -83,7 +83,7 @@ They can also be run separately with `python tekla_cleanup.py` or
   connections/details that can generate parts, bolts and welds; these are removed
   along with the structural objects. It commits and saves the open model.
   It does not remove drawings, catalogs, attributes or project-directory files.
-- [staad_cleanup.py](./staad_cleanup.py) uses `openstaadpy` and requires an open,
+- [staad_common.py](./src/common/staad_common.py) uses `openstaadpy` and requires an open,
   saved analytical `.std` model with no analysis running. It saves current edits,
   creates a unique `*.before-cleanup-*.std.bak` backup beside the input, opens
   a temporary copy of [empty_staad_project.std](./sample_projects/empty_staad_project.std)

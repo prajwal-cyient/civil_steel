@@ -16,8 +16,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 try:
     from openstaadpy import os_analytical
     from openstaadpy.os_analytical.openstaadroot import OSProperty, OSGeometry, OSSupport, OSLoad, OSCommand, OSOutput, OSDesign, OSTable, OSView, OsErrorBase
-    from common.staad_common import *
-    import common.staad_common as staad_common
 except ImportError:  # pragma: no cover - only available on Windows w/ pywin32
     os_analytical = None
 

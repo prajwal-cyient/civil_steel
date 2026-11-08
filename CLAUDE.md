@@ -24,6 +24,7 @@ src/
     generate_grid.py           generate_members(cfg) + CLI
     tekla_integration.py       send_to_tekla()
     staad_integration.py       send_to_staad()
+    import_path_util.py        adds src/ to sys.path so the modules above run as plain scripts
     frame_specs.json           sample grid spec
   static/
     radiator_support/          web UI for this structure type
@@ -33,7 +34,10 @@ tekla_package_dbs/             copied into the Tekla model folder on send
 tests/
 ```
 
-**Import roots.** `src/` is the import root: modules import each other as `common.…` and `radiator_support.…`. Running `python src/server.py` puts `src/` on `sys.path` automatically. To run any other module standalone, set `PYTHONPATH=src` and use `python -m`. Running a module by its file path (`python src/radiator_support/x.py`) leaves `common` unimportable. Some modules swallow that `ImportError`, so the failure shows up later and looks unrelated.
+**Import roots.** `src/` is the import root: modules import each other as `common.…` and `radiator_support.…`.
+- Running `python src/server.py` puts `src/` on `sys.path` automatically.
+- The runnable modules in a structure package (`generate_grid.py`, `tekla_integration.py`, `staad_integration.py`) call `add_parent_dir_to_sys_path(__file__)` from the package's `import_path_util.py` near the top. That adds `src/` to `sys.path`, so they can be run by file path (`python src/radiator_support/x.py`) without `PYTHONPATH` or `python -m`. A new structure package needs its own `import_path_util.py`, and the same call before its first `common.…` import.
+- The `common/` modules don't import other project modules, so they need no path setup.
 
 **Working directory.** Run everything from the repo root. Several paths are relative to the current working directory, not to the module: the `sample_projects/<joint group>.ideaCon` template paths and the CLI defaults. `start_server.bat` does `cd` to the repo root for this reason. The repo-root folders `sample_projects/`, `tekla_connection_attributes/` and `tekla_package_dbs/` are located from `__file__` in `common/*_common.py`. If those modules move, update those paths.
 
@@ -44,7 +48,7 @@ tests/
 python src/server.py --port 8080          # or start_server.bat
 
 # CLI: generate radiator-support members from a grid spec without the server
-PYTHONPATH=src python -m radiator_support.generate_grid --input src/radiator_support/frame_specs.json --output out.json
+python src/radiator_support/generate_grid.py --input src/radiator_support/frame_specs.json --output out.json
 
 # Python tests (unittest, no pytest config)
 python -m unittest discover -s tests
@@ -55,8 +59,8 @@ python -m unittest tests.test_staad_radiator_installation_load.RadiatorInstallat
 node --test tests/test_staad_results.cjs
 
 # Integration self-tests / standalone runs (need the desktop app running)
-PYTHONPATH=src python -m radiator_support.tekla_integration
-PYTHONPATH=src python -m radiator_support.staad_integration --input <generated.json> --output analysis_output.json
+python src/radiator_support/tekla_integration.py
+python src/radiator_support/staad_integration.py --input <generated.json> --output analysis_output.json
 python src/common/idea_statica_integration.py sample_projects/<template>.ideaCon   # read-only: lists connections, members, parameter keys
 python src/common/idea_statica_integration.py --design inner_node_1_longitudinal_1_transverse_bracing.json
 
@@ -67,8 +71,6 @@ python src/common/staad_common.py --clean
 # Hit an endpoint directly
 curl -X POST http://localhost:8080/api/v1/to_ideastatica -H "Content-Type: application/json" -d @inner_node_1_longitudinal_1_transverse_bracing.json
 ```
-
-In PowerShell, set the variable first: `$env:PYTHONPATH = "src"`.
 
 There is no linter config. Dependencies are listed in `requirements.txt`: `fastapi`, `uvicorn` and `pydantic` (server). Each integration also needs its own package: `pythonnet` for Tekla, `openstaadpy`/`pywin32` for STAAD, and `ideastatica-connection-api` for IDEA StatiCa. The SDK version must exactly match the installed IDEA StatiCa version.
 
@@ -92,7 +94,7 @@ If you rename a helper, change its signature, or move it between `common/` and a
   - `POST /api/v1/radiator_support/to_tekla`
   - `POST /api/v1/radiator_support/to_staad`
   - `POST /api/v1/to_ideastatica`
-- To add a structure type: add a `src/<type>/` package (generator plus Tekla/STAAD integrations built on `common/`), its request models and `/api/v1/<type>/…` endpoints in `server.py`, and a UI under `src/static/<type>/`.
+- To add a structure type: add a `src/<type>/` package (generator plus Tekla/STAAD integrations built on `common/`, plus `import_path_util.py`), its request models and `/api/v1/<type>/…` endpoints in `server.py`, and a UI under `src/static/<type>/`.
 
 **`src/radiator_support/generate_grid.py`**: `generate_members(cfg)` builds the geometry and returns two representations:
 - `members`: continuous beams, sent to Tekla.

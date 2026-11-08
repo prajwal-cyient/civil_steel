@@ -177,6 +177,9 @@ import json
 from math import sqrt
 import sys
 
+from import_path_util import add_parent_dir_to_sys_path
+add_parent_dir_to_sys_path(__file__)
+
 def load_input(path):
     with open(path, "r") as f:
         return json.load(f)
@@ -559,7 +562,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate a beam/column/bracing grid from a JSON spec."
     )
-    parser.add_argument("--input", type=str, default="frame_specs.json", help="Path to input JSON file")
+    parser.add_argument("--input", type=str, default="src/radiator_support/frame_specs.json", help="Path to input JSON file")
     parser.add_argument("--output", type=str, default="generated_grid.json", help="Path to write output JSON file")
 
     args = parser.parse_args()
@@ -567,7 +570,9 @@ def main():
     if not args.input or not args.output:
         parser.error("--input and --output are required unless --port is specified")
 
+    print(f"Loading input from {args.input}")
     data = load_input(args.input)
+    print(f"Loaded input from {args.input}")
     cfg = data["grid"]
 
     try:

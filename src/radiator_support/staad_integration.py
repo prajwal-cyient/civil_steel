@@ -103,6 +103,9 @@ from math import atan2, pi
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from import_path_util import add_parent_dir_to_sys_path
+add_parent_dir_to_sys_path(__file__)
+
 try:
     from common.staad_common import *
     import common.staad_common as staad_common
@@ -1547,6 +1550,7 @@ async def main() -> None:
     if not input_json_path:
         print("Error: --input argument is required.")
         return
+    print(f"Input JSON path: {input_json_path}")
     with open(input_json_path, "r") as f:
         input_data = json.load(f)
     print(f"Loaded input JSON from {input_json_path}:")

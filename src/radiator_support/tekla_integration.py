@@ -20,6 +20,9 @@ import json
 import math
 from typing import Optional
 
+from import_path_util import add_parent_dir_to_sys_path
+add_parent_dir_to_sys_path(__file__)
+
 from common.tekla_common import *
 import common.tekla_common as tekla_common
 
@@ -625,6 +628,7 @@ def _self_test() -> None:
     if not input_json_path:
         print("Error: --input argument is required.")
         return
+    print(f"Loading input from {args.input}")
     with open(input_json_path, "r") as f:
         input_data = json.load(f)
     print(f"Loaded input JSON from {input_json_path}:")

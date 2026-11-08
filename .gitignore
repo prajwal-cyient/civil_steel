@@ -68,4 +68,5 @@ Thumbs.db
 # Generated project files
 *.log
 
-analysis_output.json
+generated_grid*.json
+analysis_output*.json

@@ -103,8 +103,13 @@ from math import atan2, pi
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from import_path_util import add_parent_dir_to_sys_path
-add_parent_dir_to_sys_path(__file__)
+import sys
+import os
+
+srcDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if srcDir not in sys.path:
+    sys.path.insert(0, srcDir)
+
 
 try:
     from common.staad_common import *

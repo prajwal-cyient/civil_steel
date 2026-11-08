@@ -176,9 +176,12 @@ import argparse
 import json
 from math import sqrt
 import sys
+import os
 
-from import_path_util import add_parent_dir_to_sys_path
-add_parent_dir_to_sys_path(__file__)
+srcDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if srcDir not in sys.path:
+    sys.path.insert(0, srcDir)
+
 
 def load_input(path):
     with open(path, "r") as f:

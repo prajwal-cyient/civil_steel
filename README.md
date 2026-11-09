@@ -4,7 +4,7 @@ Web App to design Steel Standard structures in Tekla, Staad.Pro and Idea Statica
 ## Installation
 
 Prerequisites (Windows):
-- Python 3.10 or newer, on `PATH`.
+- Python 3.10 or newer, on `PATH`. Get it from [python downloads](https://www.python.org/downloads/windows/). Preferred [python stable release 3.14](https://www.python.org/ftp/python/3.14.10/python-3.14.10-amd64.exe). Install for your own user id if you do not have admin access.
 - Tekla Structures, STAAD.Pro and IDEA StatiCa Connection installed and
   licensed. Each tool is only needed for its own "Send to ..." button; the
   server starts without them.

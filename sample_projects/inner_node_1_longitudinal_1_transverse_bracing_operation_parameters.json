@@ -1,0 +1,117 @@
+[
+  {
+    "key": "GRD_d",
+    "description": "Grid bolt dia",
+    "expression": "0.016"
+  },
+  {
+    "key": "EP_d",
+    "description": "Endplate bolt dia",
+    "expression": "0.016"
+  },
+  {
+    "key": "EP_pl_th",
+    "description": "Endplate thickness",
+    "expression": "0.015"
+  },
+  {
+    "key": "Stiff_th",
+    "description": "Stiffener thickness",
+    "expression": "0.01"
+  },
+  {
+    "key": "Stiff_sel",
+    "description": "Stiffener requirement",
+    "expression": "True"
+  },
+  {
+    "key": "EP_weld",
+    "description": "Endplate to column Weld sizes",
+    "expression": "0.005"
+  },
+  {
+    "key": "Stiff_bot_weld(web)",
+    "description": "Bottom stiffener Web Weld sizes",
+    "expression": "0.005"
+  },
+  {
+    "key": "Stiff_bot_weld(flange)",
+    "description": "Bottom stiffener flange Weld sizes",
+    "expression": "0.005"
+  },
+  {
+    "key": "Stiff_top_weld(web)",
+    "description": "Top Stiffener web Weld sizes",
+    "expression": "0.005"
+  },
+  {
+    "key": "Stiff_top_weld(flange)",
+    "description": "Top Stiffener flange Weld sizes",
+    "expression": "0.005"
+  },
+  {
+    "key": "theta",
+    "description": "theta of bracing with column",
+    "expression": "0.5235987755982991"
+  },
+  {
+    "key": "CPL_d",
+    "description": "Gusset bolt dia (Longitudinal)",
+    "expression": "0.016"
+  },
+  {
+    "key": "CPL_th",
+    "description": "Gusset and tongue plate thickness (Longitudinal)",
+    "expression": "0.012"
+  },
+  {
+    "key": "CPL_weld",
+    "description": "Weld sizes (Longitudinal)",
+    "expression": "0.005"
+  },
+  {
+    "key": "CPL_overlap_length",
+    "description": "CPL Overlap (Longitudinal)",
+    "expression": "0.1"
+  },
+  {
+    "key": "CPL_tongue_weld",
+    "description": "Weld sizes (Longitudinal)",
+    "expression": "0.005"
+  },
+  {
+    "key": "theta2",
+    "description": "theta of bracing with column",
+    "expression": "0.7853981633974484"
+  },
+  {
+    "key": "CPL2_d",
+    "description": "Gusset bolt dia (Transverse)",
+    "expression": "0.016"
+  },
+  {
+    "key": "CPL2_th",
+    "description": "Gusset and tongue plate thickness (Transverse)",
+    "expression": "0.012"
+  },
+  {
+    "key": "CPL2_weld",
+    "description": "Weld sizes (Transverse)",
+    "expression": "0.005"
+  },
+  {
+    "key": "CPL2_tongue_weld",
+    "description": "Weld sizes (Transverse)",
+    "expression": "0.005"
+  },
+  {
+    "key": "CPL2_overlap_length",
+    "description": "CPL Overlap (Transverse)",
+    "expression": "0.1"
+  },
+  {
+    "key": "Bolt_Type",
+    "description": "Bolt Type",
+    "expression": "M16 8.8"
+  }
+]

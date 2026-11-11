@@ -1,13 +1,13 @@
 {
 	"grid": {
-		"n_long_bays": 21,
+		"n_long_bays": 8,
 		"n_trans_bays": 5,
 		"bay_long_mm": 2600,
 		"bay_trans_mm": 3300,
 		"col_height_mm": 5000,
 		"starting_point": [0, 0, 0],
-		"longitudinal_brace_bays": [{"bay": 6, "mirror": false}, {"bay": 7, "mirror": true}, {"bay": 16, "mirror": false}, {"bay": 17, "mirror": true}],
-		"transverse_brace_bays": [{"bay": 4, "mirror": true}],
+		"longitudinal_brace_bays": [{"bay": 6, "mirror": false}, {"bay": 8, "mirror": false}],
+		"transverse_brace_bays": [{"bay": 4, "mirror": true}, {"bay": 6, "mirror": false}],
 		"vertical_base_eccentricity_mm": 38,
 		"base_plate_offset_above_column_base_mm": 30,
 		"gusset_plate_thickness_mm": 15,

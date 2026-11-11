@@ -697,11 +697,14 @@ def to_json_convention_string(obj: Any) -> str:
 #     runs design_joint() with the given input spec (see
 #     design_joint_sample.json for the expected shape) and prints the result.
 
-def _run_design(design_spec_path: str) -> None:
+def _run_design(design_spec_path: str, output_path: str) -> None:
     with open(design_spec_path) as f:
         data = json.load(f)
     result = design_joint(data)
-    print(json.dumps(result, indent=2))
+    output_path = output_path or f"{data['output_dir']}/output_design_{result['joint_group']}.json"
+    with open(output_path, "w") as f:
+        json.dump(result, f, indent=2)
+    print(f'Wrote design result to {output_path}')
 
 
 def _self_test(template_path: str) -> None:
@@ -807,10 +810,14 @@ def _main() -> None:
         help="Path to a design_joint() input JSON file (see design_joint_sample.json); "
              "runs design_joint() and prints the result instead of the self-test.",
     )
+    parser.add_argument(
+        "--output",
+        help="Path to the output JSON file for the design_joint() result."
+    )
     args = parser.parse_args()
 
     if args.design:
-        _run_design(args.design)
+        _run_design(args.design, args.output)
         return
 
     if not args.template_path:

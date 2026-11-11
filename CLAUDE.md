@@ -20,10 +20,13 @@ src/
     tekla_common.py            Tekla connection, profile catalog lookups, grids, clean_tekla()
     staad_common.py            OpenSTAAD connection, node/beam/section helpers, load/code maps, clean_staad()
     idea_statica_integration.py  IDEA StatiCa joint design (design_joint())
+    build_idea_statica_input.py  STAAD output + operation params -> design_joint() input file
+    build_tekla_input.py       generated grid + STAAD joints + IDEA 
   radiator_support/            one package per structure type
     generate_grid.py           generate_members(cfg) + CLI
     tekla_integration.py       send_to_tekla()
     staad_integration.py       send_to_staad()
+    StatiCa params -> send_to_tekla() input file
     frame_specs.json           sample grid spec
   static/
     radiator_support/          web UI for this structure type
@@ -48,6 +51,7 @@ python src/server.py --port 8080          # or start_server.bat
 
 # CLI: generate radiator-support members from a grid spec without the server
 python src/radiator_support/generate_grid.py --input src/radiator_support/frame_specs.json --output out.json
+python src/radiator_support/generate_grid.py --input src/radiator_support/frame_specs.json --output sample_projects/generated_grid_8x5_no_mirror_bracing.json
 
 # Python tests (unittest, no pytest config)
 python -m unittest discover -s tests
@@ -58,10 +62,23 @@ python -m unittest tests.test_staad_radiator_installation_load.RadiatorInstallat
 node --test tests/test_staad_results.cjs
 
 # Integration self-tests / standalone runs (need the desktop app running)
-python src/radiator_support/tekla_integration.py
 python src/radiator_support/staad_integration.py --input <generated.json> --output analysis_output.json
+python src/radiator_support/staad_integration.py --input sample_projects/generated_grid_8x5_no_mirror_bracing.json --output analysis_output_staad.json
+# Build a --design input from a STAAD output (same payload the UI sends to /api/v1/to_ideastatica).
+# Args: STAAD output, operation-parameters file (list, or object with "operation_parameters"), envelope id, joint group id.
+#   Per-joint-group parameter files: sample_projects/<joint group>_operation_parameters.json (seeded from idea_statica_defaults.js).
+python src/common/build_idea_statica_input.py -s analysis_output_staad.json -o sample_projects/inner_node_1_longitudinal_1_transverse_bracing_operation_parameters.json -e 3 -j inner_node_1_longitudinal_1_transverse_bracing --output analysis_output_inner_node_1_longitudinal_1_transverse_bracing_envelope_3.json
+python src/common/build_idea_statica_input.py -s analysis_output_staad.json -o sample_projects/inner_node_1_longitudinal_bracing_operation_parameters.json -e 3 -j inner_node_1_longitudinal_bracing
 python src/common/idea_statica_integration.py sample_projects/<template>.ideaCon   # read-only: lists connections, members, parameter keys
-python src/common/idea_statica_integration.py --design inner_node_1_longitudinal_1_transverse_bracing.json
+python src/common/idea_statica_integration.py --design analysis_output_inner_node_1_longitudinal_1_transverse_bracing_envelope_3.json
+python src/common/idea_statica_integration.py --design analysis_output_inner_node_1_longitudinal_bracing_envelope_3.json
+# Build a tekla_integration.py --input file: all generated-grid fields plus "joint_groups"
+# ({<joint_group>: {"joints": STAAD joint_groups[..].joints, "operation_parameters": IDEA check_summary.operation_parameters}}).
+# -i takes one or more design_joint() results (the /api/v1/to_ideastatica response JSON), keyed by their "joint_group".
+python src/common/build_tekla_input.py -s analysis_output_staad.json -g sample_projects/generated_grid_8x5_no_mirror_bracing.json -i output_CON1/output_design_inner_node_1_longitudinal_bracing.json output_CON1/output_design_inner_node_1_longitudinal_1_transverse_bracing.json --output analysis_output_tekla_input.json
+
+# Finally push grid to tekla
+python src/radiator_support/tekla_integration.py --input analysis_output_tekla_input.json --output analysis_output_tekla.json
 
 # Empty the open Tekla / STAAD model (destructive; see README.md)
 python src/common/tekla_common.py --clean

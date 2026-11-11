@@ -1,0 +1,82 @@
+[
+  {
+    "key": "GRD_d",
+    "description": "Grid bolt dia",
+    "expression": "0.016"
+  },
+  {
+    "key": "EP_d",
+    "description": "Endplate bolt dia",
+    "expression": "0.016"
+  },
+  {
+    "key": "EP_pl_th",
+    "description": "Endplate thickness",
+    "expression": "0.012"
+  },
+  {
+    "key": "Stiff_th",
+    "description": "Stiffener thickness",
+    "expression": "0.008"
+  },
+  {
+    "key": "Stiff_sel",
+    "description": "Stiffener requirement",
+    "expression": "True"
+  },
+  {
+    "key": "EP_weld",
+    "description": "Endplate to column Weld sizes",
+    "expression": "0.005"
+  },
+  {
+    "key": "Stiff_bot_weld(web)",
+    "description": "Bottom stiffener Web Weld sizes",
+    "expression": "0.005"
+  },
+  {
+    "key": "Stiff_bot_weld(flange)",
+    "description": "Bottom stiffener flange Weld sizes",
+    "expression": "0.008"
+  },
+  {
+    "key": "Stiff_top_weld(web)",
+    "description": "Top Stiffener web Weld sizes",
+    "expression": "0.005"
+  },
+  {
+    "key": "Stiff_top_weld(flange)",
+    "description": "Top Stiffener flange Weld sizes",
+    "expression": "0.005"
+  },
+  {
+    "key": "theta",
+    "description": "theta of bracing with column",
+    "expression": "0.5235987755982988"
+  },
+  {
+    "key": "CPL_d",
+    "description": "Gusset bolt dia",
+    "expression": "0.016"
+  },
+  {
+    "key": "CPL_th",
+    "description": "Gusset and tongue plate thickness",
+    "expression": "0.012"
+  },
+  {
+    "key": "CPL_weld",
+    "description": "CPL Weld sizes",
+    "expression": "0.008"
+  },
+  {
+    "key": "CPL_tongue_weld",
+    "description": "CPL Weld tongue sizes",
+    "expression": "0.008"
+  },
+  {
+    "key": "CPL_overlap_length",
+    "description": "CPL Overlap",
+    "expression": "0.1"
+  }
+]

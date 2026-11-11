@@ -383,27 +383,20 @@ def calculate_wind_pressure_profile(
 ) -> tuple[list[float], list[float]]:
     """
     UBC97 wind pressure calculation.
-
     P = Ce * Cq * Qs * Iw
-
     Returns:
         (
             height_list,
             pressure_list
         )
     """
-
     exposure = wind_exposure_category.strip().upper()
-
     if exposure not in UBC97_EXPOSURE_COEFFICIENTS:
         raise ValueError(
             f"Unsupported exposure category: {wind_exposure_category}"
         )
-
     ce_values = UBC97_EXPOSURE_COEFFICIENTS[exposure]
-
     qs = 0.0479 * (0.00256 * (wind_speed_mph ** 2))
-
     pressure_list = [
         ce * frame_pressure_coefficient_cq * qs * iw
         for ce in ce_values

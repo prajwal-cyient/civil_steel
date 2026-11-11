@@ -402,18 +402,12 @@ def calculate_wind_pressure_profile(
 
     ce_values = UBC97_EXPOSURE_COEFFICIENTS[exposure]
 
-    UBC97_QS_FACTOR = 1.1066816 / (95.0 ** 2)
-    qs = UBC97_QS_FACTOR * (wind_speed_mph ** 2)
+    qs = 0.0479 * (0.00256 * (wind_speed_mph ** 2))
 
     pressure_list = [
         ce * frame_pressure_coefficient_cq * qs * iw
         for ce in ce_values
     ]
-    print("Wind Speed:", wind_speed_mph)
-    print("Exposure Category:", wind_exposure_category)
-    print("Cq:", frame_pressure_coefficient_cq)
-    print("Qs:", qs)
-    print("Pressure List:", pressure_list)
     return UBC97_WIND_HEIGHTS_M, pressure_list
 
 def tekla2staad(tekla_profile, tekla_material):
@@ -767,16 +761,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.clean:
         clean_staad()
-
-if __name__ == "__main__":
-    heights, pressures = calculate_wind_pressure_profile(
-        wind_speed_mph=90,
-        wind_exposure_category="B",
-        frame_pressure_coefficient_cq=1.8,
-    )
-
-    print("Heights:")
-    print(heights)
-
-    print("\nPressures:")
-    print(pressures)

@@ -450,8 +450,22 @@ def _apply_load_configuration(
     #windExposure = load_configuration.get("wind_exposure", 1.0)
     windDefCreated = load.AddWindDefinition(windDefId, "Wind 1")
     print(f'Wind definition created: {windDefCreated}, wind definition id {windDefId}')
-    intensity_kN_per_m2 = load_configuration.get("wind_intensity_kN_per_m2", [2.19551, 2.32465, 2.42797, 2.53129, 2.68627, 2.81541, 2.91873, 3.02205, 3.12537, 3.20286, 3.25452, 3.38366, 3.51281, 3.5903, 3.69362, 3.77111, 3.95191, 4.10689, 4.23604, 4.36518, 4.4685, 4.57182])
-    height_list = load_configuration.get("wind_height_list", [4.6, 6.1, 7.6, 9.1, 12.2, 15.2, 18, 21.3, 24.4, 27.4, 30.5, 36.6, 42.7, 48.8, 54.9, 61, 76.2, 91.4, 106.7, 121.9, 137.2, 152.4])
+    height_list, intensity_kN_per_m2 = (
+    staad_common.calculate_wind_pressure_profile(
+        wind_speed_mph=load_configuration.get(
+            "wind_speed_mph",
+            90.0,
+        ),
+        wind_exposure_category=load_configuration.get(
+            "wind_exposure_category",
+            "B",
+        ),
+        frame_pressure_coefficient_cq=load_configuration.get(
+            "frame_pressure_coefficient_Cq",
+            1.8,
+        ),
+    )
+)
     windDefCreated = load.AddWindIntensity(windDefId, intensity_kN_per_m2, height_list)
     print(f'Wind intensity added: {windDefCreated}, wind definition id {windDefId}')
     #windDefCreated = load.AddWindExposure(windDefId, windExposure, top_nodes)

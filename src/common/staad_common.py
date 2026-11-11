@@ -350,6 +350,66 @@ def searchDictByKeyStart(dict: Dict[str, Any], key_start: str) -> Any:
             return value
     return None
 
+UBC97_WIND_HEIGHTS_M = [
+    4.572, 6.096, 7.62, 9.144,
+    12.192, 18.288, 24.384,
+    30.48, 36.576, 48.768,
+    60.96, 91.44, 121.92
+]
+
+UBC97_EXPOSURE_COEFFICIENTS = {
+    "B": [
+        0.62, 0.67, 0.72, 0.76,
+        0.84, 0.95, 1.04, 1.13,
+        1.20, 1.31, 1.42, 1.63, 1.80
+    ],
+    "C": [
+        1.06, 1.13, 1.19, 1.23,
+        1.31, 1.43, 1.53, 1.61,
+        1.67, 1.79, 1.87, 2.05, 2.19
+    ],
+    "D": [
+        1.39, 1.45, 1.50, 1.54,
+        1.62, 1.73, 1.81, 1.88,
+        1.93, 2.02, 2.10, 2.23, 2.34
+    ]
+}
+
+def calculate_wind_pressure_profile(
+    wind_speed_mph: float,
+    wind_exposure_category: str,
+    frame_pressure_coefficient_cq: float,
+    iw: float = 1.0,
+) -> tuple[list[float], list[float]]:
+    """
+    UBC97 wind pressure calculation.
+
+    P = Ce * Cq * Qs * Iw
+
+    Returns:
+        (
+            height_list,
+            pressure_list
+        )
+    """
+
+    exposure = wind_exposure_category.strip().upper()
+
+    if exposure not in UBC97_EXPOSURE_COEFFICIENTS:
+        raise ValueError(
+            f"Unsupported exposure category: {wind_exposure_category}"
+        )
+
+    ce_values = UBC97_EXPOSURE_COEFFICIENTS[exposure]
+
+    qs = 0.0479 * (0.00256 * (wind_speed_mph ** 2))
+
+    pressure_list = [
+        ce * frame_pressure_coefficient_cq * qs * iw
+        for ce in ce_values
+    ]
+    return UBC97_WIND_HEIGHTS_M, pressure_list
+
 def tekla2staad(tekla_profile, tekla_material):
     cleaned_profile = "".join(tekla_profile.split())
     cleaned_material = "".join(tekla_material.split())

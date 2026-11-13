@@ -278,29 +278,23 @@ def _apply_radiator_wind_nodal_loads(
     radiator_height_m = (load_configuration["height_of_radiator_mm"]/ 1000.0)
     fan_thickness_m = (load_configuration["height_of_fan_mm"]/ 1000.0)
     fan_diameter_m = (load_configuration["diameter_of_fan_mm"]/ 1000.0)
-    bolt_cc_x_m = 2.6
-    bolt_cc_z_m = 1.65
+    bolt_cc_x_m = grid_spec.get("bay_long_mm", 2.6)
+    bolt_cc_z_m = grid_spec.get("bay_trans_mm", 3.3)/2
 
     area_x_m2 = (radiator_height_m * bolt_cc_z_m + fan_thickness_m * fan_diameter_m)
     area_z_m2 = (radiator_height_m * bolt_cc_x_m + fan_thickness_m * fan_diameter_m)
 
     horizontal_force_x = (p_eqpt * area_x_m2) / 4.0
     horizontal_force_z = (p_eqpt * area_z_m2) / 4.0
-    horizontal_force = (
-    horizontal_force_x
-    if along_x
-    else horizontal_force_z
-    )
+
+    horizontal_force = (horizontal_force_x if along_x else horizontal_force_z)
     centre_of_gravity_m = radiator_height_m / 2.0
     moment_x_knm = (horizontal_force_x * 2.0) * centre_of_gravity_m
     moment_z_knm = (horizontal_force_z * 2.0) * centre_of_gravity_m
     vertical_force_x = (moment_x_knm / bolt_cc_x_m)
     vertical_force_z = (moment_z_knm / (2.0 * bolt_cc_z_m)) 
 
-    vertical_force = (vertical_force_x
-        if along_x
-        else vertical_force_z
-    )
+    vertical_force = (vertical_force_x if along_x else vertical_force_z)
     
     horizontal_sign = -1.0 if negative_direction else 1.0
     for row_index, row_coordinate in enumerate(selected_rows):

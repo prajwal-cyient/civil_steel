@@ -26,7 +26,6 @@ src/
     generate_grid.py           generate_members(cfg) + CLI
     tekla_integration.py       send_to_tekla()
     staad_integration.py       send_to_staad()
-    StatiCa params -> send_to_tekla() input file
     frame_specs.json           sample grid spec
   static/
     radiator_support/          web UI for this structure type

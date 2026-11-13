@@ -256,6 +256,7 @@ def _apply_radiator_wind_nodal_loads(
     top_nodes: List[int],
     wind_case_title: str,
     load_configuration: Dict[str, Any],
+    grid_spec: Dict[str, Any],
 ) -> None:
     coordinates = _get_top_node_coordinates(node_cache, top_nodes)
     along_x = wind_case_title in ("W+X", "W-X")
@@ -266,14 +267,35 @@ def _apply_radiator_wind_nodal_loads(
         raise ValueError(f"{wind_case_title} radiator wind forces require at least two top-node rows.")
     negative_direction = wind_case_title in ("W-X", "W-Z")
     selected_rows = list(reversed(rows[-2:])) if negative_direction else rows[:2]
-    horizontal_force = float(load_configuration.get(
-        "radiator_wind_force_x_kN" if along_x else "radiator_wind_force_z_kN",
-        1.67 if along_x else 2.24,
-    ))
-    vertical_force = float(load_configuration.get(
-        "radiator_wind_force_y1_kN" if along_x else "radiator_wind_force_y2_kN",
-        0.74 if along_x else 0.78,
-    ))
+    column_height_m = grid_spec.get("col_height_mm", 5000) / 1000.0
+    wind_speed_mph = load_configuration.get("wind_speed_mph", 90.0)
+    wind_exposure_category = load_configuration.get("wind_exposure_category", "B")
+    equipment_pressure_coefficient_cpe = load_configuration.get("equipment_pressure_coefficient_Cpe", 1.4)
+    ce = staad_common.get_ubc97_ce(column_height_m, wind_exposure_category)
+    qs = 0.0479 * (0.00256 * wind_speed_mph**2)
+    p_eqpt = ce * equipment_pressure_coefficient_cpe * qs
+
+    radiator_height_m = (load_configuration["height_of_radiator_mm"]/ 1000.0)
+    fan_thickness_m = (load_configuration["height_of_fan_mm"]/ 1000.0)
+    fan_diameter_m = (load_configuration["diameter_of_fan_mm"]/ 1000.0)
+    bolt_cc_x_m = grid_spec.get("bay_long_mm", 2.6)
+    bolt_cc_z_m = grid_spec.get("bay_trans_mm", 3.3)/2
+
+    area_x_m2 = (radiator_height_m * bolt_cc_z_m + fan_thickness_m * fan_diameter_m)
+    area_z_m2 = (radiator_height_m * bolt_cc_x_m + fan_thickness_m * fan_diameter_m)
+
+    horizontal_force_x = (p_eqpt * area_x_m2) / 4.0
+    horizontal_force_z = (p_eqpt * area_z_m2) / 4.0
+
+    horizontal_force = (horizontal_force_x if along_x else horizontal_force_z)
+    centre_of_gravity_m = radiator_height_m / 2.0
+    moment_x_knm = (horizontal_force_x * 2.0) * centre_of_gravity_m
+    moment_z_knm = (horizontal_force_z * 2.0) * centre_of_gravity_m
+    vertical_force_x = (moment_x_knm / bolt_cc_x_m)
+    vertical_force_z = (moment_z_knm / (2.0 * bolt_cc_z_m)) 
+
+    vertical_force = (vertical_force_x if along_x else vertical_force_z)
+    
     horizontal_sign = -1.0 if negative_direction else 1.0
     for row_index, row_coordinate in enumerate(selected_rows):
         row_nodes = {
@@ -616,7 +638,7 @@ def _apply_load_configuration(
     currentLoadCaseId += len(wind_cases)
     for wind_case, title in zip(wind_cases, ("W+X", "W-X", "W+Z", "W-Z")):
         load.SetLoadActive(wind_case)
-        _apply_radiator_wind_nodal_loads(load, node_cache, top_nodes, title, load_configuration)
+        _apply_radiator_wind_nodal_loads(load, node_cache, top_nodes, title, load_configuration, grid_spec)
 
     #TODO: Wind uniform load on members
     #load.AddMemberUniformForce(columns + longitudinal_bracings + transverse_bracings, DIRECTION_TYPE_MAP["GlobalX"], 0.6, 0.0, 0.0, 0.0)  # 4=GlobalX

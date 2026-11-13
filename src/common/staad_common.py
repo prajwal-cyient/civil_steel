@@ -375,6 +375,52 @@ UBC97_EXPOSURE_COEFFICIENTS = {
     ]
 }
 
+def get_ubc97_ce(height_m: float, exposure: str) -> float:
+    if height_m < 0:
+        raise ValueError("Height cannot be negative.")
+
+    exposure = exposure.upper()
+
+    if exposure not in UBC97_EXPOSURE_COEFFICIENTS:
+        raise ValueError(
+            f"Invalid exposure '{exposure}'. Must be 'B', 'C', or 'D'."
+        )
+
+    coeffs = UBC97_EXPOSURE_COEFFICIENTS[exposure]
+
+    # Corner case 1: Interpolate from (0, 0)
+    # to (first_height, first_coeff)
+    if height_m <= UBC97_WIND_HEIGHTS_M[0]:
+        h0, c0 = 0.0, 0.0
+        h1, c1 = UBC97_WIND_HEIGHTS_M[0], coeffs[0]
+
+        return c0 + (height_m - h0) * (c1 - c0) / (h1 - h0)
+
+    # Corner case 2: Extrapolate using the
+    # slope of the last two table entries
+    if height_m >= UBC97_WIND_HEIGHTS_M[-1]:
+        h0, c0 = UBC97_WIND_HEIGHTS_M[-2], coeffs[-2]
+        h1, c1 = UBC97_WIND_HEIGHTS_M[-1], coeffs[-1]
+
+        slope = (c1 - c0) / (h1 - h0)
+
+        return c1 + (height_m - h1) * slope
+
+    # Standard case: Interpolate between surrounding heights
+    for i in range(len(UBC97_WIND_HEIGHTS_M) - 1):
+        h0 = UBC97_WIND_HEIGHTS_M[i]
+        h1 = UBC97_WIND_HEIGHTS_M[i + 1]
+
+        if h0 <= height_m <= h1:
+            c0 = coeffs[i]
+            c1 = coeffs[i + 1]
+
+            return c0 + (height_m - h0) * (c1 - c0) / (h1 - h0)
+
+    raise RuntimeError(
+        f"Unable to calculate Ce for height {height_m}."
+    )
+
 def calculate_wind_pressure_profile(
     wind_speed_mph: float,
     wind_exposure_category: str,

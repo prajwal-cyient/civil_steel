@@ -43,16 +43,11 @@ tests/
 
 **Working directory.** Run everything from the repo root. Several paths are relative to the current working directory, not to the module: the `sample_projects/<joint group>.ideaCon` template paths and the CLI defaults. `start_server.bat` does `cd` to the repo root for this reason. The repo-root folders `sample_projects/`, `tekla_connection_attributes/` and `tekla_package_dbs/` are located from `__file__` in `common/*_common.py`. If those modules move, update those paths.
 
-## Commands
+## Utilities
+
+### Unit tests
 
 ```bash
-# Run the API server + web UI (UI at http://localhost:8080/radiator_support)
-python src/server.py --port 8080          # or start_server.bat
-
-# CLI: generate radiator-support members from a grid spec without the server
-python src/radiator_support/generate_grid.py --input src/radiator_support/frame_specs.json --output out.json
-python src/radiator_support/generate_grid.py --input src/radiator_support/frame_specs.json --output sample_projects/generated_grid_8x5_no_mirror_bracing.json
-
 # Python tests (unittest, no pytest config)
 python -m unittest discover -s tests
 python -m unittest tests.test_staad_radiator_installation_load            # one module
@@ -60,34 +55,61 @@ python -m unittest tests.test_staad_radiator_installation_load.RadiatorInstallat
 
 # JS tests for the results UI (src/static/radiator_support/results.js)
 node --test tests/test_staad_results.cjs
-
-# Integration self-tests / standalone runs (need the desktop app running)
-python src/radiator_support/staad_integration.py --input <generated.json> --output analysis_output.json
-python src/radiator_support/staad_integration.py --input sample_projects/generated_grid_8x5_no_mirror_bracing.json --output analysis_output_staad.json
-# Build a --design input from a STAAD output (same payload the UI sends to /api/v1/to_ideastatica).
-# Args: STAAD output, operation-parameters file (list, or object with "operation_parameters"), envelope id, joint group id.
-#   Per-joint-group parameter files: sample_projects/<joint group>_operation_parameters.json (seeded from idea_statica_defaults.js).
-python src/common/build_idea_statica_input.py -s analysis_output_staad.json -o sample_projects/inner_node_1_longitudinal_1_transverse_bracing_operation_parameters.json -e 3 -j inner_node_1_longitudinal_1_transverse_bracing --output analysis_output_inner_node_1_longitudinal_1_transverse_bracing_envelope_3.json
-python src/common/build_idea_statica_input.py -s analysis_output_staad.json -o sample_projects/inner_node_1_longitudinal_bracing_operation_parameters.json -e 3 -j inner_node_1_longitudinal_bracing
-python src/common/idea_statica_integration.py sample_projects/<template>.ideaCon   # read-only: lists connections, members, parameter keys
-python src/common/idea_statica_integration.py --design analysis_output_inner_node_1_longitudinal_1_transverse_bracing_envelope_3.json
-python src/common/idea_statica_integration.py --design analysis_output_inner_node_1_longitudinal_bracing_envelope_3.json
-# Build a tekla_integration.py --input file: all generated-grid fields plus "joint_groups"
-# ({<joint_group>: {"joints": STAAD joint_groups[..].joints, "operation_parameters": IDEA check_summary.operation_parameters}}).
-# -i takes one or more design_joint() results (the /api/v1/to_ideastatica response JSON), keyed by their "joint_group".
-python src/common/build_tekla_input.py -s analysis_output_staad.json -g sample_projects/generated_grid_8x5_no_mirror_bracing.json -i output_CON1/output_design_inner_node_1_longitudinal_bracing.json output_CON1/output_design_inner_node_1_longitudinal_1_transverse_bracing.json --output analysis_output_tekla_input.json
-
-# Finally push grid to tekla
-python src/radiator_support/tekla_integration.py --input analysis_output_tekla_input.json --output analysis_output_tekla.json
-
-# Empty the open Tekla / STAAD model (destructive; see README.md)
-python src/common/tekla_common.py --clean
-python src/common/staad_common.py --clean
-
-# Hit an endpoint directly
-curl -X POST http://localhost:8080/api/v1/to_ideastatica -H "Content-Type: application/json" -d @inner_node_1_longitudinal_1_transverse_bracing.json
 ```
 
+### Run the API server + web UI (UI at http://localhost:8080/radiator_support)
+```bash
+python src/server.py --port 8080          # or start_server.bat
+```
+### CLI based workflow
+This also describes the overall workflow in terms of steps needed to design a structure. The sequence of steps is same: Order in which buttons are clicked on the Web UI.
+#### 1. Generate radiator-support members from a grid spec without the server
+```bash
+python src/radiator_support/generate_grid.py --input src/radiator_support/frame_specs.json --output sample_projects/generated_grid_8x5_no_mirror_bracing.json
+```
+#### 2. Send structure and loads to Staad
+```bash
+python src/radiator_support/staad_integration.py --input sample_projects/generated_grid_8x5_no_mirror_bracing.json --output analysis_output_staad.json
+```
+#### 3. Build a design input from a STAAD output (same payload the UI sends to /api/v1/to_ideastatica).
+Args: STAAD output, operation-parameters file (list, or object with "operation_parameters"), envelope id, joint group id.
+Per-joint-group parameter files: sample_projects/<joint group>_operation_parameters.json (seeded from idea_statica_defaults.js).
+```bash
+python src/common/build_idea_statica_input.py -s analysis_output_staad.json -o sample_projects/inner_node_1_longitudinal_1_transverse_bracing_operation_parameters.json -e 3 -j inner_node_1_longitudinal_1_transverse_bracing --output analysis_output_inner_node_1_longitudinal_1_transverse_bracing_envelope_3.json
+python src/common/build_idea_statica_input.py -s analysis_output_staad.json -o sample_projects/inner_node_1_longitudinal_bracing_operation_parameters.json -e 3 -j inner_node_1_longitudinal_bracing --output analysis_output_inner_node_1_longitudinal_bracing_envelope_3.json
+```
+#### 4.1 Preview connection templates: read-only: lists connections, members, parameter keys
+```bash
+python src/common/idea_statica_integration.py sample_projects/inner_node_1_longitudinal_1_transverse_bracing.ideaCon
+python src/common/idea_statica_integration.py sample_projects/inner_node_1_longitudinal_bracing.ideaCon
+```
+#### 4.2 Design joints
+```bash
+python src/common/idea_statica_integration.py --design analysis_output_inner_node_1_longitudinal_1_transverse_bracing_envelope_3.json
+python src/common/idea_statica_integration.py --design analysis_output_inner_node_1_longitudinal_bracing_envelope_3.json
+```
+#### 5. Build a tekla_integration.py input file
+All generated-grid fields plus "joint_groups": ({<joint_group>: {"joints": STAAD joint_groups[..].joints, "operation_parameters": IDEA check_summary.operation_parameters}}).
+
+-i takes one or more design_joint() results (the /api/v1/to_ideastatica response JSON), keyed by their "joint_group".
+```bash
+python src/common/build_tekla_input.py -s analysis_output_staad.json -g sample_projects/generated_grid_8x5_no_mirror_bracing.json -i output_CON1/output_design_inner_node_1_longitudinal_bracing.json output_CON1/output_design_inner_node_1_longitudinal_1_transverse_bracing.json --output analysis_output_tekla_input.json
+```
+#### 6. Finally push grid to tekla
+```bash
+python src/radiator_support/tekla_integration.py --input analysis_output_tekla_input.json --output analysis_output_tekla.json
+```
+
+### The following steps are not needed to be explicitly performed as part of the workflow. Empty the open Tekla / STAAD model (destructive; see README.md)
+```bash
+python src/common/tekla_common.py --clean
+python src/common/staad_common.py --clean
+```
+### Hit an endpoint directly
+```bash
+curl -X POST http://localhost:8080/api/v1/to_ideastatica -H "Content-Type: application/json" -d @inner_node_1_longitudinal_1_transverse_bracing.json
+```
+### Other details
 There is no linter config. Dependencies are listed in `requirements.txt`: `fastapi`, `uvicorn` and `pydantic` (server). Each integration also needs its own package: `pythonnet` for Tekla, `openstaadpy`/`pywin32` for STAAD, and `ideastatica-connection-api` for IDEA StatiCa. The SDK version must exactly match the installed IDEA StatiCa version.
 
 ### Tests

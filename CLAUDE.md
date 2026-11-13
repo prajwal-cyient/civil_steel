@@ -37,7 +37,12 @@ tests/
 
 **Import roots.** `src/` is the import root: modules import each other as `common.…` and `radiator_support.…`.
 - Running `python src/server.py` puts `src/` on `sys.path` automatically.
-- The runnable modules in a structure package (`generate_grid.py`, `tekla_integration.py`, `staad_integration.py`) call `add_parent_dir_to_sys_path(__file__)` from the package's `import_path_util.py` near the top. That adds `src/` to `sys.path`, so they can be run by file path (`python src/radiator_support/x.py`) without `PYTHONPATH` or `python -m`. A new structure package needs its own `import_path_util.py`, and the same call before its first `common.…` import.
+- The runnable modules in a structure package (`generate_grid.py`, `tekla_integration.py`, `staad_integration.py`) use following code near the top. That adds `src/` to `sys.path`, so they can be run by file path (`python src/radiator_support/x.py`) without `PYTHONPATH` or `python -m`. A new civil structure package needs to have same code before its first `import common.…`.
+```python
+    srcDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if srcDir not in sys.path:
+        sys.path.insert(0, srcDir)
+```
 - The `common/` modules don't import other project modules, so they need no path setup.
 
 **Working directory.** Run everything from the repo root. Several paths are relative to the current working directory, not to the module: the `sample_projects/<joint group>.ideaCon` template paths and the CLI defaults. `start_server.bat` does `cd` to the repo root for this reason. The repo-root folders `sample_projects/`, `tekla_connection_attributes/` and `tekla_package_dbs/` are located from `__file__` in `common/*_common.py`. If those modules move, update those paths.

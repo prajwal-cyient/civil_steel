@@ -18,6 +18,16 @@ try:
     from openstaadpy.os_analytical.openstaadroot import OSProperty, OSGeometry, OSSupport, OSLoad, OSCommand, OSOutput, OSDesign, OSTable, OSView, OsErrorBase
 except ImportError:  # pragma: no cover - only available on Windows w/ pywin32
     os_analytical = None
+    OSProperty = Any
+    OSGeometry = Any
+    OSSupport = Any
+    OSLoad = Any
+    OSCommand = Any
+    OSOutput = Any
+    OSDesign = Any
+    OSTable = Any
+    OSView = Any
+    OsErrorBase = Exception
 
 # Define constants
 length_unit_meter = 4

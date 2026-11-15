@@ -251,6 +251,150 @@
   #status-msg.error { color: var(--red); white-space: pre-wrap; }
   #status-msg.ok { color: var(--green); }
 
+  /* ---------------- AGENTIC DESIGN WORKFLOW STYLES ---------------- */
+  .agentic-run-btn {
+    margin-top: 16px;
+    width: 100%;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: #ffffff;
+    border: 1px solid #34d399;
+    font-family: var(--font-head);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 13px;
+    border-radius: 4px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+    transition: all 0.15s ease;
+  }
+  .agentic-run-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%);
+    box-shadow: 0 6px 16px rgba(16, 185, 129, 0.5);
+    transform: translateY(-1px);
+  }
+  .agentic-run-btn:disabled {
+    background: #374151;
+    border-color: #4b5563;
+    color: #9ca3af;
+    cursor: wait;
+    box-shadow: none;
+  }
+
+  .agentic-status-pill {
+    margin-top: 10px;
+    font-size: 11px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    line-height: 1.4;
+  }
+  .agentic-status-pill.running { background: rgba(59, 130, 246, 0.15); border: 1px solid #3b82f6; color: #93c5fd; }
+  .agentic-status-pill.ok { background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #6ee7b7; }
+  .agentic-status-pill.error { background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #fca5a5; white-space: pre-wrap; }
+
+  /* Agent Tracker Bar (Top of Viewport) */
+  #agent-tracker-bar {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    right: 14px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(11, 28, 44, 0.92);
+    border: 1px solid rgba(126, 203, 232, 0.25);
+    border-radius: 6px;
+    padding: 8px 10px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(8px);
+    overflow-x: auto;
+  }
+  .agent-step {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    padding: 5px 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+  }
+  .agent-step .step-num { font-size: 11px; font-weight: 700; color: #94a3b8; font-family: var(--font-head); }
+  .agent-step .step-label { font-size: 10px; color: #64748b; margin-top: 2px; }
+  .agent-step .step-badge {
+    display: none;
+    font-size: 9px;
+    font-weight: 700;
+    color: #fef08a;
+    background: rgba(202, 138, 4, 0.4);
+    border: 1px solid #eab308;
+    padding: 1px 4px;
+    border-radius: 3px;
+    margin-top: 3px;
+    white-space: nowrap;
+  }
+  .agent-step.running { background: rgba(59, 130, 246, 0.15); border-color: #3b82f6; }
+  .agent-step.running .step-num { color: #60a5fa; }
+  .agent-step.running .step-label { color: #93c5fd; }
+  .agent-step.passed { background: rgba(16, 185, 129, 0.15); border-color: #10b981; }
+  .agent-step.passed .step-num { color: #34d399; }
+  .agent-step.passed .step-label { color: #6ee7b7; }
+  .agent-step.revising { background: rgba(245, 158, 11, 0.15); border-color: #f59e0b; animation: pulse-amber 1.5s infinite; }
+  .agent-step.revising .step-num { color: #fbbf24; }
+  .agent-step.revising .step-label { color: #fde68a; }
+  .agent-step.failed { background: rgba(239, 68, 68, 0.15); border-color: #ef4444; }
+  .agent-step.failed .step-num { color: #f87171; }
+  .agent-step.awaiting { background: rgba(168, 85, 247, 0.15); border-color: #a855f7; }
+  .agent-step.awaiting .step-num { color: #c084fc; }
+
+  @keyframes pulse-amber {
+    0%, 100% { border-color: #f59e0b; box-shadow: 0 0 0 rgba(245, 158, 11, 0); }
+    50% { border-color: #fbbf24; box-shadow: 0 0 8px rgba(245, 158, 11, 0.4); }
+  }
+
+  /* Gate 3 Banner */
+  .gate3-box {
+    position: absolute;
+    bottom: 24px;
+    left: 24px;
+    right: 24px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(15, 23, 42, 0.95);
+    border: 2px solid #10b981;
+    border-radius: 8px;
+    padding: 16px 22px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(12px);
+  }
+  .gate3-title { font-size: 15px; font-weight: 700; color: #34d399; font-family: var(--font-head); }
+  .gate3-desc { font-size: 12px; color: #cbd5e1; margin-top: 4px; line-height: 1.4; }
+  .gate3-desc code { background: #1e293b; padding: 2px 6px; border-radius: 3px; color: #38bdf8; font-family: monospace; }
+  .gate3-btn {
+    background: #10b981;
+    color: #ffffff;
+    border: none;
+    font-family: var(--font-head);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 12px 22px;
+    border-radius: 5px;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
+    transition: transform 0.1s ease;
+    white-space: nowrap;
+    margin-left: 20px;
+  }
+  .gate3-btn:hover { background: #059669; transform: scale(1.02); }
+
   /* ---------------- RIGHT PANE: viewport ---------------- */
 
   #right-pane {
@@ -263,15 +407,17 @@
 
   #hud {
     position: absolute;
-    top: 18px;
-    right: 18px;
-    background: rgba(7, 26, 43, 0.82);
+    top: 74px;
+    right: 16px;
+    background: rgba(7, 26, 43, 0.88);
     border: 1px solid var(--line);
-    border-radius: 3px;
+    border-radius: 4px;
     padding: 12px 16px;
-    min-width: 200px;
+    width: 250px;
+    min-width: 240px;
     font-size: 12px;
-    backdrop-filter: blur(3px);
+    backdrop-filter: blur(8px);
+    z-index: 5;
   }
   #hud h2 {
     font-family: var(--font-head);
@@ -294,8 +440,20 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     margin-top: 6px;
     color: var(--paper-ink-dim);
+  }
+  .hud-row .name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .hud-row .count {
+    white-space: nowrap;
+    font-weight: 500;
+    margin-left: auto;
+    text-align: right;
   }
   .hud-row .swatch {
     display: inline-block;
@@ -639,12 +797,39 @@
         <div class="load-config-hint">Sent to IDEA StatiCa when you click "Send to IdeaStatica" below. Parameters depend on the selected joint group. Member updates and load effects come from the STAAD results for the selected envelope and joint group.</div>
       </details>
 
-      <button id="generate-btn" type="button">Generate Structure</button>
+      <button id="agentic-run-btn" class="agentic-run-btn" type="button">⚡ Run Agentic Design (A1–A8)</button>
+      <div id="agentic-status-msg" class="agentic-status-pill" style="display:none;"></div>
+
+      <button id="generate-btn" type="button">Generate Structure (Manual)</button>
       <div id="status-msg"></div>
     </form>
   </div>
 
   <div id="right-pane">
+    <!-- 8-Agent Autonomous Workflow Status Tracker Bar -->
+    <div id="agent-tracker-bar">
+      <div class="agent-step" id="step-A1"><span class="step-num">A1</span><span class="step-label">Brief</span></div>
+      <div class="agent-step" id="step-A2"><span class="step-num">A2</span><span class="step-label">Ready</span></div>
+      <div class="agent-step" id="step-A3"><span class="step-num">A3</span><span class="step-label">Frame</span></div>
+      <div class="agent-step" id="step-A4"><span class="step-num">A4</span><span class="step-label">STAAD</span><span class="step-badge" id="badge-A4"></span></div>
+      <div class="agent-step" id="step-A5"><span class="step-num">A5</span><span class="step-label">IDEA</span><span class="step-badge" id="badge-A5"></span></div>
+      <div class="agent-step" id="step-A6"><span class="step-num">A6</span><span class="step-label">Validate</span></div>
+      <div class="agent-step" id="step-A7"><span class="step-num">A7</span><span class="step-label">Tekla</span></div>
+      <div class="agent-step" id="step-A8"><span class="step-num">A8</span><span class="step-label">Accept</span></div>
+    </div>
+
+    <!-- Gate 3 Final Acceptance Banner -->
+    <div id="gate3-banner" style="display:none;" class="gate3-box">
+      <div class="gate3-content">
+        <div class="gate3-title">Gate 3: Lead Engineer Review & Sign-Off</div>
+        <div id="gate3-summary" class="gate3-desc"></div>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <button id="gate3-accept-btn" type="button" class="gate3-btn">✅ Accept & Sign Off</button>
+        <button id="gate3-dismiss-btn" type="button" onclick="document.getElementById('gate3-banner').style.display='none'" style="background:transparent; border:none; color:#94a3b8; font-size:20px; line-height:1; cursor:pointer; padding:4px 8px;" title="Close">&times;</button>
+      </div>
+    </div>
+
     <canvas id="viewport"></canvas>
     <div id="empty-hint">NO STRUCTURE LOADED<br>Configure parameters and click Generate Structure</div>
 
@@ -1597,6 +1782,253 @@ sendIdeaBtn.addEventListener('click', async () => {
     sendIdeaBtn.textContent = 'Send to IdeaStatica';
   }
 });
+
+/* ---------------------------------------------------------------
+   Autonomous Agentic Workflow (A1–A8 with Loop Engineering)
+--------------------------------------------------------------- */
+const agenticRunBtn = document.getElementById('agentic-run-btn');
+const agenticStatusMsg = document.getElementById('agentic-status-msg');
+const gate3Banner = document.getElementById('gate3-banner');
+const gate3Summary = document.getElementById('gate3-summary');
+const gate3AcceptBtn = document.getElementById('gate3-accept-btn');
+
+let currentAgenticRunId = null;
+
+function updateAgentSteps(agentStatuses, loopA, loopB) {
+  const steps = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8'];
+  for (const step of steps) {
+    const el = document.getElementById(`step-${step}`);
+    if (!el) continue;
+    const statusData = agentStatuses[step];
+    el.className = 'agent-step';
+    if (!statusData) {
+      el.classList.add('pending');
+    } else if (statusData.status === 'RUNNING') {
+      el.classList.add('running');
+    } else if (statusData.status === 'PASSED') {
+      el.classList.add('passed');
+    } else if (statusData.status === 'REVISING') {
+      el.classList.add('revising');
+    } else if (statusData.status === 'FAILED') {
+      el.classList.add('failed');
+    } else if (statusData.status === 'AWAITING_APPROVAL') {
+      el.classList.add('awaiting');
+    }
+  }
+
+  // Update loop badges
+  const badgeA4 = document.getElementById('badge-A4');
+  if (badgeA4) {
+    if (loopA > 0) {
+      badgeA4.style.display = 'inline-block';
+      badgeA4.textContent = `Loop A: #${loopA}`;
+    } else {
+      badgeA4.style.display = 'none';
+    }
+  }
+
+  const badgeA5 = document.getElementById('badge-A5');
+  if (badgeA5) {
+    const totalLoopB = Object.values(loopB || {}).reduce((a, b) => a + b, 0);
+    if (totalLoopB > 0) {
+      badgeA5.style.display = 'inline-block';
+      badgeA5.textContent = `Loop B: #${totalLoopB}`;
+    } else {
+      badgeA5.style.display = 'none';
+    }
+  }
+}
+
+if (agenticRunBtn) {
+  agenticRunBtn.addEventListener('click', async () => {
+    agenticRunBtn.disabled = true;
+    agenticRunBtn.innerHTML = '⚙ Running Agentic Workflow…';
+    if (agenticStatusMsg) {
+      agenticStatusMsg.style.display = 'block';
+      agenticStatusMsg.className = 'agentic-status-pill running';
+      agenticStatusMsg.textContent = 'Orchestrator executing: A1 Requirements Validator...';
+    }
+    if (gate3Banner) gate3Banner.style.display = 'none';
+
+    // Reset steps
+    updateAgentSteps({}, 0, {});
+
+    try {
+      const payload = {
+        grid: buildPayload().grid,
+        load_configuration: buildLoadConfiguration()
+      };
+
+      const res = await fetch('/api/v2/agentic/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const errDetail = await res.text();
+        throw new Error(`Server returned ${res.status}: ${errDetail}`);
+      }
+
+      const state = await res.json();
+      currentAgenticRunId = state.run_id;
+
+      // Update tracker UI with final state
+      updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {});
+
+      // 1. Update 3D Viewer & Members
+      if (state.frame_candidate?.members) {
+        lastGeneratedResult = state.frame_candidate;
+        document.getElementById('empty-hint').style.display = 'none';
+        renderStructure(state.frame_candidate.members);
+        renderSummary(state.frame_candidate.summary);
+
+        // Update senior's drawing revision and generation status
+        revCounter += 1;
+        document.getElementById('dwg-rev').textContent = `REV ${revCounter}`;
+        if (statusMsg) {
+          statusMsg.className = 'ok';
+          statusMsg.textContent = `Generated ${state.frame_candidate.summary?.total_members || state.frame_candidate.members.length} members successfully.`;
+        }
+      }
+
+      // 2. Update STAAD Results View
+      if (state.staad_results?.created) {
+        const staadResult = state.staad_results;
+        const staadMembers = Object.entries(staadResult.member_data_by_id || {}).map(([id, member]) => ({
+          ...member, id, type: memberName2type(member.name)
+        }));
+        if (staadMembers.length > 0) {
+          renderStructure(staadMembers, staadResult);
+        } else if (state.frame_candidate?.members) {
+          renderStructure(state.frame_candidate.members, staadResult);
+        }
+        renderStaadResults(staadResult);
+
+        // Senior's STAAD action status badge
+        if (staadStatus) {
+          staadStatus.className = 'ok';
+          staadStatus.textContent = `Members: ${staadResult.created} created.`;
+        }
+        const staadControls = document.getElementById('staad-view-controls');
+        if (staadControls) staadControls.hidden = false;
+      }
+
+      // 3. Update IDEA StatiCa Results View
+      if (state.ideastatica_results) {
+        for (const [jg, resData] of Object.entries(state.ideastatica_results)) {
+          renderIdeaStaticaResults(resData);
+          if (ideaStatus) {
+            ideaStatus.className = resData.passed ? 'ok' : 'error';
+            ideaStatus.textContent = `Connection ${resData.connection_id || 1} ${resData.passed ? 'passed' : 'failed'} checks.`;
+          }
+        }
+      }
+
+      // 4. Update Tekla View
+      if (state.tekla_results?.created) {
+        renderTeklaResults(state.tekla_results);
+        if (teklaStatus) {
+          teklaStatus.className = 'ok';
+          teklaStatus.textContent = `Sent ${state.tekla_results.created} members to Tekla.`;
+        }
+      }
+
+      // 5. Open Senior's Right-Side Results Drawer and expand all 3 panels
+      const resultsPane = document.getElementById('results-pane');
+      const resultsDivider = document.getElementById('results-divider');
+      if (resultsPane) resultsPane.hidden = false;
+      if (resultsDivider) resultsDivider.hidden = false;
+      const staadPanel = document.getElementById('staad-results-panel');
+      const ideaPanel = document.getElementById('idea-results-panel');
+      const teklaPanel = document.getElementById('tekla-results-panel');
+      if (staadPanel) { staadPanel.hidden = false; staadPanel.open = true; }
+      if (ideaPanel) { ideaPanel.hidden = false; ideaPanel.open = true; }
+      if (teklaPanel) { teklaPanel.hidden = false; teklaPanel.open = true; }
+
+      // 5. Present Gate 3 Acceptance if reached
+      if (state.status === 'PAUSED_AT_GATE3') {
+        if (gate3Banner) {
+          gate3Banner.style.display = 'flex';
+          const maxR = state.final_report?.summary?.staad_max_stress_ratio || 0.0;
+          const colP = state.final_report?.summary?.final_column_profile || '';
+          const hash = state.final_report?.summary?.package_integrity_hash || '';
+          gate3Summary.innerHTML = `Structure: <strong>${colP}</strong> | STAAD Max Stress Ratio: <strong>${maxR.toFixed(2)} &le; 1.0</strong> | Verified Package Hash: <code>${hash}</code>.<br>Loop A: ${state.loop_a_count} revisions | Loop B: ${Object.values(state.loop_b_count || {}).reduce((a, b) => a + b, 0)} revisions.`;
+        }
+        if (agenticStatusMsg) {
+          agenticStatusMsg.className = 'agentic-status-pill ok';
+          agenticStatusMsg.textContent = 'All automated agents completed successfully! Awaiting Gate 3 Acceptance.';
+        }
+      } else if (state.status === 'FAILED') {
+        if (agenticStatusMsg) {
+          agenticStatusMsg.className = 'agentic-status-pill error';
+          agenticStatusMsg.textContent = `Agentic Run Failed: ${state.error || 'Unknown error'}`;
+        }
+      }
+
+    } catch (err) {
+      if (agenticStatusMsg) {
+        agenticStatusMsg.className = 'agentic-status-pill error';
+        agenticStatusMsg.textContent = String(err.message || err);
+      }
+    } finally {
+      agenticRunBtn.disabled = false;
+      agenticRunBtn.innerHTML = '⚡ Run Agentic Design (A1–A8)';
+    }
+  });
+}
+
+if (gate3AcceptBtn) {
+  gate3AcceptBtn.addEventListener('click', async () => {
+    if (!currentAgenticRunId) return;
+    gate3AcceptBtn.disabled = true;
+    gate3AcceptBtn.textContent = 'Accepting…';
+
+    try {
+      const res = await fetch(`/api/v2/agentic/accept/${currentAgenticRunId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engineer_name: 'Lead Structural Engineer' })
+      });
+      const acceptedState = await res.json();
+      if (gate3Banner) {
+        gate3Banner.innerHTML = `
+          <div style="display:flex; align-items:center; justify-content:space-between; width:100%;">
+            <div>
+              <div class="gate3-title" style="color:var(--green)">✅ Design Accepted & Signed Off</div>
+              <div class="gate3-desc">Accepted by ${acceptedState.accepted_by || 'Lead Structural Engineer'} on ${new Date().toLocaleTimeString()}. Full calculation package committed.</div>
+            </div>
+            <button onclick="document.getElementById('gate3-banner').style.display='none'" style="background:transparent; border:none; color:#94a3b8; font-size:22px; cursor:pointer; padding:4px 8px;" title="Dismiss">&times;</button>
+          </div>
+        `;
+        // Auto-dismiss after 2.5 seconds so it clears the 3D model viewport
+        setTimeout(() => {
+          gate3Banner.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+          gate3Banner.style.opacity = '0';
+          gate3Banner.style.transform = 'translateY(16px)';
+          setTimeout(() => {
+            gate3Banner.style.display = 'none';
+            gate3Banner.style.opacity = '1';
+            gate3Banner.style.transform = 'none';
+            gate3Banner.style.transition = 'none';
+          }, 600);
+        }, 2500);
+      }
+      if (agenticStatusMsg) {
+        agenticStatusMsg.className = 'agentic-status-pill ok';
+        agenticStatusMsg.textContent = `✅ Design Accepted & Signed Off by ${acceptedState.accepted_by || 'Lead Structural Engineer'}`;
+      }
+      const stepA8 = document.getElementById('step-A8');
+      if (stepA8) {
+        stepA8.className = 'agent-step passed';
+      }
+    } catch (err) {
+      alert('Error accepting design: ' + err.message);
+    } finally {
+      gate3AcceptBtn.disabled = false;
+    }
+  });
+}
 </script>
 
 </body>

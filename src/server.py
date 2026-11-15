@@ -464,6 +464,13 @@ def create_app():
 
         return result
 
+    # Mount the 8-Agent Autonomous Design Workflow Router
+    try:
+        from agentic.router import router as agentic_router
+        app.include_router(agentic_router)
+    except Exception as exc:
+        print(f"Notice: Agentic router import: {exc}")
+
     return app
 
 

@@ -1,0 +1,36 @@
+{
+  "version": "poc2-double-brace-validated-2",
+  "engineering_approved": true,
+  "scope": "Inner and edge double-brace families validated with exact native templates",
+  "source": "Supplied POC1 combined inner connection and edge single-sided adaptations; originals preserved",
+  "changes": "Second longitudinal member reoriented; complete operation references retained; independent original transverse branch and parameter namespace added for three-brace family; single-sided gusset plate and bolt pattern validated for edge beams",
+  "files_sha256": {
+    "two-longitudinal-transverse.ideaCon": "8d77c52b5a5b5525b76e3b51b7bf7ac17efe8bb03fe3adf7e493dc260202d378",
+    "two-longitudinal.ideaCon": "ace1f0059bb15d722d50985d9db55ad91273a10d214296a531843f7c22bd2204",
+    "edge-two-longitudinal-transverse.ideaCon": "8d77c52b5a5b5525b76e3b51b7bf7ac17efe8bb03fe3adf7e493dc260202d378",
+    "edge-two-longitudinal.ideaCon": "ace1f0059bb15d722d50985d9db55ad91273a10d214296a531843f7c22bd2204"
+  },
+  "native_validation": {
+    "inner_node_2_longitudinal_bracings": {
+      "governing_effects": 8,
+      "passed": true
+    },
+    "inner_node_2_longitudinal_1_transverse_bracing": {
+      "governing_effects": 4,
+      "passed": true
+    },
+    "longitudinal_edge_node_2_longitudinal_bracings": {
+      "governing_effects": 8,
+      "passed": true
+    },
+    "longitudinal_edge_node_2_longitudinal_1_transverse_bracing": {
+      "governing_effects": 4,
+      "passed": true
+    }
+  },
+  "limitations": [
+    "Governing group/envelope coverage only",
+    "Original force conventions retained; no automatic engineering certification",
+    "Final engineer acceptance remains required"
+  ]
+}

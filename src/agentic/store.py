@@ -46,7 +46,7 @@ class SqliteWorkflowStore:
 
     @contextmanager
     def _connection(self):
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         try:
             yield conn
@@ -114,9 +114,7 @@ class SqliteWorkflowStore:
     def get_state(self, run_id: str) -> Optional[WorkflowState]:
         """Retrieves a WorkflowState by run_id (from cache or SQLite)."""
         with self._lock:
-            if run_id in self._cache:
-                return self._cache[run_id]
-
+            # A separate worker updates the database; cached objects may be stale.
             with self._connection() as conn:
                 row = conn.execute(
                     "SELECT state_json FROM workflow_runs WHERE run_id = ?",

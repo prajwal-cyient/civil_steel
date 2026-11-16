@@ -58,6 +58,13 @@ def forces_for(overrides):
 
 
 class JointGroupLoadEffectTests(unittest.TestCase):
+    def test_distinct_braces_receive_distinct_template_member_names(self):
+        joint = {"members": [{"beam": 1, "member_type": "bracing_longitudinal", "end": 0},
+                             {"beam": 2, "member_type": "bracing_longitudinal", "end": 1}]}
+        forces = {1: [[1, 0, 0, 0, 0, 0], [0] * 6], 2: [[0] * 6, [2, 0, 0, 0, 0, 0]]}
+        effect = namespace["joint_load_effect"](joint, forces, "ULS")
+        self.assertEqual([m["member_name"] for m in effect["member_loadings"]], ["bracing_longitudinal", "bracing_longitudinal_1"])
+
     def test_governing_forces_use_joint_end_only_and_dedupe_load_cases(self):
         forces_by_load_case = {
             # Far end of beam 2 (end 0, not in the group) is huge and must be ignored.
@@ -76,7 +83,7 @@ class JointGroupLoadEffectTests(unittest.TestCase):
         bracings = governing["bracing_longitudinal"]
         self.assertEqual((bracings["max_Fx"]["value"], bracings["max_Fx"]["load_case"]), (8.0, 101))
         self.assertEqual((bracings["min_Fx"]["value"], bracings["min_Fx"]["load_case"]), (-3.0, 100))
-        self.assertNotIn("column", governing)
+        self.assertIn("column", governing)
         self.assertNotIn("beam_transverse", governing)
 
         keys = [(le["load_case"], le["node"]) for le in load_effects]
@@ -98,11 +105,25 @@ class JointGroupLoadEffectTests(unittest.TestCase):
             {"member_name": "bracing_longitudinal", "n": -3.0, "vy": 0.0, "vz": 0.0, "mx": 0.0, "my": 0.0, "mz": 0.0, "position": "End"},
         ])
 
-    def test_group_without_governing_member_types_has_no_load_effects(self):
+    def test_column_only_support_receives_its_real_governing_loads(self):
         group = {"member_count": 1, "joints": [{"node": 10, "members": [{"beam": 1, "member_type": "column", "end": 0}]}]}
-        governing, load_effects = build_joint_group_load_effects(group, {100: forces_for({})}, [100], {})
-        self.assertEqual(governing, {})
-        self.assertEqual(load_effects, [])
+        forces = {100: forces_for({(1, 0): [-25, 2, 3, 4, 5, 6]}),
+                  101: forces_for({(1, 0): [5, 1, 2, 3, 4, 50]})}
+        governing, load_effects = build_joint_group_load_effects(group, forces, [100, 101], {})
+        self.assertEqual(governing["column"]["min_Fx"]["value"], -25)
+        self.assertEqual(governing["column"]["max_Mz"]["load_case"], 101)
+        self.assertEqual({effect["load_case"] for effect in load_effects}, {100, 101})
+        compression = next(effect for effect in load_effects if effect["load_case"] == 100)
+        self.assertEqual(compression["member_loadings"][0]["n"], -25)
+
+    def test_moment_governing_case_is_not_lost_to_force_only_selection(self):
+        group = {"joints": [{"node": 10, "members": [{"beam": 2, "member_type": "beam_longitudinal", "end": 1}]}]}
+        forces = {100: forces_for({(2, 1): [20, 10, 10, 0, 0, 0]}),
+                  101: forces_for({(2, 1): [10, 5, 5, 0, 0, 90]}),
+                  102: forces_for({(2, 1): [0, 0, 0, 0, 0, 0]})}
+        governing, effects = build_joint_group_load_effects(group, forces, [100, 101, 102], {})
+        self.assertEqual(governing["beam_longitudinal"]["max_Mz"]["load_case"], 101)
+        self.assertIn(101, {effect["load_case"] for effect in effects})
 
 
 if __name__ == "__main__":

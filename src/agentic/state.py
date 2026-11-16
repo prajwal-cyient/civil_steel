@@ -47,6 +47,8 @@ class WorkflowState(BaseModel):
     # A2 Readiness
     readiness: Dict[str, Any] = Field(default_factory=dict)
     simulation_mode: bool = False  # Set to True if software is offline to enable safe testing
+    model_call_count: int = 0
+    model_events: List[Dict[str, Any]] = Field(default_factory=list)
 
     # A3 Frame Generation
     frame_candidate: Dict[str, Any] = Field(default_factory=dict)
@@ -58,7 +60,8 @@ class WorkflowState(BaseModel):
     candidate_history: List[str] = Field(default_factory=list)
 
     # A4 STAAD Structural Analysis
-    staad_results: Dict[str, Any] = Field(default_factory=dict)
+    # OpenSTAAD returns integer load-case IDs alongside named result sections.
+    staad_results: Dict[str | int, Any] = Field(default_factory=dict)
     frame_grader_result: Optional[GraderResult] = None
     loop_a_count: int = 0
     max_loop_a: int = 3
@@ -90,4 +93,19 @@ class WorkflowState(BaseModel):
 
     # Error handling
     error: Optional[str] = None
+
+
+def fail_workflow(state: WorkflowState, agent_id: str, message: str) -> WorkflowState:
+    """Record a terminal failure rather than leaving an ended run as RUNNING."""
+    from datetime import datetime
+
+    state.status = "FAILED"
+    state.current_agent = agent_id
+    state.error = message
+    state.agent_statuses[agent_id] = {"status": "FAILED", "message": message}
+    state.logs.append(AgentLogEntry(
+        agent_id=agent_id, agent_name=agent_id, status="FAILED",
+        message=message, timestamp=datetime.now().strftime("%H:%M:%S"),
+    ))
+    return state
 

@@ -274,9 +274,6 @@ PROFILE_NAME_MAP: Dict[str, str] = {
     "W12*26": "W12X26",
     "W14*90": "W14*90",
     "PIPE4.5X0.237": "PIP45000",
-    "HEA200": "IPE200",
-    "HEA140": "IPE140",
-    "HEA400": "IPE400",
     "CFRHS100X100X4": "100x4SHS", # "RHS100X100X4",
     "CFRHS120X120X5": "120x5SHS", # "RHS120X120X5",
     "CFRHS90X90X8": "90x8SHS", # "RHS10X100X4",
@@ -469,7 +466,7 @@ def tekla2staad(tekla_profile, tekla_material):
     if staad_profile.startswith("CFRHS"):
         staad_profile = staad_profile.replace("CFRHS", "RHS")
     if staad_profile.startswith("HEA"):
-        staad_profile = staad_profile.replace("HEA", "IPE")
+        staad_profile = "HE" + staad_profile[3:] + "A"
 
     return staad_profile, staad_material
 
@@ -658,45 +655,50 @@ def _resolve_profile_name(profile: str) -> str:
     profile, material = tekla2staad(profile, "STEEL")
     return profile
 
-def _assign_property(property: OSProperty, beam_no: int, member: dict, property_id_cache: Dict[str, int] = {}, country: str = "EUROPE") -> None:
+def _assign_property(property: OSProperty, beam_no: int, member: dict, property_id_cache: Optional[Dict[str, int]] = None, country: str = "EUROPE") -> None:
     """
     Assigns a section profile and generic steel material constants to a
     single beam. Best-effort — see the module docstring's "WHAT'S SOLID
     VS. BEST-EFFORT" section before relying on this in production.
     """
 
+    if property_id_cache is None:
+        property_id_cache = {}
     profile_name, material_name = tekla2staad(member["profile"], member['material'])
-    '''
-    try:
-        status = property.CreateIsotropicMaterialSteel(
-           material_name,
-            STEEL_MATERIAL_DEFAULTS["E"],
-            STEEL_MATERIAL_DEFAULTS["poisson"],
-            STEEL_MATERIAL_DEFAULTS["density"],
-        )
-    except Exception as exc:
-        # Material assignment failing isn't fatal to member creation;
-        # the beam still exists with its section, just without
-        # constants set. Swallow rather than aborting the whole member.
-        #print(f'Failed to create material {member.get("material", "STEEL")}: {exc}'),
-        pass
-    '''
+    table_code = country2code(country)
+    # Installed SectionDatabaseInfo.xml identifies European cold-formed steel
+    # as table 34. Preserve the actual dimensions instead of substituting a
+    # different hot-rolled section (120x6 SHS is absent from table 7).
+    hollow = re.fullmatch(r"CFRHS(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)", member["profile"], re.IGNORECASE)
+    if hollow and country.upper() == "EUROPE":
+        h, b, t = hollow.groups()
+        profile_name = ("SHS" if float(h) == float(b) else "RHS") + f"{h}x{b}x{t}"
+        table_code = 34
+
 
     try:
-        property_id = property_id_cache.get(profile_name, None)
+        cache_key = f"{table_code}:{profile_name}"
+        property_id = property_id_cache.get(cache_key, None)
         if property_id is None:
-            property_id = property.CreateBeamPropertyFromTable(country2code(country), profile_name, 0, 0.0, 0.0)
-            print(f"Created beam property for profile '{profile_name}' with ID {property_id} country {country}, country code {country2code(country)}")
-            property_id_cache[profile_name] = property_id
+            property_id = property.CreateBeamPropertyFromTable(table_code, profile_name, 0, 0.0, 0.0)
+            if not isinstance(property_id, int) or property_id <= 0:
+                raise StaadMemberError(f"Section '{profile_name}' unavailable in STAAD table {table_code} (property ID {property_id}).")
+            property_id_cache[cache_key] = property_id
         raw_property = property._property
         raw_property.SetMaterialName(material_name)
-        raw_property.AssignBeamProperty(int(beam_no), property_id)
-        raw_property.AssignMaterialToMember(material_name, int(beam_no))
+        # SDK 26 interprets a successful STAAD 2025 return code as False.
+        # Independently read back section/material identity instead of trusting
+        # that wrapper boolean (verified against both supported section tables).
+        property.AssignBeamProperty(int(beam_no), property_id)
+        normalize = lambda value: str(value).replace(" ", "").upper()
+        if normalize(property.GetBeamSectionName(int(beam_no))) != normalize(profile_name):
+            raise StaadMemberError(f"Section read-back mismatch for member {beam_no} ({profile_name}).")
+        property.AssignMaterialToMember(material_name, [int(beam_no)])
+        if normalize(property.GetBeamMaterialName(int(beam_no))) != normalize(material_name):
+            raise StaadMemberError(f"Material read-back mismatch for member {beam_no}.")
     except Exception as exc:
-        # Material assignment failing isn't fatal to member creation;
-        # the beam still exists with its section, just without
-        # constants set. Swallow rather than aborting the whole member.
-        print(f'Failed to assign material to beam {beam_no}: {exc}')
+        # Propagate rejection so callers do not analyze an incomplete model.
+        raise StaadMemberError(f"Failed to configure member {beam_no}: {exc}") from exc
 
 def _create_combo_load_case(load: OSLoad, currentLoadCaseId: int, comboCaseTitle: str, comboLoadCases: List[int], primary_case_ids: List[int], load_factors: List[float]) -> int:
     comboCaseId = load.CreateNewLoadCombination(comboCaseTitle, currentLoadCaseId)
@@ -732,7 +734,66 @@ def _verify_open_model(staad, path: Path) -> None:
             )
         time.sleep(0.25)
 
-def clean_staad() -> None:
+
+def saved_model_path(staad, expected_path=None, timeout_seconds=10.0) -> Path:
+    """Wait for a valid saved filename; never treat a blank COM value as '.'.
+
+    SaveModel/UpdateStructure can return before the filename getter settles.
+    An expected path pins the run to its original model: a different nonblank
+    filename is an ownership error, never an excuse to analyze a different file.
+    """
+    expected = Path(expected_path).resolve() if expected_path is not None else None
+    deadline = time.monotonic() + timeout_seconds
+    last = None
+    while True:
+        raw = staad.GetSTAADFile()
+        last = raw
+        if isinstance(raw, str) and raw.strip():
+            candidate = Path(raw.strip())
+            if candidate.is_absolute() and candidate.suffix.lower() == ".std":
+                candidate = candidate.resolve()
+                if expected is not None and candidate != expected:
+                    raise RuntimeError(f"STAAD active model changed during the run: {candidate}; expected {expected}.")
+                if candidate.is_file():
+                    return candidate
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"STAAD did not report an existing saved analytical .std path within {timeout_seconds:g}s; "
+                               f"last filename: {last!r}; expected: {str(expected) if expected else 'not yet established'}.")
+        # Pump this STA's pending COM messages without driving the desktop UI.
+        try:
+            import pythoncom
+            pythoncom.PumpWaitingMessages()
+        except ImportError:
+            pass
+        time.sleep(0.1)
+
+
+def prepare_saved_analysis(staad, expected_path=None) -> Path:
+    """Insert analysis with the supported no-print option and verify the file."""
+    from common.staad_input import prepare_analysis_input
+
+    path = saved_model_path(staad, expected_path)
+    staad.SaveModel(True)
+    saved_model_path(staad, path)
+    original = path.read_bytes()
+    prepared = prepare_analysis_input(original.decode("utf-8-sig"))
+    if prepared == original.decode("utf-8-sig"):
+        return path
+    with tempfile.NamedTemporaryFile(prefix=f"{path.stem}.before-analysis-",
+                                     suffix=".std.bak", dir=path.parent, delete=False) as backup:
+        backup.write(original)
+    # STAAD 2025 accepts 0; 6 silently omits the command on the installed build.
+    # Use OpenSTAAD to keep the GUI and disk model synchronized, then check the
+    # actual input rather than relying on the method's void return value.
+    staad.Command.PerformAnalysis(0)
+    staad.SaveModel(True)
+    saved_model_path(staad, path)
+    saved = path.read_bytes().decode("utf-8-sig")
+    if prepare_analysis_input(saved) != saved:
+        raise RuntimeError("STAAD did not retain PERFORM ANALYSIS before DEFINE ENVELOPE.")
+    return path
+
+def clean_staad(expected_path=None) -> Path:
     """Back up and reset the current .std file, leaving that same project open."""
     from openstaadpy import os_analytical
 
@@ -740,10 +801,7 @@ def clean_staad() -> None:
     staad = os_analytical.connect()
     if staad is None:
         raise RuntimeError("Could not connect to a running STAAD.Pro session.")
-    filename = staad.GetSTAADFile()
-    if not filename:
-        raise RuntimeError("STAAD.Pro must have a saved analytical .std model open.")
-    path = Path(filename)
+    path = saved_model_path(staad, expected_path)
     if not path.is_absolute() or path.suffix.lower() != ".std" or not path.is_file():
         raise RuntimeError(f"Not an existing STAAD analytical input file: {path}")
     if staad.IsPhysicalModel():
@@ -751,6 +809,9 @@ def clean_staad() -> None:
     if staad.IsAnalyzing():
         raise RuntimeError("Wait for STAAD analysis to finish before cleanup.")
 
+    # Cleanup runs before _get_openstaad(), which normally sets silent mode.
+    # Set it here too so a model switch does not wait for a desktop prompt.
+    staad.SetSilentMode(True)
     staad.SaveModel(True)
     # Exclusive creation keeps backups from earlier runs intact.
     with tempfile.NamedTemporaryFile(
@@ -802,6 +863,7 @@ def clean_staad() -> None:
                 f"Original input backup: {backup_path}", flush=True,
             )
     print(f"STAAD cleanup saved: {path}")
+    return path
 
 if __name__ == "__main__":
     import argparse

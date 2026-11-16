@@ -1,6 +1,77 @@
 # civil-steel-standard-web
 Web App to design Steel Standard structures in Tekla, Staad.Pro and Idea Statica
 
+## Agentic workflow checks
+
+Live runs stop when an application call fails, STAAD results are incomplete,
+or a connection check cannot be corrected using exposed numeric template
+parameters. Live failures are never replaced with simulated passing results.
+Connection retries recalculate the changed group and reuse unchanged passing
+groups. All strength envelopes must supply actual member properties and loads;
+sample loads and unrelated connection templates are not substituted.
+
+The UI displays saved agent progress while a run is executing. Only one agentic
+run can use the desktop tools at a time. A failed run cannot be signed off.
+The final review gate still requires an engineer; automated checks do not
+establish engineering acceptance by themselves.
+
+The server loads `.env` from the repository without overriding existing process
+environment variables. `PLANT_HOST` defaults to loopback and `PLANT_PORT` defaults
+to 8080. A separate STA-initialized worker owns each run; the UI's **Stop current
+run** button terminates that worker. `PLANT_RUN_TIMEOUT_SECONDS` and
+`PLANT_AGENT_TIMEOUT_SECONDS` bound the run and stalled calculation time.
+IDEA's solve budget is the greater of the per-effect agent budget and
+`PLANT_IDEA_CALCULATION_TIMEOUT_SECONDS` (default 600 seconds), capped by the
+total run budget. Services with calculation-job endpoints are polled and receive
+a cancellation request on timeout. Older services use a bounded synchronous
+request; its timeout does not confirm that their native computation stopped.
+On Windows, readiness and IDEA attachment also wait briefly for native solver
+cleanup and reject a new operation while an IDEA-owned `k2fem64.exe` is active.
+An IDEA request with several load effects receives the per-effect allowance
+multiplied by the effect count, capped by the total run limit.
+
+`PLANT_AGENT_MODEL`, `OPENAI_API_KEY`, and `OPENAI_BASE_URL` configure the optional
+GPT correction advisor. It selects only prevalidated candidate IDs when a
+failure is severe or repeated. Every proposal is rechecked and recalculated.
+Network failures and invalid proposals fall back to the deterministic candidate;
+`PLANT_MODEL_CALL_LIMIT` caps calls. Set `PLANT_LLM_ENABLED=false` to disable it.
+Credentials are never included in workflow state or browser responses.
+
+The default `poc2_automation` mode uses the existing reference application's
+8 load combinations and 3 envelopes automatically when the form supplies no
+custom combinations. A1 does not require a new rubric file. The A1?A8 analyzers,
+graders, correction loops, failure handling and result checks remain active.
+Connection scope follows the senior project's saved handoff: inner longitudinal
+and combined longitudinal/transverse families receive IDEA calculations; other
+families use the standard Tekla components (1004, 144, 20 and 30). Available
+double-longitudinal templates map explicitly to their inner families. Required
+IDEA templates are checked during generation. The final package distinguishes
+IDEA-checked families from standard details; standard details are never recorded
+as separate IDEA passes. `S355JR` uses the senior templates' `S 355` static-analysis
+catalogue entry in this mode, retaining the requested Tekla material and recording
+the catalogue mapping in the package.
+
+Explicit `load_configuration.load_combinations` or a JSON file selected by
+`PLANT_LOAD_COMBINATIONS_FILE` override the reference defaults. The file contains
+a `combinations` array; entries have `name`, `envelope`, `factors`, and optionally
+`envelope_id`. Custom combinations are validated. `reviewed_engineering` mode
+retains mandatory explicit criteria and early template coverage checks. Reference
+procedure defaults are recorded as `reference_procedure`; this does not label
+them as an independently approved project rubric.
+
+`POST /api/v2/agentic/retry-publication/{run_id}` retries a failed A7 handoff in
+a new tracked run. A6 first rechecks the original STAAD/IDEA evidence and template
+hashes; changed or failed evidence requires a complete new analysis. The failed
+source run is preserved. A7 verifies typed attributes and saves the model before
+the package reaches final engineer review.
+
+`PLANT_TEMPLATE_DIRECTORY` selects the template folder (default:
+`sample_projects`). The live IDEA adapter checks actual members, applied
+parameters and physical check limits. Missing templates are not replaced with
+unrelated connections or simulated passing results. IDEA summary values are
+utilization percentages, not raw strain percentages; see the
+[official result contract](https://developer.ideastatica.com/docs/api/connection-api/connection_api_concepts.html).
+
 ## Installation
 
 Prerequisites (Windows):
@@ -37,8 +108,9 @@ Prerequisites (Windows):
    pip install "C:\Program Files\Bentley\Engineering\STAAD.Pro 2025\STAAD\OpenSTAADPy\Setup\openstaadpy-25.0.1.1.tar.gz"
    ```
 
-   `ideastatica-connection-api` must exactly match the installed IDEA StatiCa
-   version; edit its pin in `requirements.txt` if yours differs. Tekla has no
+   `ideastatica-connection-api` must match the installed IDEA StatiCa product
+   release (for example, 26.0.x for a 26.0 service); edit its pin in
+   `requirements.txt` if yours differs. Tekla has no
    pip package: its Open API DLLs are loaded through `pythonnet` from
    `C:\TeklaStructures\2025.0\bin`, or from the `TEKLA_BIN_PATH` environment
    variable if set.

@@ -268,13 +268,13 @@ class StaadCleanupTests(unittest.TestCase):
 
     def test_no_open_file_rejected(self):
         self.filename = ""
-        with self.assertRaisesRegex(RuntimeError, "must have a saved"):
+        with self.assertRaisesRegex(RuntimeError, "existing saved analytical .std path"):
             staad_common.clean_staad()
         self.staad.SaveModel.assert_not_called()
 
     def test_missing_file_rejected(self):
         self.path.unlink()
-        with self.assertRaisesRegex(RuntimeError, "Not an existing"):
+        with self.assertRaisesRegex(RuntimeError, "existing saved analytical .std path"):
             staad_common.clean_staad()
         self.staad.SaveModel.assert_not_called()
 

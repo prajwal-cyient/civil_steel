@@ -10,6 +10,9 @@ from datetime import datetime
 from typing import Any, Dict
 from pydantic import BaseModel, ConfigDict, Field
 from agentic.state import WorkflowState, AgentLogEntry
+from agentic.load_combinations import resolve_combinations
+from agentic.config import workflow_mode
+from agentic.load_combinations import reference_combinations
 
 
 class GridInputSchema(BaseModel):
@@ -61,7 +64,9 @@ def run_a1_requirements(state: WorkflowState) -> WorkflowState:
     try:
         validated_grid = GridInputSchema(**grid_raw).model_dump()
         state.grid_config = validated_grid
-        state.load_config = load_raw
+        state.load_config = {**load_raw, "load_combinations": resolve_combinations(load_raw)}
+        state.readiness["workflow_mode"] = workflow_mode()
+        state.readiness["combination_source"] = "reference_procedure" if state.load_config["load_combinations"] == reference_combinations() else "project_input"
 
         # Set initial active profiles
         state.active_column_profile = validated_grid["column_profile"]

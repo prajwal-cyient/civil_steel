@@ -27,6 +27,7 @@ def run_a8_reporting(state: WorkflowState) -> WorkflowState:
 
     report = {
         "run_id": state.run_id,
+        "calculation_source_run": state.readiness.get("publication_resume_source", state.run_id),
         "completed_at": datetime.now().isoformat(),
         "summary": {
             "structure": f"Radiator Support Frame ({state.grid_config.get('n_long_bays')}x{state.grid_config.get('n_trans_bays')} bays)",
@@ -46,11 +47,14 @@ def run_a8_reporting(state: WorkflowState) -> WorkflowState:
         "connection_summaries": {
             jg: {
                 "passed": grader.passed,
-                "plastic_strain": grader.details.get("max_strain"),
+                "plate_utilization_percent": grader.details.get("max_plate_utilization"),
+                "local_deformation_utilization_percent": grader.details.get("max_deformation_utilization"),
                 "bolt_utilization": grader.details.get("max_bolt")
             }
             for jg, grader in state.joint_grader_results.items()
         },
+        "connection_scope": state.validation_report.get("connection_scope", {}),
+        "standard_detail_notice": "Standard Tekla details reproduce the senior procedure; they are not separate IDEA calculation passes.",
         "gate3_status": "PENDING_ENGINEER_ACCEPTANCE"
     }
 
@@ -74,6 +78,8 @@ def accept_gate3(state: WorkflowState, engineer_name: str = "Lead Structural Eng
     """
     Called when the human engineer clicks 'Accept & Sign Off' on the UI.
     """
+    if state.status != "PAUSED_AT_GATE3" or not state.validation_report.get("passed") or state.agent_statuses.get("A7", {}).get("status") != "PASSED":
+        raise ValueError("Only a verified package awaiting Gate 3 review can be accepted.")
     ts = datetime.now().strftime("%H:%M:%S")
     state.gate3_approved = True
     state.accepted_by = engineer_name

@@ -16,6 +16,8 @@ import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 from agentic.state import WorkflowState, AgentLogEntry
+from agentic.checks import template_coverage
+from agentic.config import workflow_mode
 
 # Standard catalog profile dimensions (height mm, width mm) fallback when Tekla is offline:
 STANDARD_PROFILE_DIMENSIONS: Dict[str, Tuple[float, float]] = {
@@ -417,9 +419,22 @@ def run_a3_frame_generator(state: WorkflowState) -> WorkflowState:
         cfg["transverse_brace_profile"] = state.active_trans_brace_profile
 
     try:
+        validate_profile_catalogue(cfg)
         candidate = generate_members(cfg)
         check_geometry(candidate)
         state.frame_candidate = candidate
+        coverage = template_coverage(candidate)
+        state.readiness["template_coverage"] = {k: v for k, v in coverage.items() if k != "joint_groups"}
+        if "joint_groups" in coverage:
+            from agentic.reference_procedure import build_connection_scope, template_for_group
+            scope = build_connection_scope(coverage["joint_groups"])
+            state.readiness["connection_scope"] = scope
+            required_missing = [name for name in scope["idea_required_groups"]
+                                if not template_for_group(name, scope["mode"] == "reference_procedure").is_file()]
+            if required_missing:
+                raise ValueError("Missing IDEA templates for calculated scope: " + ", ".join(required_missing))
+        if coverage["missing"] and workflow_mode() == "reviewed_engineering":
+            raise ValueError("Missing approved IDEA templates for: " + ", ".join(coverage["missing"]) + ". No live models were modified.")
         state.grid_config = cfg
         state.design_generation += 1
 
@@ -460,3 +475,13 @@ def run_a3_frame_generator(state: WorkflowState) -> WorkflowState:
         ))
 
     return state
+
+
+def validate_profile_catalogue(cfg: dict) -> None:
+    """Live workflows must use catalogue dimensions, never preview fallbacks."""
+    from common.tekla_common import get_profile_height, get_profile_width
+    keys = ("column_profile", "beam_profile", "longitudinal_brace_profile", "transverse_brace_profile")
+    for profile in {cfg[key] for key in keys}:
+        dimensions = (get_profile_height(profile), get_profile_width(profile))
+        if any(value is None or not math.isfinite(float(value)) or value <= 0 for value in dimensions):
+            raise ValueError(f"Profile {profile} is unavailable in the live Tekla catalogue.")

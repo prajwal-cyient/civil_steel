@@ -798,6 +798,7 @@
       </details>
 
       <button id="agentic-run-btn" class="agentic-run-btn" type="button">⚡ Run Agentic Design (A1–A8)</button>
+      <button id="agentic-cancel-btn" class="agentic-run-btn" type="button" hidden>Stop current run</button>
       <div id="agentic-status-msg" class="agentic-status-pill" style="display:none;"></div>
 
       <button id="generate-btn" type="button">Generate Structure (Manual)</button>
@@ -1787,6 +1788,7 @@ sendIdeaBtn.addEventListener('click', async () => {
    Autonomous Agentic Workflow (A1–A8 with Loop Engineering)
 --------------------------------------------------------------- */
 const agenticRunBtn = document.getElementById('agentic-run-btn');
+const agenticCancelBtn = document.getElementById('agentic-cancel-btn');
 const agenticStatusMsg = document.getElementById('agentic-status-msg');
 const gate3Banner = document.getElementById('gate3-banner');
 const gate3Summary = document.getElementById('gate3-summary');
@@ -1839,8 +1841,155 @@ function updateAgentSteps(agentStatuses, loopA, loopB) {
   }
 }
 
+function renderAgenticRunState(state) {
+  if (agenticStatusMsg) agenticStatusMsg.style.display = 'block';
+  if (gate3Banner) gate3Banner.style.display = 'none';
+  currentAgenticRunId = state.run_id;
+
+  // Update tracker UI with final state
+  updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {});
+
+  // 1. Update 3D Viewer & Members
+  if (state.frame_candidate?.members) {
+    lastGeneratedResult = state.frame_candidate;
+    document.getElementById('empty-hint').style.display = 'none';
+    renderStructure(state.frame_candidate.members);
+    renderSummary(state.frame_candidate.summary);
+
+    // Update senior's drawing revision and generation status
+    revCounter += 1;
+    document.getElementById('dwg-rev').textContent = `REV ${revCounter}`;
+    if (statusMsg) {
+      statusMsg.className = 'ok';
+      statusMsg.textContent = `Generated ${state.frame_candidate.summary?.total_members || state.frame_candidate.members.length} members successfully.`;
+    }
+  }
+
+  // 2. Update STAAD Results View
+  if (state.staad_results?.created) {
+    const staadResult = state.staad_results;
+    const staadMembers = Object.entries(staadResult.member_data_by_id || {}).map(([id, member]) => ({
+      ...member, id, type: memberName2type(member.name)
+    }));
+    if (staadMembers.length > 0) {
+      renderStructure(staadMembers, staadResult);
+    } else if (state.frame_candidate?.members) {
+      renderStructure(state.frame_candidate.members, staadResult);
+    }
+    renderStaadResults(staadResult);
+
+    // Senior's STAAD action status badge
+    if (staadStatus) {
+      staadStatus.className = 'ok';
+      staadStatus.textContent = `Members: ${staadResult.created} created.`;
+    }
+    const staadControls = document.getElementById('staad-view-controls');
+    if (staadControls) staadControls.hidden = false;
+  }
+
+  // 3. Update IDEA StatiCa Results View
+  if (state.ideastatica_results) {
+    for (const [jg, resData] of Object.entries(state.ideastatica_results)) {
+      renderIdeaStaticaResults(resData);
+      if (ideaStatus) {
+        ideaStatus.className = resData.passed ? 'ok' : 'error';
+        ideaStatus.textContent = `Connection ${resData.connection_id || 1} ${resData.passed ? 'passed' : 'failed'} checks.`;
+      }
+    }
+  }
+
+  // 4. Update Tekla View
+  if (state.tekla_results?.created) {
+    renderTeklaResults(state.tekla_results);
+    if (teklaStatus) {
+      teklaStatus.className = 'ok';
+      teklaStatus.textContent = `Sent ${state.tekla_results.created} members to Tekla.`;
+    }
+  }
+
+  // 5. Open Senior's Right-Side Results Drawer and expand all 3 panels
+  const resultsPane = document.getElementById('results-pane');
+  const resultsDivider = document.getElementById('results-divider');
+  if (resultsPane) resultsPane.hidden = false;
+  if (resultsDivider) resultsDivider.hidden = false;
+  const staadPanel = document.getElementById('staad-results-panel');
+  const ideaPanel = document.getElementById('idea-results-panel');
+  const teklaPanel = document.getElementById('tekla-results-panel');
+  if (staadPanel) { staadPanel.hidden = false; staadPanel.open = true; }
+  if (ideaPanel) { ideaPanel.hidden = false; ideaPanel.open = true; }
+  if (teklaPanel) { teklaPanel.hidden = false; teklaPanel.open = true; }
+
+  // 5. Present Gate 3 Acceptance if reached
+  if (state.status === 'PAUSED_AT_GATE3') {
+    if (gate3Banner) {
+      gate3Banner.style.display = 'flex';
+      const maxR = state.final_report?.summary?.staad_max_stress_ratio || 0.0;
+      const colP = state.final_report?.summary?.final_column_profile || '';
+      const hash = state.final_report?.summary?.package_integrity_hash || '';
+      gate3Summary.innerHTML = `Structure: <strong>${colP}</strong> | STAAD Max Stress Ratio: <strong>${maxR.toFixed(2)} &le; 1.0</strong> | Verified Package Hash: <code>${hash}</code>.<br>Loop A: ${state.loop_a_count} revisions | Loop B: ${Object.values(state.loop_b_count || {}).reduce((a, b) => a + b, 0)} revisions.`;
+      const scope = state.final_report?.connection_scope;
+      if (scope?.mode === 'reference_procedure') {
+        gate3Summary.append(document.createElement('br'), document.createTextNode(
+          `Senior workflow scope: ${scope.idea_required_groups.length} IDEA connection families checked; ${scope.standard_detail_groups.length} families use standard Tekla details. Standard details are not separate IDEA passes.`));
+      }
+    }
+    if (agenticStatusMsg) {
+      agenticStatusMsg.className = 'agentic-status-pill ok';
+      agenticStatusMsg.textContent = 'All automated agents completed successfully! Awaiting Gate 3 Acceptance.';
+    }
+  } else if (state.status === 'COMPLETED') {
+    agenticStatusMsg.className = 'agentic-status-pill ok';
+    agenticStatusMsg.textContent = `Design accepted by ${state.accepted_by || 'the responsible engineer'}.`;
+  } else if (state.status === 'FAILED' || state.status === 'CANCELLED') {
+    if (agenticStatusMsg) {
+      agenticStatusMsg.className = 'agentic-status-pill error';
+      agenticStatusMsg.textContent = `${state.status === 'CANCELLED' ? 'Run stopped' : 'Agentic Run Failed'}: ${state.error || 'Unknown error'}`;
+    }
+  }
+
+}
+
+async function restoreSavedAgenticRun() {
+  let runId = new URLSearchParams(window.location.search).get('run_id');
+  if (!runId) {
+    const response = await fetch('/api/v2/agentic/runs?limit=1');
+    if (!response.ok) return;
+    runId = (await response.json())[0]?.run_id;
+  }
+  if (!runId || !agenticRunBtn || agenticRunBtn.disabled) return;
+  currentAgenticRunId = runId;
+  agenticRunBtn.disabled = true;
+  try {
+    let state;
+    do {
+      const response = await fetch(`/api/v2/agentic/runs/${encodeURIComponent(runId)}`);
+      if (!response.ok) return;
+      state = await response.json();
+      if (state.status !== 'RUNNING' && state.status !== 'INITIALIZED') break;
+      const activeResponse = await fetch('/api/v2/agentic/active');
+      const active = activeResponse.ok ? await activeResponse.json() : null;
+      if (active?.run_id !== runId) {
+        renderAgenticRunState(state);
+        agenticStatusMsg.textContent = `Saved run ${runId} has no active worker. Its results remain available for inspection.`;
+        return;
+      }
+      updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {});
+      agenticStatusMsg.style.display = 'block';
+      agenticStatusMsg.className = 'agentic-status-pill running';
+      agenticStatusMsg.textContent = `${state.current_agent}: ${state.agent_statuses?.[state.current_agent]?.message || 'Running calculation'}`;
+      if (agenticCancelBtn) agenticCancelBtn.hidden = false;
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    } while (currentAgenticRunId === runId);
+    if (currentAgenticRunId === runId) renderAgenticRunState(state);
+  } finally {
+    agenticRunBtn.disabled = false;
+    if (agenticCancelBtn) agenticCancelBtn.hidden = true;
+  }
+}
+
 if (agenticRunBtn) {
   agenticRunBtn.addEventListener('click', async () => {
+    currentAgenticRunId = null;
     agenticRunBtn.disabled = true;
     agenticRunBtn.innerHTML = '⚙ Running Agentic Workflow…';
     if (agenticStatusMsg) {
@@ -1852,6 +2001,29 @@ if (agenticRunBtn) {
 
     // Reset steps
     updateAgentSteps({}, 0, {});
+
+    let polling = false;
+    const progressTimer = setInterval(async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        const response = await fetch('/api/v2/agentic/active');
+        if (!response.ok) return;
+        const progress = await response.json();
+        if (!progress) return;
+        currentAgenticRunId = progress.run_id;
+        if (agenticCancelBtn) agenticCancelBtn.hidden = false;
+        updateAgentSteps(progress.agent_statuses || {}, progress.loop_a_count || 0, progress.loop_b_count || {});
+        const stage = progress.agent_statuses?.[progress.current_agent];
+        if (agenticStatusMsg) {
+          agenticStatusMsg.textContent = `${progress.current_agent}: ${stage?.message || 'Running calculation…'}`;
+        }
+      } catch (_) {
+        // The main request reports terminal connection errors.
+      } finally {
+        polling = false;
+      }
+    }, 2000);
 
     try {
       const payload = {
@@ -1871,112 +2043,39 @@ if (agenticRunBtn) {
       }
 
       const state = await res.json();
-      currentAgenticRunId = state.run_id;
-
-      // Update tracker UI with final state
-      updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {});
-
-      // 1. Update 3D Viewer & Members
-      if (state.frame_candidate?.members) {
-        lastGeneratedResult = state.frame_candidate;
-        document.getElementById('empty-hint').style.display = 'none';
-        renderStructure(state.frame_candidate.members);
-        renderSummary(state.frame_candidate.summary);
-
-        // Update senior's drawing revision and generation status
-        revCounter += 1;
-        document.getElementById('dwg-rev').textContent = `REV ${revCounter}`;
-        if (statusMsg) {
-          statusMsg.className = 'ok';
-          statusMsg.textContent = `Generated ${state.frame_candidate.summary?.total_members || state.frame_candidate.members.length} members successfully.`;
-        }
-      }
-
-      // 2. Update STAAD Results View
-      if (state.staad_results?.created) {
-        const staadResult = state.staad_results;
-        const staadMembers = Object.entries(staadResult.member_data_by_id || {}).map(([id, member]) => ({
-          ...member, id, type: memberName2type(member.name)
-        }));
-        if (staadMembers.length > 0) {
-          renderStructure(staadMembers, staadResult);
-        } else if (state.frame_candidate?.members) {
-          renderStructure(state.frame_candidate.members, staadResult);
-        }
-        renderStaadResults(staadResult);
-
-        // Senior's STAAD action status badge
-        if (staadStatus) {
-          staadStatus.className = 'ok';
-          staadStatus.textContent = `Members: ${staadResult.created} created.`;
-        }
-        const staadControls = document.getElementById('staad-view-controls');
-        if (staadControls) staadControls.hidden = false;
-      }
-
-      // 3. Update IDEA StatiCa Results View
-      if (state.ideastatica_results) {
-        for (const [jg, resData] of Object.entries(state.ideastatica_results)) {
-          renderIdeaStaticaResults(resData);
-          if (ideaStatus) {
-            ideaStatus.className = resData.passed ? 'ok' : 'error';
-            ideaStatus.textContent = `Connection ${resData.connection_id || 1} ${resData.passed ? 'passed' : 'failed'} checks.`;
-          }
-        }
-      }
-
-      // 4. Update Tekla View
-      if (state.tekla_results?.created) {
-        renderTeklaResults(state.tekla_results);
-        if (teklaStatus) {
-          teklaStatus.className = 'ok';
-          teklaStatus.textContent = `Sent ${state.tekla_results.created} members to Tekla.`;
-        }
-      }
-
-      // 5. Open Senior's Right-Side Results Drawer and expand all 3 panels
-      const resultsPane = document.getElementById('results-pane');
-      const resultsDivider = document.getElementById('results-divider');
-      if (resultsPane) resultsPane.hidden = false;
-      if (resultsDivider) resultsDivider.hidden = false;
-      const staadPanel = document.getElementById('staad-results-panel');
-      const ideaPanel = document.getElementById('idea-results-panel');
-      const teklaPanel = document.getElementById('tekla-results-panel');
-      if (staadPanel) { staadPanel.hidden = false; staadPanel.open = true; }
-      if (ideaPanel) { ideaPanel.hidden = false; ideaPanel.open = true; }
-      if (teklaPanel) { teklaPanel.hidden = false; teklaPanel.open = true; }
-
-      // 5. Present Gate 3 Acceptance if reached
-      if (state.status === 'PAUSED_AT_GATE3') {
-        if (gate3Banner) {
-          gate3Banner.style.display = 'flex';
-          const maxR = state.final_report?.summary?.staad_max_stress_ratio || 0.0;
-          const colP = state.final_report?.summary?.final_column_profile || '';
-          const hash = state.final_report?.summary?.package_integrity_hash || '';
-          gate3Summary.innerHTML = `Structure: <strong>${colP}</strong> | STAAD Max Stress Ratio: <strong>${maxR.toFixed(2)} &le; 1.0</strong> | Verified Package Hash: <code>${hash}</code>.<br>Loop A: ${state.loop_a_count} revisions | Loop B: ${Object.values(state.loop_b_count || {}).reduce((a, b) => a + b, 0)} revisions.`;
-        }
-        if (agenticStatusMsg) {
-          agenticStatusMsg.className = 'agentic-status-pill ok';
-          agenticStatusMsg.textContent = 'All automated agents completed successfully! Awaiting Gate 3 Acceptance.';
-        }
-      } else if (state.status === 'FAILED') {
-        if (agenticStatusMsg) {
-          agenticStatusMsg.className = 'agentic-status-pill error';
-          agenticStatusMsg.textContent = `Agentic Run Failed: ${state.error || 'Unknown error'}`;
-        }
-      }
-
+      renderAgenticRunState(state);
     } catch (err) {
       if (agenticStatusMsg) {
         agenticStatusMsg.className = 'agentic-status-pill error';
         agenticStatusMsg.textContent = String(err.message || err);
       }
     } finally {
+      clearInterval(progressTimer);
+      if (agenticCancelBtn) agenticCancelBtn.hidden = true;
       agenticRunBtn.disabled = false;
       agenticRunBtn.innerHTML = '⚡ Run Agentic Design (A1–A8)';
     }
   });
 }
+
+if (agenticCancelBtn) {
+  agenticCancelBtn.addEventListener('click', async () => {
+    if (!currentAgenticRunId) return;
+    agenticCancelBtn.disabled = true;
+    try {
+      const response = await fetch(`/api/v2/agentic/cancel/${currentAgenticRunId}`, { method: 'POST' });
+      if (!response.ok) throw new Error(await response.text());
+      agenticStatusMsg.textContent = 'Stopping the current calculation…';
+    } catch (error) {
+      agenticStatusMsg.textContent = `Could not stop run: ${error.message}`;
+    } finally {
+      agenticCancelBtn.disabled = false;
+    }
+  });
+}
+
+// Recover saved results and ongoing progress after a browser refresh.
+restoreSavedAgenticRun().catch(() => {});
 
 if (gate3AcceptBtn) {
   gate3AcceptBtn.addEventListener('click', async () => {

@@ -216,7 +216,7 @@ def create_app():
     """
     from fastapi import FastAPI, HTTPException
     from fastapi.staticfiles import StaticFiles
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, JSONResponse
     from pydantic import BaseModel, ConfigDict, Field
     from typing import Any, Dict, List, Optional
     import pathlib
@@ -381,6 +381,15 @@ def create_app():
 
     app = FastAPI(title="Structural Grid Generator API")
 
+    @app.middleware("http")
+    async def reserve_desktop_tools(request, call_next):
+        from agentic.execution import CONTROLLER
+        mutation = request.method == "POST" and request.url.path in (
+            "/api/v1/radiator_support/to_staad", "/api/v1/radiator_support/to_tekla", "/api/v1/to_ideastatica")
+        if mutation and CONTROLLER.run_id:
+            return JSONResponse(status_code=409, content={"detail": "An agentic run currently owns the desktop tools."})
+        return await call_next(request)
+
     # Serves any assets referenced from the UI (e.g. /static/... paths)
     # if the page is later split into multiple files.
     if static_dir.is_dir():
@@ -475,6 +484,8 @@ def create_app():
 
 
 def start_api_server(port):
+    from agentic.config import load_environment, settings
+    load_environment()
     try:
         import uvicorn
     except ImportError:
@@ -486,17 +497,19 @@ def start_api_server(port):
         sys.exit(1)
 
     app = create_app()
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host=settings().host, port=port)
 
 
 def main():
+    from agentic.config import load_environment, settings
+    load_environment()
     parser = argparse.ArgumentParser(
         description="Generate a beam/column/bracing grid from a JSON spec."
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=8080,
+        default=settings().port,
         help=(
             "API server on 0.0.0.0:PORT exposing "
             "POST /api/v1/generate_radiator_support"

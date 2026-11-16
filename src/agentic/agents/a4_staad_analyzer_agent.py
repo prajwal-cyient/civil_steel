@@ -8,74 +8,56 @@ Triggers Loop A corrective action when boundary conditions fail.
 """
 
 from datetime import datetime
+from copy import deepcopy
+from math import isfinite
 import asyncio
 from typing import Any, Dict, List, Optional
-from agentic.state import WorkflowState, AgentLogEntry, GraderResult
+from agentic.state import WorkflowState, AgentLogEntry, GraderResult, fail_workflow
 from agentic.ladders import get_next_profile
+from agentic.catalogue import frame_options
+from agentic.advisor import choose_correction
+from agentic.evidence import frame_signature
 
 
 async def send_to_staad(data: dict) -> dict:
+    """Run live OpenSTAAD; execution errors must never become simulated passes."""
+    from radiator_support.staad_integration import send_to_staad as live_send
+    return await live_send(data)
+
+
+def frame_correction_scope(results: dict, target: str) -> list[dict]:
+    """Identify every member changed by a shared section variable.
+
+    The reference generator has uniform category profiles and connection
+    templates. Mixed per-member profiles are not yet a validated design mode.
+    Therefore a category-wide revision is allowed only if ALL affected members
+    actually fail; otherwise stop rather than resize already passing elements.
     """
-    Sends members and load configuration to STAAD.Pro via OpenSTAAD COM API.
-    If OpenSTAAD COM is unavailable (or software is offline), executes a
-    deterministic structural analysis simulation double matching the member properties.
-    """
-    try:
-        from radiator_support.staad_integration import send_to_staad as _openstaad_send
-        return await _openstaad_send(data)
-    except Exception as exc:
-        members_split = data.get("members_split_beams", [])
-        grid = data.get("grid", {})
-        col_prof = "CFRHS100X100X4"
-        for m in members_split:
-            if m.get("type") == "column":
-                col_prof = m.get("profile", col_prof)
-                break
-
-        sim_ratio = 1.15 if "100X100" in col_prof else (0.88 if "120X120" in col_prof else 0.72)
-        sim_drift_exceeded = True if "100X100" in col_prof else False
-
-        sim_member_data = {}
-        for idx, m in enumerate(members_split, start=900001):
-            sim_member_data[idx] = m
-
-        return {
-            "created": len(members_split),
-            "failed": 0,
-            "errors": [],
-            "property_errors": [],
-            "member_data_by_id": sim_member_data,
-            "member_type_min_ratios": {"column": 0.42, "beam": 0.35, "longitudinal_brace": 0.22},
-            "member_type_max_ratios": {"column": sim_ratio, "beam": 0.65, "longitudinal_brace": 0.45},
-            "load_envelopes": [{"envelopeId": 1, "envelopeType": "STRENGTH", "loadCases": [1]}],
-            "1": {"load_case_title": "1.35 DL + 1.5 LL (ULS)", "forces": {}},
-            "envelope_summary_results": {
-                "1": {
-                    "node_displacements_limits": {"min_X": 12.4, "max_X": 15.2, "min_Z": 8.1, "max_Z": 9.4},
-                    "node_displacements_limits_exceed_col_height_200": {"min_X": sim_drift_exceeded, "max_X": False, "min_Z": False, "max_Z": False}
-                }
-            },
-            "joint_groups": {
-                "inner_node_1_longitudinal_1_transverse_bracing": {
-                    "joints": [{"node": 100015, "members": [{"member_type": "column", "beam": 900015}]}]
-                }
-            },
-            "envelope_load_cases_by_joint_group": {
-                1: {
-                    "inner_node_1_longitudinal_1_transverse_bracing": {
-                        "member_updates": [],
-                        "load_effects": [
-                            {
-                                "name": "Governing ULS",
-                                "member_loadings": [{"member_name": "column", "n": -145.2, "vy": 12.4, "vz": 8.1}]
-                            }
-                        ]
-                    }
-                }
-            },
-            "simulation": True,
-            "simulation_reason": str(exc)
-        }
+    categories = {"column": ("column",), "beam": ("beam_longitudinal", "beam_transverse", "beam"),
+                  "longitudinal_brace": ("bracing_longitudinal", "bracing_longitudinal_mirrored"),
+                  "transverse_brace": ("bracing_transverse", "bracing_transverse_mirrored")}[target]
+    ids = [identifier for kind, identifiers in results.get("member_ids_by_type", {}).items()
+           if kind in categories for identifier in identifiers]
+    ratios = {str(key): value for key, value in results.get("member_ratios", {}).items()}
+    data = {str(key): value for key, value in results.get("member_data_by_id", {}).items()}
+    if not ids or any(str(identifier) not in ratios or str(identifier) not in data for identifier in ids):
+        raise ValueError("Exact per-member correction evidence is missing; no section was changed.")
+    affected, passing = [], []
+    for identifier in ids:
+        row, member = ratios[str(identifier)], data[str(identifier)]
+        ratio = row.get("ratio")
+        if type(ratio) not in (int, float) or not isfinite(ratio) or ratio < 0:
+            raise ValueError(f"Invalid correction evidence for member {identifier}.")
+        entry = {"id": identifier, "name": member.get("name", row.get("name")),
+                 "physical_member": member.get("tekla_name", member.get("name")),
+                 "ratio": ratio, "profile": member.get("profile")}
+        (affected if ratio > 1.0 else passing).append(entry)
+    if passing:
+        raise ValueError(f"Localized correction required: {len(affected)} failing and {len(passing)} passing {target} members. "
+                         f"Failing locations: {[(row['id'], row['name']) for row in affected[:8]]}. "
+                         "The reference shared-profile variable would also change passing elements; mixed-profile geometry/templates "
+                         "are not validated. No section was changed.")
+    return affected
 
 
 def grade_staad_results(staad_res: Dict[str, Any], col_height_mm: float) -> GraderResult:
@@ -85,14 +67,73 @@ def grade_staad_results(staad_res: Dict[str, Any], col_height_mm: float) -> Grad
     2. Lateral drift <= H_col / 200.
     """
     max_ratios = staad_res.get("member_type_max_ratios") or staad_res.get("member_type_max_ratios_by_type_max") or {}
+    invalid = []
+    status = staad_res.get("analysis_status") or {}
+    if staad_res.get("analysis_failed") or status.get("ReturnValue") not in (2, 3) or status.get("NoOfErrors", 0):
+        invalid.append(f"STAAD analysis did not complete successfully: {status}")
+    for field in ("failed", "property_assignment_failed", "load_cases_failed", "errors", "property_errors", "load_errors"):
+        if staad_res.get(field):
+            invalid.append(f"STAAD reported {field}: {staad_res[field]}")
+    if staad_res.get("simulation"):
+        invalid.append("Simulated results cannot verify a live design.")
+    member_ratios = {str(key): row for key, row in staad_res.get("member_ratios", {}).items()}
+    if staad_res.get("member_data_by_id") and not member_ratios:
+        invalid.append("Individual design ratios are missing for generated members.")
+    if "member_ratios" in staad_res:
+        expected = {str(key) for key in staad_res.get("member_data_by_id", {})}
+        if expected - set(member_ratios):
+            invalid.append("Individual design ratios are missing for generated members.")
+        for identifier, row in member_ratios.items():
+            value = row.get("ratio") if isinstance(row, dict) else None
+            if type(value) not in (int, float) or not isfinite(value) or value < 0:
+                invalid.append(f"Invalid individual design ratio for member {identifier}.")
+        if not invalid:
+            for kind, identifiers in staad_res.get("member_ids_by_type", {}).items():
+                values = [member_ratios[str(i)]["ratio"] for i in identifiers if str(i) in member_ratios]
+                if values and (kind not in max_ratios or abs(max(values)-max_ratios[kind]) > 1e-7):
+                    invalid.append(f"Member-type maximum disagrees with individual ratios for {kind}.")
+    if invalid:
+        return GraderResult(passed=False, score=0.0, summary="; ".join(invalid),
+                            details={"invalid_results": True}, corrective_action_needed=False)
+    if not max_ratios or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not isfinite(v) or v < 0 for v in max_ratios.values()):
+        invalid.append("Missing, negative, or nonfinite member design ratios.")
+    expected_types = {kind for kind, ids in staad_res.get("member_ids_by_type", {}).items() if ids}
+    if expected_types - set(max_ratios):
+        invalid.append("Member design ratios do not cover all generated member types.")
+    envelopes = staad_res.get("envelope_summary_results") or {}
+    drift_fields = {"min_X", "max_X", "min_Z", "max_Z"}
+    if staad_res.get("units", {}).get("displacement") != "mm":
+        invalid.append("Displacements must be explicitly normalized to mm.")
+    for env in envelopes.values():
+        limits = env.get("node_displacements_limits", {})
+        flags = env.get("node_displacements_limits_exceed_col_height_200", {})
+        valid_values = drift_fields.issubset(limits) and all(
+            type(limits[key]) in (int, float) and isfinite(limits[key]) and limits[key] >= 0 for key in drift_fields)
+        valid_flags = drift_fields.issubset(flags) and all(type(flags[key]) is bool for key in drift_fields)
+        if not valid_values or not valid_flags:
+            invalid.append("Missing or incomplete displacement checks.")
+        elif any(flags[key] != (limits[key] > col_height_mm / 200.0) for key in drift_fields):
+            invalid.append("Reported displacement checks disagree with the actual displacements.")
+    if not envelopes:
+        invalid.append("No displacement envelopes returned.")
+    service_ids = {str(env["envelopeId"]) for env in staad_res.get("load_envelopes", []) if env.get("envelopeType") == "SERVICEABILITY"}
+    if "load_envelopes" in staad_res and (not service_ids or not service_ids.issubset({str(key) for key in envelopes})):
+        invalid.append("Serviceability envelope evidence is missing.")
+    if invalid:
+        return GraderResult(passed=False, score=0.0, summary="; ".join(invalid),
+                            details={"invalid_results": True}, corrective_action_needed=False)
     max_col_ratio = max_ratios.get("column", 0.0)
     max_beam_ratio = max(max_ratios.get("beam", 0.0), max_ratios.get("beam_longitudinal", 0.0), max_ratios.get("beam_transverse", 0.0))
     overall_max_ratio = max([v for v in max_ratios.values()] or [0.0])
+    failed_members = [{"id": key, "name": row.get("name"), "ratio": row["ratio"]}
+                      for key, row in member_ratios.items() if row["ratio"] > 1.0]
 
     # Check drift limit
     drift_exceeded = False
     env_summaries = staad_res.get("envelope_summary_results", {})
     for env_id, env_data in env_summaries.items():
+        if service_ids and str(env_id) not in service_ids:
+            continue
         exceed_dict = env_data.get("node_displacements_limits_exceed_col_height_200", {})
         if any(exceed_dict.values()):
             drift_exceeded = True
@@ -119,7 +160,17 @@ def grade_staad_results(staad_res: Dict[str, Any], col_height_mm: float) -> Grad
         )
 
     # Failed boundary conditions -> build corrective action
-    fix_target = "column" if max_col_ratio > 1.0 or drift_exceeded else "beam"
+    governing_type = max(max_ratios, key=max_ratios.get)
+    if drift_exceeded or governing_type == "column":
+        fix_target = "column"
+    elif "bracing_longitudinal" in governing_type or "longitudinal_brace" in governing_type:
+        fix_target = "longitudinal_brace"
+    elif "bracing_transverse" in governing_type or "transverse_brace" in governing_type:
+        fix_target = "transverse_brace"
+    elif "beam" in governing_type:
+        fix_target = "beam"
+    else:
+        return GraderResult(passed=False, score=0, summary=f"No approved correction mapping for member type {governing_type}.", details={"invalid_results": True})
     return GraderResult(
         passed=False,
         score=max(0.0, 1.0 - (overall_max_ratio - 1.0)),
@@ -129,7 +180,8 @@ def grade_staad_results(staad_res: Dict[str, Any], col_height_mm: float) -> Grad
             "column_ratio": max_col_ratio,
             "beam_ratio": max_beam_ratio,
             "drift_exceeded": drift_exceeded,
-            "fix_target": fix_target
+            "fix_target": fix_target,
+            "failed_members": failed_members
         },
         corrective_action_needed=True,
         corrective_action={"fix_target": fix_target}
@@ -151,17 +203,36 @@ async def run_a4_staad_analyzer(state: WorkflowState) -> WorkflowState:
 
     payload = {
         "grid": grid,
-        "members_split_beams": members_split,
-        "load_configuration": load_cfg
+        "members_split_beams": deepcopy(members_split),
+        "load_configuration": load_cfg,
+        "expected_staad_model_path": state.readiness.get("staad_model_path"),
     }
 
     # Calls send_to_staad directly from this agent
-    staad_res = await send_to_staad(payload)
+    # A new frame analysis invalidates all dependent connection/publication evidence.
+    state.ideastatica_results.clear()
+    state.joint_grader_results.clear()
+    state.active_operation_params.clear()
+    state.loop_b_count.clear()
+    state.validation_report.clear()
+    state.tekla_results.clear()
+    state.final_report.clear()
+    state.staad_results.clear()
+    state.frame_grader_result = None
+    state.gate3_approved = False
+    try:
+        staad_res = await send_to_staad(payload)
+    except Exception as exc:
+        return fail_workflow(state, "A4", f"STAAD execution failed: {exc}")
     state.staad_results = staad_res
+    staad_res["candidate_signature"] = frame_signature(state)
 
     # Run the Frame Grader
     grader = grade_staad_results(staad_res, col_height)
     state.frame_grader_result = grader
+
+    if grader.details.get("invalid_results"):
+        return fail_workflow(state, "A4", grader.summary)
 
     if grader.passed:
         msg = f"STAAD Analysis Passed! {grader.summary}"
@@ -177,31 +248,43 @@ async def run_a4_staad_analyzer(state: WorkflowState) -> WorkflowState:
         # Boundary conditions failed -> Check if Loop A can correct it
         if state.loop_a_count < state.max_loop_a:
             target = grader.details.get("fix_target", "column")
-            old_prof = state.active_column_profile if target == "column" else state.active_beam_profile
-            new_prof = get_next_profile(old_prof, target)
-
-            # If target reached ladder ceiling, try alternate critical member
-            if (not new_prof or new_prof == old_prof) and target == "column":
-                target = "beam"
-                old_prof = state.active_beam_profile
-                new_prof = get_next_profile(old_prof, "beam")
-
-            cand_signature = f"col={new_prof if target == 'column' else state.active_column_profile}|beam={new_prof if target == 'beam' else state.active_beam_profile}"
+            profile_fields = {
+                "column": "active_column_profile", "beam": "active_beam_profile",
+                "longitudinal_brace": "active_long_brace_profile", "transverse_brace": "active_trans_brace_profile",
+            }
+            field = profile_fields[target]
+            old_prof = getattr(state, field)
+            try:
+                affected_members = frame_correction_scope(staad_res, target)
+            except ValueError as exc:
+                return fail_workflow(state, "A4", f"{grader.summary} Correction stopped: {exc}")
+            options = frame_options(old_prof, target, state.load_config.get("country", "EUROPE"))
+            if not options:
+                return fail_workflow(state, "A4", f"No larger approved STAAD catalogue section is available for {target} ({old_prof}).")
+            selected = options[0]
+            # Straightforward failures use the deterministic next section. GPT
+            # may choose among verified larger sections for severe/repeated failures.
+            if state.loop_a_count or grader.details.get("overall_max_ratio", 0) > 1.5:
+                selected = choose_correction(state, "frame", grader.model_dump(), options, selected["id"])
+            new_prof = selected["profile"]
+            profiles = {name: getattr(state, attr) for name, attr in profile_fields.items()}
+            profiles[target] = new_prof
+            cand_signature = str(sorted(profiles.items()))
 
             if new_prof and new_prof != old_prof and cand_signature not in state.candidate_history:
                 state.candidate_history.append(cand_signature)
                 state.loop_a_count += 1
-                if target == "column":
-                    state.active_column_profile = new_prof
-                else:
-                    state.active_beam_profile = new_prof
+                setattr(state, field, new_prof)
 
                 state.loop_a_history.append({
                     "iteration": state.loop_a_count,
                     "target": target,
                     "failing_profile": old_prof,
                     "upgraded_profile": new_prof,
-                    "reason": grader.summary
+                    "reason": grader.summary,
+                    "evidence": grader.details,
+                    "affected_members": affected_members,
+                    "unrelated_sections_changed": False,
                 })
                 msg = f"Loop A ({state.loop_a_count}/{state.max_loop_a}): {grader.summary} -> Upgraded {target.capitalize()} to {new_prof}"
                 state.agent_statuses["A4"] = {"status": "REVISING", "message": msg, "target": target, "next_profile": new_prof}
@@ -216,7 +299,9 @@ async def run_a4_staad_analyzer(state: WorkflowState) -> WorkflowState:
                 return state
 
         # If ceiling reached or cannot fix automatically
-        msg = f"STAAD Analysis Failed: {grader.summary} (Reached max retries)"
+        msg = f"STAAD Analysis Failed: {grader.summary} (No permitted revision remains or retry limit reached)"
+        state.status = "FAILED"
+        state.error = msg
         state.agent_statuses["A4"] = {"status": "FAILED", "message": msg}
         state.logs.append(AgentLogEntry(
             agent_id="A4",

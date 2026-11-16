@@ -17,6 +17,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch, AsyncMock
 
 # Ensure src/ is on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -117,6 +118,10 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
                 "1": {"node_displacements_limits_exceed_col_height_200": {"min_X": False, "max_X": False}}
             }
         }
+        staad_pass["analysis_status"] = {"ReturnValue": 2, "NoOfErrors": 0}
+        staad_pass["units"] = {"displacement": "mm"}
+        staad_pass["envelope_summary_results"]["1"]["node_displacements_limits"] = dict.fromkeys(("min_X", "max_X", "min_Z", "max_Z"), 10.0)
+        staad_pass["envelope_summary_results"]["1"]["node_displacements_limits_exceed_col_height_200"].update(min_Z=False, max_Z=False)
         g_pass = grade_staad_results(staad_pass, col_height_mm=5000)
         self.assertTrue(g_pass.passed)
 
@@ -127,6 +132,10 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
                 "1": {"node_displacements_limits_exceed_col_height_200": {"min_X": False, "max_X": False}}
             }
         }
+        staad_fail["analysis_status"] = {"ReturnValue": 2, "NoOfErrors": 0}
+        staad_fail["units"] = {"displacement": "mm"}
+        staad_fail["envelope_summary_results"]["1"]["node_displacements_limits"] = dict.fromkeys(("min_X", "max_X", "min_Z", "max_Z"), 10.0)
+        staad_fail["envelope_summary_results"]["1"]["node_displacements_limits_exceed_col_height_200"].update(min_Z=False, max_Z=False)
         g_fail = grade_staad_results(staad_fail, col_height_mm=5000)
         self.assertFalse(g_fail.passed)
         self.assertEqual(g_fail.details.get("fix_target"), "column")
@@ -147,7 +156,7 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
         # Fail local deformation (>3.0% limit)
         failing_def = {
             "summary": [
-                {"name": "Plates - Local deformation", "check_value": 3.8, "check_status": False, "skipped": False},
+                {"name": "Plates - Local deformation", "check_value": 126.67, "check_status": False, "skipped": False},
                 {"name": "Bolts", "check_value": 65.0, "check_status": True, "skipped": False}
             ]
         }
@@ -208,51 +217,25 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
             self.assertEqual(len(recent), 1)
             self.assertEqual(recent[0]["run_id"], "run_persisted_123")
 
-    def test_orchestrator_end_to_end(self):
-        """Runs the complete 8-agent LangGraph workflow end-to-end."""
-        payload = {
-            "grid": {
-                "n_long_bays": 5,
-                "n_trans_bays": 3,
-                "bay_long_mm": 2600,
-                "bay_trans_mm": 3300,
-                "col_height_mm": 5000,
-                "total_structure_height": 5300,
-                "column_profile": "CFRHS100X100X4",  # Loops A to upsize
-                "beam_profile": "HEA140",
-                "longitudinal_brace_profile": "CFRHS100X100X4",
-                "transverse_brace_profile": "CFRHS100X100X4"
-            },
-            "load_configuration": {
-                "radiator_support_type": "support_at_middle",
-                "wind_speed_mph": 90
-            }
-        }
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            state = loop.run_until_complete(run_agentic_workflow(payload))
-        finally:
-            loop.close()
-
-        # Validate Gate 3 reached
-        self.assertEqual(state.status, "PAUSED_AT_GATE3")
-        self.assertTrue(len(state.logs) >= 8)
-
-        # Validate Loop A occurred
-        self.assertGreater(state.loop_a_count, 0)
-        self.assertNotEqual(state.active_column_profile, "CFRHS100X100X4")
-
-        # Validate Loop B occurred
-        total_loop_b = sum(state.loop_b_count.values())
-        self.assertGreater(total_loop_b, 0)
-
-        # Validate Gate 3 acceptance
-        accepted_state = accept_gate3(state, "Lead Structural Engineer")
-        self.assertEqual(accepted_state.status, "COMPLETED")
-        self.assertTrue(accepted_state.gate3_approved)
-        self.assertEqual(accepted_state.accepted_by, "Lead Structural Engineer")
+    def test_orchestrator_stops_on_failed_analysis(self):
+        """Exercise graph failure routing with adapters replaced; never touch live models."""
+        from agentic import orchestrator
+        from agentic.agents import a3_frame_generator_agent as a3, a4_staad_analyzer_agent as a4
+        candidate = {"members": [{"name": "column", "p1": [0, 0, 0], "p2": [0, 0, 5000]}],
+                     "members_split_beams": [{"name": "column", "p1": [0, 0, 0], "p2": [0, 0, 5000]}]}
+        with tempfile.TemporaryDirectory() as directory:
+            store = SqliteWorkflowStore(os.path.join(directory, "runs.db"))
+            with patch("agentic.store.WORKFLOW_STORE", store), \
+                 patch.object(orchestrator, "run_a2_readiness", side_effect=lambda state: state), \
+                 patch.object(a3, "generate_members", return_value=candidate), \
+                 patch.object(a3, "validate_profile_catalogue"), \
+                 patch.object(a3, "template_coverage", return_value={"missing": []}), \
+                 patch.object(a4, "send_to_staad", new=AsyncMock(return_value={"analysis_failed": True})), \
+                 patch.object(orchestrator, "run_a5_ideastatica_analyzer") as idea:
+                state = asyncio.run(run_agentic_workflow({"grid": {}, "load_configuration": {"load_combinations": [{"name": "SLS", "envelope": "SERVICEABILITY", "factors": {"DL": 1}}, {"name": "ULS", "envelope": "STRENGTH", "factors": {"DL": 1.35}}]}}, run_id="controlled_failure"))
+        self.assertEqual(state.status, "FAILED")
+        self.assertEqual(state.current_agent, "A4")
+        idea.assert_not_called()
 
 
 if __name__ == "__main__":

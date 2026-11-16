@@ -9,10 +9,12 @@ Triggers Loop B corrective action when connection checks fail.
 
 from datetime import datetime
 import json
-from math import pi
+import hashlib
+from math import pi, isfinite
 import os
 import sys
 import time
+from agentic.idea_calculation import calculate_connection, calculation_budget
 from typing import Any, Dict, List, Optional
 
 try:
@@ -52,7 +54,9 @@ except ImportError:
     IdeaParameter = Any
     ParameterUpdateResponse = Any
 
-from agentic.state import WorkflowState, AgentLogEntry, GraderResult
+from agentic.state import WorkflowState, AgentLogEntry, GraderResult, fail_workflow
+from agentic.config import settings
+from agentic.advisor import choose_correction
 from agentic.ladders import (
     get_next_plate_thickness,
     get_next_bolt_diameter,
@@ -106,6 +110,8 @@ def _get_client(attacher_only: bool = True):
     """
     Connects to the Connection API service.
     """
+    from agentic.idea_runtime import ensure_idea_solver_idle
+    ensure_idea_solver_idle()
     if ConnectionApiServiceAttacher is None:
         raise IdeaStaticaConnectionError(
             "ideastatica-connection-api is not installed "
@@ -145,12 +151,16 @@ def _resolve_connection(api_client, project_id: str, selector: Dict[str, Any]):
 
     if "name" in selector:
         needle = selector["name"].lower()
-        matches = [c for c in connections if needle in (c.name or "").lower()]
+        matches = [c for c in connections if needle == (c.name or "").lower()]
+        if not matches:
+            matches = [c for c in connections if needle in (c.name or "").lower()]
         if not matches:
             names = [c.name for c in connections]
             raise IdeaStaticaJointError(
                 f"No connection name contains {selector['name']!r}. Available: {names}"
             )
+        if len(matches) != 1:
+            raise IdeaStaticaJointError(f"Ambiguous connection selector {selector['name']!r}.")
         return matches[0]
 
     raise IdeaStaticaJointError("connection_selector must have 'id', 'index', or 'name'.")
@@ -158,13 +168,27 @@ def _resolve_connection(api_client, project_id: str, selector: Dict[str, Any]):
 
 def _resolve_member(members: List[Any], member_name: str):
     needle = member_name.lower()
-    matches = [m for m in members if needle in (m.name or "").lower()]
+    matches = [m for m in members if needle == (m.name or "").lower()]
+    if not matches:
+        matches = [m for m in members if needle in (m.name or "").lower()]
     if not matches:
         names = [m.name for m in members]
         raise IdeaStaticaJointError(
             f"No member name contains {member_name!r}. Available: {names}"
         )
+    if len(matches) != 1:
+        raise IdeaStaticaJointError(f"Ambiguous member selector {member_name!r}.")
     return matches[0]
+
+
+def _section_update_member(members, name):
+    # Senior payloads name a transverse proxy, but the supplied templates
+    # contain only the aligned structural beam. Resolve it explicitly and
+    # permit read-only verification below; never silently drop the update.
+    if name == "beam_transverse_placeholder" and not any(
+            (member.name or "").lower() == name for member in members):
+        return _resolve_member(members, "beam_transverse")
+    return _resolve_member(members, name)
 
 
 def _free_end_position(member: Any) -> Any:
@@ -179,12 +203,23 @@ def _free_end_position(member: Any) -> Any:
 
 
 def _resolve_cross_section_id(api_client, project_id: str, mprl_cross_section_name: str, mprl_material_name: str) -> int:
+    def matching(section):
+        section = _to_jsonable(section)
+        if not isinstance(section, dict):
+            return False
+        material = section.get("material") or {}
+        if not isinstance(material, dict):
+            return False
+        material = material.get("element") or material
+        normalize = lambda value: "".join(str(value or "").upper().split())
+        return (
+            normalize(section.get("name") or section.get("mprl_name")) == normalize(mprl_cross_section_name)
+            and normalize(material.get("name")) == normalize(mprl_material_name)
+        )
+
     existing = api_client.material.get_cross_sections(project_id)
     for cs in existing:
-        cs_name = cs.get("name") if isinstance(cs, dict) else getattr(cs, "name", None)
-        if not cs_name:
-            cs_name = cs.get("mprl_name") if isinstance(cs, dict) else getattr(cs, "mprl_name", None)
-        if cs_name and cs_name.lower() == mprl_cross_section_name.lower():
+        if matching(cs):
             cs_id = cs["id"] if isinstance(cs, dict) else getattr(cs, "id")
             return cs_id
 
@@ -193,20 +228,18 @@ def _resolve_cross_section_id(api_client, project_id: str, mprl_cross_section_na
         ConMprlCrossSection(material_name=mprl_material_name, mprl_name=mprl_cross_section_name),
     )
     added_id = added.get("id", None) if isinstance(added, dict) else getattr(added, "id", None)
-    if added_id is not None:
+    if added_id is not None and matching(added):
         return added_id
 
     refreshed = api_client.material.get_cross_sections(project_id)
     for cs in refreshed:
-        cs_name = cs.get("name") if isinstance(cs, dict) else getattr(cs, "name", None)
-        if not cs_name:
-            cs_name = cs.get("mprl_name") if isinstance(cs, dict) else getattr(cs, "mprl_name", None)
-        if cs_name and cs_name.lower() == mprl_cross_section_name.lower():
+        if matching(cs):
             cs_id = cs["id"] if isinstance(cs, dict) else getattr(cs, "id")
             return cs_id
 
     raise IdeaStaticaJointError(
-        f"Added cross-section '{mprl_cross_section_name}' but could not determine its id."
+        f"Could not verify cross-section '{mprl_cross_section_name}' with material '{mprl_material_name}'. "
+        "Matching a profile name alone does not verify its steel grade."
     )
 
 
@@ -263,6 +296,98 @@ def to_json_convention_string(obj: Any) -> str:
 
 # ── Public API ───────────────────────────────────────────────────────────
 
+def _validate_template_limits(setup: dict) -> dict:
+    """Check physical limits independently of summary utilization percentages."""
+    prefix = "calculationCommon/Checks/Shared/"
+    physical_limits = {"plastic_strain": setup.get(prefix + "LimitPlasticStrain"),
+                       "local_deformation": setup.get(prefix + "LocalDeformationLimit")}
+    for name, maximum in (("plastic_strain", 0.05), ("local_deformation", 0.03)):
+        value = physical_limits[name]
+        if type(value) not in (int, float) or not isfinite(value) or value <= 0 or value > maximum:
+            raise IdeaStaticaJointError(f"Template {name} limit is missing or exceeds the configured rubric.")
+    if setup.get("calculationCommon/Analysis/AnalysisGeneral/Shared/LocalDeformationCheck") is not True:
+        raise IdeaStaticaJointError("Template local-deformation check is disabled.")
+    return physical_limits
+
+
+def validate_calculation_check_coverage(items):
+    """The supported bolted/welded templates require every enabled check family."""
+    names = [str(item.get("name", "")).lower() for item in items if item.get("skipped") is not True]
+    required = {
+        "analysis": lambda name: name == "analysis",
+        "plates": lambda name: "plate" in name and "local" not in name,
+        "local deformation": lambda name: "deformation" in name,
+        "bolts": lambda name: "bolt" in name,
+        "welds": lambda name: "weld" in name,
+    }
+    missing = [category for category, matches in required.items() if not any(matches(name) for name in names)]
+    if missing:
+        raise IdeaStaticaJointError(f"Missing/skipped required IDEA checks for the supported template: {missing}")
+
+
+def _localize_failed_weld_parameters(api_client, project_id, connection_id, parameters, raw, progress):
+    """Map failed solver weld IDs using reversible probes of the disposable project."""
+    failed = set()
+    for row in (raw.get("welds") or {}).values():
+        if row.get("unityCheckWeld", 0) > 1:
+            if row.get("unityCheckBaseMetal", 0) > 1 or row.get("isDetailingStatusOK") is False:
+                raise IdeaStaticaJointError("Weld failure includes base-metal/detailing failure; weld-size-only correction is not justified.")
+            failed.add(str(row["id"]))
+    if not failed:
+        raise IdeaStaticaJointError("Detailed failed weld IDs were not returned; no correction was localized.")
+
+    def snapshot():
+        data = _to_jsonable(api_client.export.export_iom_connection_data(project_id, connection_id))
+        welds = {str(weld["id"]): float(weld["thickness"]) for weld in data.get("welds", [])}
+        def canonical(value):
+            if isinstance(value, float): return round(value, 9)
+            if isinstance(value, dict): return {key: canonical(item) for key,item in value.items()}
+            if isinstance(value, list): return [canonical(item) for item in value]
+            return value
+        geometry = canonical({key: value for key,value in data.items() if key != "welds"})
+        return welds, geometry
+
+    base, geometry = snapshot()
+    if not failed.issubset(base):
+        raise IdeaStaticaJointError("Failed weld IDs do not match exported connection geometry.")
+    bindings = {}
+    for parameter in parameters:
+        key, expression = parameter["key"], str(parameter.get("expression", ""))
+        if "weld" not in key.lower(): continue
+        value = expression.strip("\"'")
+        stepped = step_parameter_expression(key, value, "weld_size")
+        if stepped == value: continue
+        progress(f"Localizing weld feedback using parameter {key}")
+        changed = set()
+        try:
+            _set_parameters(api_client, project_id, connection_id, [{"key": key, "expression": stepped}])
+            after, new_geometry = snapshot()
+            if set(after) != set(base) or new_geometry != geometry:
+                raise IdeaStaticaJointError(f"Parameter {key} changes unrelated connection geometry; automatic binding rejected.")
+            changed = {identifier for identifier in base if abs(after[identifier]-base[identifier]) > 1e-9}
+        finally:
+            _set_parameters(api_client, project_id, connection_id, [{"key": key, "expression": expression}])
+            restored, restored_geometry = snapshot()
+            if restored != base or restored_geometry != geometry:
+                raise IdeaStaticaJointError(f"Could not restore parameter {key} after the disposable localization probe.")
+        if changed:
+            bindings[key] = sorted(changed)
+    selected = set()
+    for identifier in failed:
+        matches = [key for key, identifiers in bindings.items() if identifier in identifiers]
+        if len(matches) != 1:
+            raise IdeaStaticaJointError(f"Failed weld {identifier} has {len(matches)} unambiguous exposed-parameter bindings; no blind correction applied.")
+        selected.add(matches[0])
+    touched = {identifier for key in selected for identifier in bindings[key]}
+    if not touched.issubset(failed):
+        raise IdeaStaticaJointError(
+            f"Shared weld parameters would also change passing weld IDs {sorted(touched-failed)}; "
+            "a separately validated local operation is required.")
+    return {"failed_weld_ids": sorted(failed), "failed_parameter_keys": sorted(selected),
+            "parameter_to_weld_ids": bindings, "unrelated_geometry_unchanged": True,
+            "probe_expressions_restored": True}
+
+
 def design_joint(data: dict) -> dict:
     """
     Opens a template .ideaCon project, updates member sections and applied loads,
@@ -277,6 +402,11 @@ def design_joint(data: dict) -> dict:
     save_project_path = data.get("save_project_path")
     template_basename = os.path.splitext(os.path.basename(template_path))[0]
     joint_group_name = data.get("joint_group_name", template_basename)
+    def progress(message):
+        print(f"IDEA {joint_group_name}: {message}", flush=True)
+        callback = data.get("progress_callback")
+        if callback:
+            callback(message)
     if not save_project_path:
         save_project_path = os.path.join(output_dir, 'out_' + os.path.basename(template_path))
     summary_file = os.path.join(output_dir, 'summary_' + template_basename + '.json')
@@ -288,6 +418,7 @@ def design_joint(data: dict) -> dict:
     os.makedirs(output_dir, exist_ok=True)
 
     with _get_client() as api_client:
+        progress("Opening connection template")
         try:
             api_client.project.open_project_from_filepath(template_path)
         except Exception as exc:
@@ -300,32 +431,50 @@ def design_joint(data: dict) -> dict:
         connection = _resolve_connection(api_client, project_id, connection_selector)
         connection_id = connection.id
         members = api_client.member.get_members(project_id, connection_id)
+        if data.get("enforce_member_coverage"):
+            expected_ids = {_section_update_member(members, u["member_name"]).id for u in member_updates}
+            expected_ids.update(_resolve_member(members, loading["member_name"]).id
+                                for effect in load_effect_specs for loading in effect.get("member_loadings", []))
+            if expected_ids != {member.id for member in members}:
+                raise IdeaStaticaJointError("Template topology contains members not covered by the current joint inputs.")
 
         # ---- Member cross-section/material updates ----
+        progress("Verifying member sections, materials and brace angles")
         for update in member_updates:
             try:
-                member = _resolve_member(members, update["member_name"])
+                member = _section_update_member(members, update["member_name"])
             except Exception as e:
-                output_messages.append(f"Warning: Not able to resolve member {update['member_name']}: {e}")
-                continue
+                raise IdeaStaticaJointError(f"Cannot apply section for {update['member_name']}: {e}") from e
             cross_section_id = _resolve_cross_section_id(
                 api_client, project_id,
                 update["cross_section_mprl_name"], update["material_mprl_name"],
             )
+            if member.cross_section_id == cross_section_id and "gama_pitch" not in update:
+                continue  # Preserve the template's aligned-member placement.
+            if update["member_name"] == "beam_transverse_placeholder" and member.name == "beam_transverse":
+                raise IdeaStaticaJointError("Aligned transverse beam has a different section/material; a compatible proxy or template is required.")
             member.cross_section_id = cross_section_id
             if "gama_pitch" in update:
                 member.position.gama_pitch = float(update["gama_pitch"]) * pi / 180
             api_client.member.update_member(project_id, connection_id, member)
+            saved = next((m for m in api_client.member.get_members(project_id, connection_id) if m.id == member.id), None)
+            if saved is None or saved.cross_section_id != cross_section_id:
+                raise IdeaStaticaJointError(f"Member {member.name} did not retain its section/material update.")
+            if "gama_pitch" in update and abs(saved.position.gama_pitch - float(update["gama_pitch"]) * pi / 180) > 1e-8:
+                raise IdeaStaticaJointError(f"Member {member.name} did not retain its brace angle.")
 
         # ---- Load effect ----
+        progress(f"Applying {len(load_effect_specs)} STAAD load effects")
+        if data.get("replace_template_loads"):
+            for existing in api_client.load_effect.get_load_effects(project_id, connection_id):
+                api_client.load_effect.delete_load_effect(project_id, connection_id, existing.id)
         for load_effect_spec in load_effect_specs:
             member_loadings = []
             for loading in load_effect_spec.get("member_loadings", []):
                 try:
                     member = _resolve_member(members, loading["member_name"])
                 except Exception as e:
-                    output_messages.append(f"Warning: Not able to resolve member {loading['member_name']}: {e}")
-                    continue
+                    raise IdeaStaticaJointError(f"Cannot apply load for {loading['member_name']}: {e}") from e
                 specified_position = loading.get("position", "")
                 if specified_position and specified_position.lower() in ["start", "begin"]:
                     position = ConLoadEffectPositionEnum.BEGIN
@@ -352,10 +501,14 @@ def design_joint(data: dict) -> dict:
 
         # ---- Operation parameters (plate/bolt/weld dimensions) ----
         if operation_parameter_updates:
+            exposed = {p.key for p in _get_parameters(api_client, project_id, connection_id)}
+            unknown = {p["key"] for p in operation_parameter_updates} - exposed
+            if unknown:
+                raise IdeaStaticaJointError(f"Parameters not exposed by template: {sorted(unknown)}")
             try:
                 _set_parameters(api_client, project_id, connection_id, operation_parameter_updates)
             except Exception as e:
-                output_messages.append(f"Warning: Failed to set operation parameters: {e}")
+                raise IdeaStaticaJointError(f"Operation parameter update rejected: {e}") from e
 
         operation_parameters = [
             {
@@ -367,24 +520,68 @@ def design_joint(data: dict) -> dict:
             }
             for p in _get_parameters(api_client, project_id, connection_id)
         ]
+        by_key = {p["key"]: p for p in operation_parameters}
+        for update in operation_parameter_updates:
+            expected = str(update["expression"]).strip("\"'")
+            actual = str(by_key.get(update["key"], {}).get("expression", "")).strip("\"'")
+            try:
+                matches = isfinite(float(expected)) and abs(float(expected) - float(actual)) <= 1e-9
+            except ValueError:
+                matches = expected == actual
+            if not matches:
+                raise IdeaStaticaJointError(f"Parameter {update['key']} did not retain the requested expression.")
 
+        # IDEA summary check_value is utilization %, not physical strain %.
+        # Confirm the physical limits and enabled checks before grading its summary.
+        setup = api_client.settings.get_settings(project_id)
+        physical_limits = _validate_template_limits(setup)
+
+        # ---- Calculate ----
+        progress(f"Running IDEA finite-element calculation ({len(load_effect_specs)} load effects)")
+        results = calculate_connection(api_client, project_id, connection_id,
+                                      calculation_budget(len(load_effect_specs)), progress)
+        if not results:
+            raise IdeaStaticaJointError("IDEA calculation returned no results.")
+        result = results[0]
+        progress("Reading calculation checks and saving connection evidence")
         if save_project_path:
             os.makedirs(os.path.dirname(save_project_path) or ".", exist_ok=True)
             api_client.project.download_project(project_id, save_project_path)
-
-        # ---- Calculate ----
-        results = api_client.calculation.calculate(project_id, [connection_id])
-        result = results[0]
         check_summary = [
             {
                 "name": c.name,
                 "check_value": c.check_value,
                 "check_status": c.check_status,
                 "skipped": c.skipped,
+                "message": getattr(c, "unity_check_message", None),
             }
             for c in (result.result_summary or [])
         ]
-        check_summary = {"summary": check_summary, "operation_parameters": operation_parameters}
+        check_summary = {"summary": check_summary, "operation_parameters": operation_parameters,
+                         "physical_limits": physical_limits, "value_kind": "utilization_percent"}
+        validate_calculation_check_coverage(check_summary["summary"])
+        feedback_grade = grade_joint_check_summary(check_summary)
+        if feedback_grade.corrective_action_needed and feedback_grade.corrective_action.get("fix_type") == "weld_size":
+            progress("Reading detailed failed weld feedback")
+            raw_feedback = json.loads(api_client.calculation.get_raw_json_results(project_id, [connection_id])[0])
+            feedback_path = os.path.join(output_dir, "failed_weld_feedback.json")
+            with open(feedback_path, "w") as feedback_file:
+                json.dump(raw_feedback, feedback_file)
+            try:
+                localization = _localize_failed_weld_parameters(api_client, project_id, connection_id,
+                                                               operation_parameters, raw_feedback, progress)
+                check_summary.update(localization)
+            except IdeaStaticaJointError as exc:
+                check_summary["localization_error"] = str(exc)
+                check_summary["failed_parameter_keys"] = []
+        elif feedback_grade.corrective_action_needed:
+            # One exposed plate/bolt variable can still control several
+            # operations. A category name or a unique variable is not proof
+            # that all of those operations failed.
+            check_summary["failed_parameter_keys"] = []
+            check_summary["localization_error"] = (
+                "Detailed failed bolt/plate operation-to-parameter bindings are not validated for this template; "
+                "category-wide or guessed changes are prohibited.")
         with open(summary_file, "w") as f:
             json.dump(check_summary, f, indent=2)
 
@@ -423,312 +620,254 @@ def design_joint(data: dict) -> dict:
 # ── Grader Logic ─────────────────────────────────────────────────────────
 
 def grade_joint_check_summary(check_summary: Dict[str, Any]) -> GraderResult:
-    """
-    Evaluates IDEA StatiCa connection check results:
-    1. Plate plastic strain <= 5.0%
-    2. Bolt tension/shear <= 100%
-    3. Weld stress <= 100%
-    """
-    summary_items = check_summary.get("summary", [])
-    if isinstance(check_summary, list):
-        summary_items = check_summary
-
-    failures = []
-    advisories = []
-    max_strain = 0.0
-    max_deformation = 0.0
-    max_bolt_ratio = 0.0
-    max_weld_ratio = 0.0
-
-    for item in summary_items:
-        name = str(item.get("name", "")).lower()
-        val = item.get("check_value", 0.0)
-        status = item.get("check_status", True)
-        skipped = item.get("skipped", False)
-
-        if skipped:
+    """Grade valid checks; distinguish exceeded limits from SDK status failures."""
+    items = check_summary if isinstance(check_summary, list) else check_summary.get("summary", [])
+    failures, fix_types, advisories = [], [], []
+    maxima = {"max_plate_utilization": 0.0, "max_deformation_utilization": 0.0, "max_bolt": 0.0, "max_weld": 0.0}
+    active_checks = 0
+    unresolved = False
+    for item in items:
+        if item.get("skipped") is True:
             continue
-
-        if "plate" in name or "strain" in name:
-            max_strain = max(max_strain, float(val))
-            if float(val) > 5.0 or not status:
-                failures.append(f"Plate plastic strain {val}% > 5.0% rubric limit")
-        elif "deformation" in name or "local" in name:
-            max_deformation = max(max_deformation, float(val))
-            if float(val) > 3.0 or not status:
-                failures.append(f"Local deformation {val}% > 3.0% rubric limit")
+        name = str(item.get("name", "")).lower()
+        val, status = item.get("check_value"), item.get("check_status")
+        if not isinstance(status, bool) or isinstance(val, bool) or not isinstance(val, (int, float)) or not isfinite(val):
+            failures.append(f"Incomplete or nonfinite IDEA check: {name}")
+            unresolved = True
+            continue
+        if "deformation" in name or "local" in name or "loc." in name:
+            key, limit, fix = "max_deformation_utilization", 100.0, "plate_thickness"
+        elif "plate" in name or "strain" in name:
+            key, limit, fix = "max_plate_utilization", 100.0, "plate_thickness"
         elif "bolt" in name:
-            max_bolt_ratio = max(max_bolt_ratio, float(val))
-            if float(val) > 75.0 or not status:
-                failures.append(f"Bolt utilization {val}% > 75% rubric limit")
+            key, limit, fix = "max_bolt", 75.0, "bolt_dia"
         elif "weld" in name:
-            max_weld_ratio = max(max_weld_ratio, float(val))
-            if float(val) > 100.0 or not status:
-                failures.append(f"Weld utilization {val}% > 100% limit")
-        elif not status:
-            failures.append(f"Check {item.get('name')} failed: {val}")
-
-    # Advisory underutilization check (<50%) - downsizing is not permitted
-    if max_bolt_ratio > 0 and max_bolt_ratio < 50.0 and max_strain < 1.0:
-        advisories.append("Advisory: Joint underutilized (<50% capacity). Downsizing not permitted per rubric.")
-
-    if not failures:
-        summary_text = "All connection checks passed (Plates <= 5%, Local Def <= 3%, Bolts <= 75%, Welds <= 100%)."
-        if advisories:
-            summary_text += " " + " ".join(advisories)
-        return GraderResult(
-            passed=True,
-            score=1.0,
-            summary=summary_text,
-            details={
-                "max_strain": max_strain,
-                "max_deformation": max_deformation,
-                "max_bolt": max_bolt_ratio,
-                "max_weld": max_weld_ratio,
-                "advisories": advisories,
-                "downsizing_permitted": False,
-            },
-            corrective_action_needed=False
-        )
-
-    # Determine recommended fix
-    fix_type = "plate_thickness" if "plate" in "".join(failures).lower() else ("bolt_dia" if "bolt" in "".join(failures).lower() else "weld_size")
+            key, limit, fix = "max_weld", 100.0, "weld_size"
+        else:
+            if status is not True:
+                failures.append(f"IDEA {name} reports check_status=False (value={val}); inspect calculation details.")
+                unresolved = True
+            continue
+        active_checks += 1
+        if val < 0:
+            failures.append(f"Invalid negative result for {name}: {val}")
+            unresolved = True
+            continue
+        maxima[key] = max(maxima[key], val)
+        if val > limit:
+            failures.append(f"{item['name']} value {val}% exceeds {limit}% rubric limit")
+            fix_types.append(fix)
+        elif status is False:
+            failures.append(f"IDEA {name} reports check_status=False despite utilization {val}% within {limit}%; {item.get('message') or 'inspect calculation details before correction.'}")
+            unresolved = True
+    if not active_checks:
+        failures.append("No active connection component checks returned.")
+        unresolved = True
+    if 0 < maxima["max_bolt"] < 50 and maxima["max_plate_utilization"] < 20:
+        advisories.append("Joint underutilized; downsizing is not permitted by this rubric.")
+    fix_type = fix_types[0] if fix_types and not unresolved else None
     return GraderResult(
-        passed=False,
-        score=0.5,
-        summary="; ".join(failures),
-        details={"failures": failures, "fix_type": fix_type},
-        corrective_action_needed=True,
-        corrective_action={"fix_type": fix_type}
+        passed=not failures, score=0.0 if failures else 1.0,
+        summary="; ".join(failures) if failures else "All returned connection checks passed the configured rubric.",
+        details={**maxima, "failures": failures, "fix_type": fix_type,
+                 "advisories": advisories, "downsizing_permitted": False},
+        corrective_action_needed=fix_type is not None,
+        corrective_action={"fix_type": fix_type} if fix_type else None,
     )
 
 
-# ── Agent Execution ──────────────────────────────────────────────────────
+def _connection_payload(state: WorkflowState, joint_group: str) -> dict:
+    """Use the exact template and all required strength envelopes, never sample loads."""
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    if state.staad_results.get("results_local_or_global", 0) != 0:
+        raise IdeaStaticaJointError("IDEA input requires local member forces; global forces need an explicit verified transformation.")
+    from agentic.reference_procedure import scope_for_state, template_for_group
+    scope = scope_for_state(state)
+    reference = scope["mode"] == "reference_procedure"
+    template = str(template_for_group(joint_group, reference))
+    if not os.path.isfile(template):
+        missing = sorted(group for group in state.staad_results.get("joint_groups", {joint_group: {}})
+                         if not (settings().templates / f"{group}.ideaCon").is_file())
+        raise IdeaStaticaJointError(
+            f"No matching connection template for {joint_group}. "
+            f"Missing template mappings ({len(missing)}): {', '.join(missing)}. "
+            "Provide compatible connection templates and verified member/end mappings; "
+            "unrelated templates cannot verify these joints."
+        )
+    envelopes = [e for e in state.staad_results.get("load_envelopes", []) if e.get("envelopeType") == "STRENGTH"]
+    if not envelopes:
+        raise IdeaStaticaJointError("STAAD returned no strength envelopes.")
+    by_envelope = state.staad_results.get("envelope_load_cases_by_joint_group", {})
+    loads, updates = [], None
+    for envelope in envelopes:
+        env_id = envelope["envelopeId"]
+        groups = by_envelope.get(env_id, by_envelope.get(str(env_id), {}))
+        data = groups.get(joint_group, {})
+        if not data.get("member_updates") or not data.get("load_effects"):
+            raise IdeaStaticaJointError(f"Missing member properties or loads for {joint_group}, strength envelope {env_id}.")
+        if updates is not None and updates != data["member_updates"]:
+            raise IdeaStaticaJointError(f"Inconsistent member properties across envelopes for {joint_group}.")
+        updates = data["member_updates"]
+        for effect in data["load_effects"]:
+            if not effect.get("member_loadings"):
+                raise IdeaStaticaJointError(f"Empty load effect in envelope {env_id}.")
+            loads.append({**effect, "name": f"Envelope {env_id}: {effect.get('name', 'ULS')}"})
+    material_map = scope.get("material_catalogue_mapping", {})
+    updates = [{**update, "material_mprl_name": material_map.get(update["material_mprl_name"], update["material_mprl_name"])}
+               if "material_mprl_name" in update else update for update in updates]
+    return {
+        "joint_group_name": joint_group,
+        "template_project_path": template, "connection_selector": {"name": "CON1"},
+        "member_updates": updates, "load_effects": loads,
+        "replace_template_loads": True,
+        "enforce_member_coverage": True,
+        "operation_parameters": state.active_operation_params.get(joint_group, []),
+        "output_dir": os.path.join(root, f"output_{joint_group}"), "extract_raw_results": False,
+    }
+
+
+def _connection_signature(payload: dict, generation: int) -> str:
+    template = payload.get("template_project_path")
+    template_hash = None
+    if template and os.path.isfile(template):
+        with open(template, "rb") as source:
+            template_hash = hashlib.sha256(source.read()).hexdigest()
+    return hashlib.sha256(json.dumps({"generation": generation, "payload": payload, "template_hash": template_hash}, sort_keys=True, allow_nan=False).encode()).hexdigest()
+
+
+def _correct_connection_parameters(parameters: list, fix_type: str, parameter_keys=None) -> tuple:
+    """Change only localized exposed parameters; never upsize every weld/plate."""
+    updated, changes = [], []
+    for parameter in parameters:
+        key = parameter["key"]
+        lower = key.lower()
+        matches = (
+            fix_type == "weld_size" and "weld" in lower
+            or fix_type == "bolt_dia" and (lower.endswith("_d") or "diameter" in lower)
+            or fix_type == "plate_thickness" and (lower.endswith("_th") or "thickness" in lower)
+        )
+        if parameter_keys is not None:
+            matches = matches and key in parameter_keys
+        expression = str(parameter.get("expression", ""))
+        numeric = expression.strip("\"'")
+        new_expression = step_parameter_expression(key, numeric, fix_type) if matches else numeric
+        if matches and new_expression != numeric:
+            if expression[:1] in ("'", '\"'):
+                new_expression = expression[0] + new_expression + expression[0]
+            changes.append({"key": key, "old_value": expression, "new_value": new_expression})
+            expression = new_expression
+        updated.append({"key": key, "expression": expression})
+    if parameter_keys is None and len(changes) > 1:
+        # A category summary such as "Welds failed" does not identify which
+        # weld failed. Preserve already-correct details until the detailed
+        # result is mapped to an exact exposed parameter.
+        return [{"key": p["key"], "expression": str(p.get("expression", ""))} for p in parameters], []
+    return updated, changes
+
 
 def run_a5_ideastatica_analyzer(state: WorkflowState) -> WorkflowState:
-    """
-    Executes Agent A5: Connects to IDEA StatiCa, solves connection FEA, and grades results.
-    """
-    ts = datetime.now().strftime("%H:%M:%S")
+    """Solve affected joints only, with bounded corrections and terminal failures."""
     state.current_agent = "A5"
-
+    ts = datetime.now().strftime("%H:%M:%S")
+    if not state.frame_grader_result or not state.frame_grader_result.passed or state.staad_results.get("analysis_failed"):
+        return fail_workflow(state, "A5", "A verified passing STAAD analysis is required before connection design.")
     joint_groups = state.staad_results.get("joint_groups", {})
     if not joint_groups:
-        joint_groups = {"inner_node_1_longitudinal_1_transverse_bracing": {}}
-
-    all_passed = True
-    needs_loop_b = False
-
-    for jg_id in joint_groups.keys():
-        if jg_id not in state.loop_b_count:
-            state.loop_b_count[jg_id] = 0
-
-        # Retrieve active operation parameters (possibly revised by Loop B)
-        current_op_params = state.active_operation_params.get(jg_id, [
-            {"key": "CPL3_Thickness", "expression": "10"}
-        ])
-
-        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-        candidate_template = os.path.join(repo_root, "sample_projects", f"{jg_id}.ideaCon")
-        if os.path.exists(candidate_template):
-            template_file = candidate_template
-        else:
-            fallback_template = os.path.join(repo_root, "sample_projects", "inner_node_1_longitudinal_1_transverse_bracing.ideaCon")
-            template_file = fallback_template if os.path.exists(fallback_template) else candidate_template
-
-        output_dir = os.path.join(repo_root, f"output_{jg_id}")
-        os.makedirs(output_dir, exist_ok=True)
-
-        # Pull real governing load effects and member metadata from STAAD results if available
-        env_load_cases = state.staad_results.get("envelope_load_cases_by_joint_group", {})
-        jg_staad_data = None
-        for env_id, jg_dict in env_load_cases.items():
-            if isinstance(jg_dict, dict) and jg_id in jg_dict:
-                jg_staad_data = jg_dict[jg_id]
-                break
-
-        member_updates = jg_staad_data.get("member_updates", []) if jg_staad_data else []
-        load_effects = jg_staad_data.get("load_effects", []) if (jg_staad_data and jg_staad_data.get("load_effects")) else [
-            {
-                "name": "Governing ULS",
-                "member_loadings": [
-                    {"member_name": "column", "n": -120.0, "vy": 10.0, "vz": 5.0}
-                ]
-            }
-        ]
-
-        payload = {
-            "template_project_path": template_file,
-            "connection_selector": {"name": "CON1"},
-            "member_updates": member_updates,
-            "load_effects": load_effects,
-            "operation_parameters": current_op_params,
-            "output_dir": output_dir,
-            "extract_raw_results": False
-        }
-
-        # Attempt live solve or deterministic simulation
-        idea_res = None
+        return fail_workflow(state, "A5", "STAAD returned no connection groups.")
+    from agentic.reference_procedure import scope_for_state
+    try:
+        scope = scope_for_state(state)
+    except ValueError as exc:
+        return fail_workflow(state, "A5", str(exc))
+    for joint_group in scope["idea_required_groups"]:
         try:
-            # Direct internal call to design_joint
-            idea_res = design_joint(payload)
+            payload = _connection_payload(state, joint_group)
+            signature = _connection_signature(payload, state.design_generation)
+            previous = state.ideastatica_results.get(joint_group, {})
+            grader = state.joint_grader_results.get(joint_group)
+            if grader and grader.passed and previous.get("input_signature") == signature:
+                # A cached PASS is only a shortcut when its source checks are
+                # still complete and valid. Loop C must be able to repair a
+                # damaged/missing result, not repeatedly reuse that stale flag.
+                try:
+                    validate_calculation_check_coverage(previous.get("check_summary", {}).get("summary", []))
+                    reusable = (previous.get("passed") is True and not previous.get("simulation")
+                                and not previous.get("output_messages")
+                                and grade_joint_check_summary(previous.get("check_summary", {})).passed)
+                except IdeaStaticaJointError:
+                    reusable = False
+                if reusable:
+                    continue
+            from agentic.store import WORKFLOW_STORE
+            state.agent_statuses["A5"] = {"status": "RUNNING", "message": f"Calculating {joint_group} (corrections used: {state.loop_b_count.get(joint_group, 0)}/{state.max_loop_b})."}
+            WORKFLOW_STORE.save_state(state)
+            def update_progress(message):
+                timeout = settings().agent_timeout
+                if message.startswith("Running IDEA finite-element calculation"):
+                    timeout = calculation_budget(len(payload["load_effects"]))
+                elif message.startswith(("IDEA job", "IDEA legacy", "IDEA service lacks")):
+                    timeout = calculation_budget(len(payload["load_effects"]))
+                state.agent_statuses["A5"] = {"status": "RUNNING", "message": f"{joint_group}: {message}",
+                                               "operation_timeout_seconds": timeout}
+                WORKFLOW_STORE.save_state(state)
+            result = design_joint({**payload, "progress_callback": update_progress})
+            if result.get("simulation"):
+                raise IdeaStaticaJointError("Simulated results cannot verify a live connection.")
+            if result.get("output_messages"):
+                raise IdeaStaticaJointError(f"Unresolved integration warnings: {result['output_messages']}")
+            # Use the parameters actually exposed by this template, not a fabricated default.
+            parameters = result.get("check_summary", {}).get("operation_parameters", [])
+            result["input_signature"] = _connection_signature(payload, state.design_generation)
+            state.ideastatica_results[joint_group] = result
+            grader = grade_joint_check_summary(result.get("check_summary", {}))
+            if result.get("passed") is not True and grader.passed:
+                grader = GraderResult(passed=False, score=0, summary="IDEA did not report overall calculation success; inspect calculation details.")
+            state.joint_grader_results[joint_group] = grader
+            if grader.passed:
+                continue
+            if not grader.corrective_action_needed:
+                return fail_workflow(state, "A5", f"{joint_group}: {grader.summary}")
+            count = state.loop_b_count.get(joint_group, 0)
+            if count >= state.max_loop_b:
+                return fail_workflow(state, "A5", f"{joint_group}: retry limit reached. {grader.summary}")
+            fix_type = grader.corrective_action["fix_type"]
+            localized = result.get("check_summary", {}).get("failed_parameter_keys")
+            updated, changes = _correct_connection_parameters(parameters, fix_type, localized)
+            if not changes:
+                localization_error = result.get("check_summary", {}).get("localization_error")
+                return fail_workflow(state, "A5", f"{joint_group}: no uniquely localized exposed numeric {fix_type} correction is available. "
+                                     "Detailed failed-operation-to-parameter mapping is required when several parameters match; "
+                                     f"already-correct details were preserved. {grader.summary}"
+                                     + (f" Localization: {localization_error}" if localization_error else ""))
+            metric_signature = hashlib.sha256(json.dumps(result["check_summary"]["summary"], sort_keys=True, allow_nan=False).encode()).hexdigest()
+            history = [entry for entry in state.loop_b_history if entry["joint_group"] == joint_group]
+            if history and history[-1].get("result_signature") == metric_signature:
+                return fail_workflow(state, "A5", f"{joint_group}: checks did not change after the confirmed parameter update; inspect calculation details instead of repeating the same correction.")
+            options = [{"id": "all", "changes": changes}]
+            if len(changes) > 1:
+                options += [{"id": change["key"], "changes": [change]} for change in changes]
+            selected = options[0]
+            if count and len(options) > 1:
+                selected = choose_correction(state, "connection", grader.model_dump(), options, "all")
+            changes = selected["changes"]
+            overrides = {p["key"]: p for p in state.active_operation_params.get(joint_group, [])}
+            changed_keys = {p["key"] for p in changes}
+            overrides.update({p["key"]: p for p in updated if p["key"] in changed_keys})
+            state.active_operation_params[joint_group] = list(overrides.values())
+            state.loop_b_count[joint_group] = count + 1
+            state.loop_b_history.append({"joint_group": joint_group, "iteration": count + 1,
+                "fix_type": fix_type, "changes": changes, "reason": grader.summary, "result_signature": metric_signature,
+                "localization": {key: result["check_summary"][key] for key in
+                    ("failed_weld_ids", "failed_parameter_keys", "parameter_to_weld_ids", "unrelated_geometry_unchanged", "probe_expressions_restored")
+                    if key in result["check_summary"]}})
+            message = f"Loop B ({count + 1}/{state.max_loop_b}): {joint_group}: {changes}"
+            state.agent_statuses["A5"] = {"status": "REVISING", "message": message}
+            state.logs.append(AgentLogEntry(agent_id="A5", agent_name="Connection Designer", status="REVISING", message=message, timestamp=ts))
+            return state
         except Exception as exc:
-            # Deterministic simulation double when IDEA StatiCa REST API is offline
-            # Simulate initial 10mm plate failing at 6.8% strain, and 12mm+ passing at 3.2%
-            # Simulate initial 16mm bolt failing at 78.5% (>75% rubric limit), and 20mm+ passing at 62.0%
-            current_thickness = 10.0
-            current_bolt = 20.0
-            has_bolt_param = False
-
-            for param in current_op_params:
-                k = param.get("key", "").lower()
-                if "thick" in k or "th" in k:
-                    try:
-                        t_val = float(param.get("expression", 10.0))
-                        current_thickness = t_val * 1000.0 if (0.0 < t_val < 1.0) else t_val
-                    except ValueError:
-                        pass
-                elif any(b in k for b in ["_d", "dia", "bolt"]):
-                    has_bolt_param = True
-                    try:
-                        d_val = float(param.get("expression", 20.0))
-                        current_bolt = d_val * 1000.0 if (0.0 < d_val < 1.0) else d_val
-                    except ValueError:
-                        pass
-
-            plate_passed = current_thickness >= 12.0
-            sim_strain = 3.2 if plate_passed else 6.8
-            sim_def = 1.8 if plate_passed else 3.8
-
-            bolt_passed = (current_bolt >= 20.0) if has_bolt_param else True
-            sim_bolt = 62.0 if bolt_passed else 82.5
-
-            sim_passed = plate_passed and bolt_passed
-
-            idea_res = {
-                "connection_id": 1,
-                "passed": sim_passed,
-                "check_summary": {
-                    "summary": [
-                        {"name": "Plates - eps_pl", "check_value": sim_strain, "check_status": plate_passed, "skipped": False},
-                        {"name": "Plates - Local deformation", "check_value": sim_def, "check_status": plate_passed, "skipped": False},
-                        {"name": "Bolts - Tension/Shear", "check_value": sim_bolt, "check_status": bolt_passed, "skipped": False},
-                        {"name": "Welds - Stress", "check_value": 72.5, "check_status": True, "skipped": False}
-                    ],
-                    "operation_parameters": current_op_params
-                },
-                "operation_parameters": current_op_params,
-                "simulation": True,
-                "simulation_reason": str(exc)
-            }
-
-        state.ideastatica_results[jg_id] = idea_res
-
-        # Grade the joint
-        grader = grade_joint_check_summary(idea_res.get("check_summary", {}))
-        if idea_res.get("passed") is False and grader.passed:
-            grader.passed = False
-            grader.summary = f"IDEA StatiCa connection check failed: {grader.summary}"
-            grader.corrective_action_needed = True
-
-        state.joint_grader_results[jg_id] = grader
-
-        if grader.passed:
-            pass
-        else:
-            all_passed = False
-            # Check Loop B
-            if state.loop_b_count[jg_id] < state.max_loop_b:
-                state.loop_b_count[jg_id] += 1
-                needs_loop_b = True
-
-                # Apply corrective boost to operation parameters based on specific failure type
-                fix = grader.corrective_action or {}
-                fix_type = fix.get("fix_type", "plate_thickness")
-
-                updated_params = []
-                modified_keys = []
-                old_val_str = ""
-                new_val_str = ""
-
-                for p in current_op_params:
-                    p_copy = dict(p)
-                    key = p_copy.get("key", "")
-                    expr = str(p_copy.get("expression", ""))
-                    should_step = False
-
-                    if fix_type == "bolt_dia" and any(b in key.lower() for b in ["_d", "dia", "bolt"]):
-                        should_step = True
-                    elif fix_type == "weld_size" and any(w in key.lower() for w in ["weld", "w1", "w2"]):
-                        should_step = True
-                    elif fix_type == "plate_thickness" and any(t in key.lower() for t in ["thick", "th", "tpl"]):
-                        should_step = True
-
-                    if should_step:
-                        new_expr = step_parameter_expression(key, expr, fix_type)
-                        if new_expr != expr:
-                            p_copy["expression"] = new_expr
-                            modified_keys.append(key)
-                            old_val_str = expr
-                            new_val_str = new_expr
-                    updated_params.append(p_copy)
-
-                # Fallback if no specific key was modified
-                if not modified_keys:
-                    old_t = 10.0
-                    for p in current_op_params:
-                        if "thick" in p.get("key", "").lower():
-                            try:
-                                old_t = float(p.get("expression", 10.0))
-                            except ValueError:
-                                pass
-                    new_t = get_next_plate_thickness(old_t)
-                    updated_params = [{"key": "CPL3_Thickness", "expression": str(int(new_t))}]
-                    modified_keys = ["CPL3_Thickness"]
-                    old_val_str = str(old_t)
-                    new_val_str = str(new_t)
-
-                state.active_operation_params[jg_id] = updated_params
-                state.loop_b_history.append({
-                    "joint_group": jg_id,
-                    "iteration": state.loop_b_count[jg_id],
-                    "fix_type": fix_type,
-                    "parameters": modified_keys,
-                    "old_value": old_val_str,
-                    "new_value": new_val_str,
-                    "reason": grader.summary
-                })
-                msg = f"Loop B ({state.loop_b_count[jg_id]}/{state.max_loop_b}): {jg_id} {grader.summary} -> Upgraded {fix_type} ({', '.join(modified_keys)}) to {new_val_str}"
-                state.agent_statuses["A5"] = {"status": "REVISING", "message": msg}
-                state.logs.append(AgentLogEntry(
-                    agent_id="A5",
-                    agent_name="IDEA StatiCa Connection Designer",
-                    status="REVISING",
-                    message=msg,
-                    timestamp=ts,
-                    loop_info=f"Loop B #{state.loop_b_count[jg_id]}"
-                ))
-                return state
-
-    if all_passed:
-        msg = "All IDEA StatiCa joint checks passed (Plastic strain <= 5%, Bolts & Welds <= 100%)."
-        state.agent_statuses["A5"] = {"status": "PASSED", "message": msg}
-        state.logs.append(AgentLogEntry(
-            agent_id="A5",
-            agent_name="IDEA StatiCa Connection Designer",
-            status="PASSED",
-            message=msg,
-            timestamp=ts
-        ))
-    else:
-        msg = "IDEA StatiCa joint design failed after reaching max retry limit."
-        state.agent_statuses["A5"] = {"status": "FAILED", "message": msg}
-        state.logs.append(AgentLogEntry(
-            agent_id="A5",
-            agent_name="IDEA StatiCa Connection Designer",
-            status="FAILED",
-            message=msg,
-            timestamp=ts
-        ))
-
+            return fail_workflow(state, "A5", f"{joint_group}: connection execution failed: {exc}")
+    message = (f"All {len(scope['idea_required_groups'])} required IDEA connection groups passed the configured rubric; "
+               f"{len(scope['standard_detail_groups'])} families use the senior workflow's standard Tekla details.")
+    state.agent_statuses["A5"] = {"status": "PASSED", "message": message}
+    state.logs.append(AgentLogEntry(agent_id="A5", agent_name="Connection Designer", status="PASSED", message=message, timestamp=ts))
     return state

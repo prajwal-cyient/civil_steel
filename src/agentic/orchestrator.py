@@ -12,7 +12,8 @@ Implements:
 from typing import Any, Dict, Literal, Optional
 import uuid
 from langgraph.graph import StateGraph, END
-from agentic.state import WorkflowState
+from agentic.state import WorkflowState, fail_workflow
+from agentic.config import settings
 from agentic.agents.a1_requirements_agent import run_a1_requirements
 from agentic.agents.a2_readiness_agent import run_a2_readiness
 from agentic.agents.a3_frame_generator_agent import run_a3_frame_generator
@@ -38,49 +39,63 @@ def _sync_state(state: WorkflowState):
         pass
 
 
+def _start_agent(state: WorkflowState, agent_id: str):
+    state.current_agent = agent_id
+    state.agent_statuses[agent_id] = {"status": "RUNNING", "message": "Calculating current candidate…"}
+    _sync_state(state)
+
+
 def node_a1(state: WorkflowState) -> WorkflowState:
+    _start_agent(state, "A1")
     res = run_a1_requirements(state)
     _sync_state(res)
     return res
 
 
 def node_a2(state: WorkflowState) -> WorkflowState:
+    _start_agent(state, "A2")
     res = run_a2_readiness(state)
     _sync_state(res)
     return res
 
 
 def node_a3(state: WorkflowState) -> WorkflowState:
+    _start_agent(state, "A3")
     res = run_a3_frame_generator(state)
     _sync_state(res)
     return res
 
 
 async def node_a4(state: WorkflowState) -> WorkflowState:
+    _start_agent(state, "A4")
     res = await run_a4_staad_analyzer(state)
     _sync_state(res)
     return res
 
 
 def node_a5(state: WorkflowState) -> WorkflowState:
+    _start_agent(state, "A5")
     res = run_a5_ideastatica_analyzer(state)
     _sync_state(res)
     return res
 
 
 def node_a6(state: WorkflowState) -> WorkflowState:
+    _start_agent(state, "A6")
     res = run_a6_package_validator(state)
     _sync_state(res)
     return res
 
 
 def node_a7(state: WorkflowState) -> WorkflowState:
+    _start_agent(state, "A7")
     res = run_a7_tekla_modeler(state)
     _sync_state(res)
     return res
 
 
 def node_a8(state: WorkflowState) -> WorkflowState:
+    _start_agent(state, "A8")
     res = run_a8_reporting(state)
     _sync_state(res)
     return res
@@ -160,9 +175,12 @@ def build_workflow_graph() -> StateGraph:
 
     # Standard transitions
     graph.set_entry_point("a1_requirements")
-    graph.add_edge("a1_requirements", "a2_readiness")
-    graph.add_edge("a2_readiness", "a3_frame_generator")
-    graph.add_edge("a3_frame_generator", "a4_staad_analyzer")
+    for source, destination in (("a1_requirements", "a2_readiness"),
+                                ("a2_readiness", "a3_frame_generator"),
+                                ("a3_frame_generator", "a4_staad_analyzer")):
+        graph.add_conditional_edges(source,
+            lambda state, target=destination: "__end__" if state.status == "FAILED" else target,
+            {"__end__": END, destination: destination})
 
     # Conditional Branch: Loop A (A4 -> A3 or A4 -> A5)
     graph.add_conditional_edges(
@@ -198,7 +216,9 @@ def build_workflow_graph() -> StateGraph:
         }
     )
 
-    graph.add_edge("a7_tekla_modeler", "a8_reporting")
+    graph.add_conditional_edges("a7_tekla_modeler",
+        lambda state: "__end__" if state.status == "FAILED" else "a8_reporting",
+        {"__end__": END, "a8_reporting": "a8_reporting"})
     graph.add_edge("a8_reporting", END)
 
     return graph
@@ -216,14 +236,25 @@ async def run_agentic_workflow(raw_input: Dict[str, Any], run_id: Optional[str] 
     initial_state = WorkflowState(
         run_id=run_id,
         status="RUNNING",
-        raw_input=raw_input
+        raw_input=raw_input,
+        max_loop_a=settings().frame_revisions,
+        max_loop_b=settings().connection_revisions,
     )
+    _sync_state(initial_state)
 
     graph = build_workflow_graph()
     app = graph.compile()
 
     # Asynchronously invoke graph
-    final_output = await app.ainvoke(initial_state)
+    try:
+        # Each connection group may need its own bounded corrections.
+        final_output = await app.ainvoke(initial_state, config={"recursion_limit": 256})
+    except Exception as exc:
+        from agentic.store import WORKFLOW_STORE
+        latest = WORKFLOW_STORE.get_state(run_id) or initial_state
+        latest = fail_workflow(latest, latest.current_agent, f"Workflow execution failed: {exc}")
+        _sync_state(latest)
+        return latest
 
     if isinstance(final_output, dict):
         return WorkflowState(**final_output)

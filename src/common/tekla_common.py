@@ -177,20 +177,22 @@ def modify_grid(model: Model, X: str, Y: str, Z: str, labelX: str, labelY: str, 
             print(f'Found grid: {grid.Identifier.ID}. It will be modified.')
             break
 
-    if grid is None:
-        print(f'No grid found to modify...')
-        return
+    is_new = grid is None
+    if is_new:
+        grid = Grid()
 
     print(f'Modifying grid with ID: {grid.Identifier.ID}...')
     grid.CoordinateX = X
     grid.CoordinateY = Y
     grid.CoordinateZ = Z
+    grid.Origin = Point(0.0, 0.0, 0.0)
     grid.LabelX = labelX
     grid.LabelY = labelY
-    grid.labelZ = labelZ
-    if grid.Modify():
-        print(f'Grid with ID {grid.Identifier.ID} modified.')
-        model.CommitChanges()
+    grid.LabelZ = labelZ
+    if not (grid.Insert() if is_new else grid.Modify()):
+        raise TeklaMemberError("Tekla rejected the model grid.")
+    if model.CommitChanges() is False:
+        raise TeklaMemberError("Tekla rejected the grid commit.")
 
 def to_tekla_profile(name: str) -> str:
     """Convert UI section name to Tekla profile string.
@@ -380,7 +382,7 @@ def get_bolt_parameters(bolt_dia: float) -> dict:
         "hole_dia": hole_dia,
     }
 
-def clean_tekla() -> None:
+def clean_tekla(progress=None) -> None:
     """Empty the active model except for grids and grid surfaces, then save."""
     from Tekla.Structures.Model import (
         BaseComponent, GridBase, GridSurface, LoadGroup, ModelHandler,
@@ -393,8 +395,12 @@ def clean_tekla() -> None:
         grids = set()
         default_groups = []
         enumerator = model.GetModelObjectSelector().GetAllObjects()
+        inspected = 0
         while enumerator.MoveNext():
             obj = enumerator.Current
+            inspected += 1
+            if progress and inspected % 1000 == 0:
+                progress(f"Inspecting existing Tekla objects: {inspected}")
             if isinstance(obj, (GridBase, GridSurface)):
                 grids.add(obj.Identifier.ID)
             elif isinstance(obj, LoadGroup) and obj.GroupName == "DefaultGroup":
@@ -411,11 +417,13 @@ def clean_tekla() -> None:
         print(f"Preserving Tekla DefaultGroup load group IDs: {default_groups}")
     while objects:
         previous_count = len(objects)
-        for obj in objects:
+        for index, obj in enumerate(objects, 1):
             # Deleting a parent can also delete objects from our snapshot.
             current = model.SelectModelObject(obj.Identifier)
             if current is not None:
                 current.Delete()
+            if progress and index % 1000 == 0:
+                progress(f"Clearing existing Tekla objects: {index}/{previous_count}")
         objects, grids, _ = snapshot()
         if grids != original_grids:
             raise RuntimeError("Tekla grids changed during cleanup; model was not saved.")

@@ -7,6 +7,7 @@ and Loop B (IDEA StatiCa connection detailing).
 """
 
 from typing import List, Optional
+from math import isfinite
 
 # Approved cold-formed hollow square section ladder for columns (increasing cross-section/moment capacity)
 COLUMN_PROFILE_LADDER: List[str] = [
@@ -91,8 +92,8 @@ def get_next_profile(current_profile: str, member_type: str = "column") -> Optio
             return ladder[match_index + 1]
         return None  # Reached ceiling
 
-    # If profile not found in exact ladder, return the second item or first sensible upgrade
-    return ladder[min(2, len(ladder) - 1)]
+    # An unknown profile has no established ordering in this ladder.
+    return None
 
 
 def get_next_plate_thickness(current_t: float) -> float:
@@ -129,6 +130,8 @@ def step_parameter_expression(key: str, expression: str, fix_type: str = "auto")
         val = float(expression)
     except (ValueError, TypeError):
         return expression
+    if not isfinite(val) or val <= 0:
+        return expression
 
     is_meters = (0.0 < val < 1.0)
     current_mm = val * 1000.0 if is_meters else val
@@ -149,6 +152,9 @@ def step_parameter_expression(key: str, expression: str, fix_type: str = "auto")
         next_mm = get_next_weld_size(current_mm)
     else:
         next_mm = get_next_plate_thickness(current_mm)
+
+    if next_mm <= current_mm:
+        return expression
 
     if is_meters:
         # Format back to meters string (e.g. 0.020 for 20mm)

@@ -278,8 +278,8 @@ def _apply_radiator_wind_nodal_loads(
     radiator_height_m = (load_configuration["height_of_radiator_mm"]/ 1000.0)
     fan_thickness_m = (load_configuration["height_of_fan_mm"]/ 1000.0)
     fan_diameter_m = (load_configuration["diameter_of_fan_mm"]/ 1000.0)
-    bolt_cc_x_m = grid_spec.get("bay_long_mm", 2.6)
-    bolt_cc_z_m = grid_spec.get("bay_trans_mm", 3.3)/2
+    bolt_cc_x_m = grid_spec.get("bay_long_mm", 2600.0) / 1000.0
+    bolt_cc_z_m = grid_spec.get("bay_trans_mm", 3300.0) / 1000.0 / 2.0
 
     area_x_m2 = (radiator_height_m * bolt_cc_z_m + fan_thickness_m * fan_diameter_m)
     area_z_m2 = (radiator_height_m * bolt_cc_x_m + fan_thickness_m * fan_diameter_m)
@@ -643,55 +643,39 @@ def _apply_load_configuration(
     #TODO: Wind uniform load on members
     #load.AddMemberUniformForce(columns + longitudinal_bracings + transverse_bracings, DIRECTION_TYPE_MAP["GlobalX"], 0.6, 0.0, 0.0, 0.0)  # 4=GlobalX
 
-    # Load Combination 3 (75% of 1 & 2)
-    comboLoadCases: list[int] = []
+    # Use project-supplied combinations. Never add opposing directions or
+    # temperature rise/drop to the same case as the legacy procedure did.
+    from agentic.load_combinations import resolve_combinations
+    specifications = resolve_combinations(load_configuration)
+    case_ids = {"DL": load_case, "INST": installation_case, "LL": load_case_2,
+                **dict(zip(("W+X", "W-X", "W+Z", "W-Z"), wind_cases)),
+                "EQ+X": seismic_case_1, "EQ+Z": seismic_case_2,
+                "EQ+X_LOCAL": seismic_case_3, "EQ+Z_LOCAL": seismic_case_4,
+                "SNOW": seismic_case_5, "T+": temperature_case1, "T-": temperature_case2}
     currentLoadCaseId = max(currentLoadCaseId, startingComboLoadCaseId)
-    primary_load_cases = [load_case, installation_case, load_case_2, *wind_cases, seismic_case_1, seismic_case_2, seismic_case_3, seismic_case_4, seismic_case_5, temperature_case1, temperature_case2]
-
-    envelopCreationResults: list[Dict[str, Any]] = []
-    envelopeId = 1
-    startingComboCaseIdIndex = 0
-
-    load_case_factors = [1, 1, 0.8] + [0.75] * len(wind_cases) + [0.75] * 5 + [1.2, 1.2]
-    currentLoadCaseId = staad_common._create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
-
-    load_case_factors = [1, 1, 0.95] + [1.2] * len(wind_cases) + [1.1] * 5 + [1.5, 1.5]
-    currentLoadCaseId = staad_common._create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
-    # Add the first load envelope (serviceability)
-    ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["SERVICEABILITY"], comboLoadCases[startingComboCaseIdIndex:])
-    envelopCreationResults.append({"envelopeId": envelopeId, "envelopeType": "SERVICEABILITY", "loadCases": comboLoadCases[startingComboCaseIdIndex:], "result": ret})
-    envelopeId += 1
-    startingComboCaseIdIndex = len(comboLoadCases)
-
-    load_case_factors = [1, 1, 0.95] + [1.0] * len(wind_cases) + [1.2] * 5 + [1.5, 1.5]
-    currentLoadCaseId = staad_common._create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
-    load_case_factors = [1, 1, 0.95] + [1.2] * len(wind_cases) + [1.1] * 5 + [1.5, 1.5]
-    currentLoadCaseId = staad_common._create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
-    load_case_factors = [1, 1, 0.95] + [1.2] * len(wind_cases) + [1.1] * 5 + [1.5, 1.5]
-    currentLoadCaseId = staad_common._create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
-    # Add the next load envelope (strength)
-    ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["STRENGTH"], comboLoadCases[startingComboCaseIdIndex:])
-    envelopCreationResults.append({"envelopeId": envelopeId, "envelopeType": "STRENGTH", "loadCases": comboLoadCases[startingComboCaseIdIndex:], "result": ret})
-    envelopeId += 1
-    startingComboCaseIdIndex = len(comboLoadCases)
-
-    load_case_factors = [1, 1, 0.95] + [1.3] * len(wind_cases) + [1.4] * 5 + [1.5, 1.5]
-    currentLoadCaseId = staad_common._create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
-    load_case_factors = [1, 1, 0.95] + [0.9] * len(wind_cases) + [0.9] * 5 + [1.5, 1.5]
-    currentLoadCaseId = staad_common._create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
-    load_case_factors = [1, 1, 0.95] + [1.5] * len(wind_cases) + [1.5] * 5 + [1.5, 1.5]
-    currentLoadCaseId = staad_common._create_combo_load_case(load, currentLoadCaseId, f"Comb DL LL WL {len(comboLoadCases) + 1}", comboLoadCases, primary_load_cases, load_case_factors)
-    # Add the next load envelope (strength)
-    ret = load.CreateLoadEnvelop(envelopeId, ENVELOP_TYPE_MAP["STRENGTH"], comboLoadCases[startingComboCaseIdIndex:])
-    envelopCreationResults.append({"envelopeId": envelopeId, "envelopeType": "STRENGTH", "loadCases": comboLoadCases[startingComboCaseIdIndex:], "result": ret})
-    envelopeId += 1
-    startingComboCaseIdIndex = len(comboLoadCases)
-
-    print(f'Envelope creation results: {envelopCreationResults}')
-    #load.AddLoadCasesToEnvelop(envelopeId-1, comboLoadCases)
-    # TODO: Here we define the load envelope case IDs to be included in the load envelope list.
-    loadEnvelopeCaseIds = [envelopeId-1] # pick the last one
-    ret = load.CreateLoadList(LOAD_LIST_TYPE_MAP["load_envelope_list"], loadEnvelopeCaseIds)
+    cases_by_envelope = {}
+    for specification in specifications:
+        combination_id = load.CreateNewLoadCombination(specification["name"], currentLoadCaseId)
+        if combination_id != currentLoadCaseId:
+            raise RuntimeError(f"STAAD rejected combination {specification['name']}.")
+        for case_name, factor in specification["factors"].items():
+            if load.AddLoadAndFactorToCombination(combination_id, case_ids[case_name], factor) is False:
+                raise RuntimeError(f"STAAD rejected factor for {case_name}.")
+        envelope_id = specification.get("envelope_id", 1 if specification["envelope"] == "SERVICEABILITY" else 2)
+        key = (envelope_id, specification["envelope"])
+        cases_by_envelope.setdefault(key, []).append(combination_id)
+        currentLoadCaseId += 1
+    envelopCreationResults = []
+    for (envelope_id, envelope_type), cases in cases_by_envelope.items():
+        result = load.CreateLoadEnvelop(envelope_id, ENVELOP_TYPE_MAP[envelope_type], cases)
+        if result is False:
+            raise RuntimeError(f"STAAD rejected {envelope_type} envelope.")
+        envelopCreationResults.append({"envelopeId": envelope_id, "envelopeType": envelope_type,
+                                      "loadCases": cases, "result": result})
+    # Design all strength cases, rather than only the last legacy envelope.
+    strength_ids = [key[0] for key in cases_by_envelope if key[1] == "STRENGTH"]
+    if load.CreateLoadList(LOAD_LIST_TYPE_MAP["load_envelope_list"], strength_ids) is False:
+        raise RuntimeError("STAAD rejected the strength-envelope design list.")
 
     # create design parameters
     create_design_parameters(design, grid_spec, members, longitudinal_beams, transverse_beams, columns, longitudinal_bracings, transverse_bracings)
@@ -849,12 +833,13 @@ def find_connected_members_forces(node_id: int, joint_member_ends: Dict[int, Lis
 
 # Force components whose max/min decide the governing load cases for a joint's connection design, per member type.
 JOINT_DESIGN_FORCE_COMPONENTS: Dict[str, List[str]] = {
-    "beam_longitudinal": ["Fx", "Fy", "Fz"],
-    "beam_transverse": ["Fx", "Fy", "Fz"],
-    "bracing_longitudinal": ["Fx"],
-    "bracing_transverse": ["Fx"],
-    "bracing_longitudinal_mirrored": ["Fx"],
-    "bracing_transverse_mirrored": ["Fx"],
+    "column": ["Fx", "Fy", "Fz", "Mx", "My", "Mz"],
+    "beam_longitudinal": ["Fx", "Fy", "Fz", "Mx", "My", "Mz"],
+    "beam_transverse": ["Fx", "Fy", "Fz", "Mx", "My", "Mz"],
+    "bracing_longitudinal": ["Fx", "Fy", "Fz", "Mx", "My", "Mz"],
+    "bracing_transverse": ["Fx", "Fy", "Fz", "Mx", "My", "Mz"],
+    "bracing_longitudinal_mirrored": ["Fx", "Fy", "Fz", "Mx", "My", "Mz"],
+    "bracing_transverse_mirrored": ["Fx", "Fy", "Fz", "Mx", "My", "Mz"],
 }
 IDEA_STATICA_FORCE_NAMES = ["n", "vy", "vz", "mx", "my", "mz"]
 
@@ -893,10 +878,19 @@ Members of the same type are told apart by "position": "Begin" for the member st
 '''
 def joint_load_effect(joint: Dict[str, Any], forces: dict[int, list[list[float]]], name: str) -> Dict[str, Any]:
     member_loadings = []
+    repeated_types = {}
     for member in joint["members"]:
         values = forces[member["beam"]][member["end"]]
+        member_type = member["member_type"]
+        occurrence = repeated_types.get(member_type, 0)
+        repeated_types[member_type] = occurrence + 1
+        # Through columns/beams share a member at opposite ends. Distinct
+        # braces need distinct names, matching the member-update payload.
+        member_name = member_type
+        if occurrence and member_type not in ("column", "beam_longitudinal", "beam_transverse"):
+            member_name = f"{member_type}_{occurrence}"
         member_loadings.append({
-            "member_name": member["member_type"],
+            "member_name": member_name,
             **dict(zip(IDEA_STATICA_FORCE_NAMES, values)),
             "position": "Begin" if member["end"] == 0 else "End",
         })
@@ -1128,13 +1122,18 @@ async def send_to_staad(data: dict) -> dict:
     to this, a property-assignment failure incorrectly marked the whole
     member as failed even when its geometry had already landed.
     """
+    # Reject invalid project combinations before touching the open model.
+    from agentic.load_combinations import resolve_combinations
+    data = {**data, "load_configuration": dict(data.get("load_configuration") or {})}
+    data["load_configuration"]["load_combinations"] = resolve_combinations(data["load_configuration"])
     # Clean the STAAD.Pro model before adding new members
-    clean_staad()
+    model_path = clean_staad(data.get("expected_staad_model_path"))
     members = data.get("members_split_beams", [])
     load_configuration = data.get("load_configuration")
     grid_spec = data.get("grid")
 
     openstaad = staad_common._get_openstaad()
+    model_path = staad_common.saved_model_path(openstaad, model_path)
     openstaad.SetInputUnitForLength(length_unit_meter)
     openstaad.SetInputUnitForForce(force_unit_kilonewton)
     geometry = openstaad.Geometry
@@ -1219,6 +1218,11 @@ async def send_to_staad(data: dict) -> dict:
         elif memberType in ["bracing_longitudinal", "bracing_transverse", "bracing_longitudinal_mirrored", "bracing_transverse_mirrored"]:
             property.AssignMemberSpecToBeam([beam_no], truss_spec_id)
 
+    if errors or property_errors:
+        return {"created": created, "failed": len(errors), "errors": errors,
+                "property_assignment_failed": len(property_errors), "property_errors": property_errors,
+                "analysis_failed": True}
+
     load_applied = 0
     load_errors: List[Dict[str, str]] = []
     if load_configuration:
@@ -1233,11 +1237,10 @@ async def send_to_staad(data: dict) -> dict:
     openstaad.UpdateStructure()
     await asyncio.sleep(2)
 
-    print("Starting PerformAnalysis...")
-    command.PerformAnalysis(6)
-    await asyncio.sleep(4)  # give STAAD.Pro a moment to complete the analysis
-    openstaad.SaveModel(True)
-    await asyncio.sleep(2)
+    # STAAD 2025 silently omits PerformAnalysis(6). Use the supported no-print
+    # option and verify analysis precedes envelopes in the actual saved input.
+    analysis_path = staad_common.prepare_saved_analysis(openstaad, model_path)
+    load = openstaad.Load
 
     staad_update_status = {
         "created": created,
@@ -1277,7 +1280,9 @@ async def send_to_staad(data: dict) -> dict:
             await asyncio.sleep(2)
         print("Analysis complete.")
     else:
-        openstaad.Analyze()
+        # Analyze() leaves a completion dialog open and IsAnalyzing stays true
+        # until someone clicks Done. Silent, hidden analysis closes itself.
+        openstaad.AnalyzeEx(1, 1, 0)
         # Wait for analysis to complete with timeout
         analysis_deadline = time.time() + 300
 
@@ -1310,6 +1315,10 @@ async def send_to_staad(data: dict) -> dict:
 
     if analysis_status["ReturnValue"] not in [2, 3]:
         staad_update_status["analysis_failed"] = True
+        from common.staad_input import analysis_errors
+        report_path = analysis_path.with_suffix(".anl")
+        if report_path.is_file():
+            staad_update_status["errors"] = analysis_errors(report_path.read_text(errors="replace"))
         return staad_update_status
 
     await asyncio.sleep(3)
@@ -1321,6 +1330,8 @@ async def send_to_staad(data: dict) -> dict:
     base_unit = openstaad.GetBaseUnit()
     if base_unit not in ("English", "Metric"):
         raise ValueError(f"Unsupported STAAD base unit system: {base_unit}")
+    # OpenSTAAD returns base-system forces even when its output-unit label
+    # says kN. Calibrated against a 10 kN / 5 m cantilever on STAAD 2025.
     force_factor = 4.4482216152605 if base_unit == "English" else 1.0
     moments_factor = force_factor * 0.0254 if base_unit == "English" else 1.0
 
@@ -1405,15 +1416,17 @@ async def send_to_staad(data: dict) -> dict:
             for i in range(len(force_entries[0])):
                 force_entries[0][i] = force_entries[0][i] * (force_factor if i < 3 else moments_factor)
 
-        # convert displacements from inches to mm
-        if displacement_unit.startswith("in"):
-            for _, member_displacements_entries in member_displacements.items():
-                for i in range(len(member_displacements_entries[0])):
-                    member_displacements_entries[0][i] = member_displacements_entries[0][i] * 25.4
-                    member_displacements_entries[1][i] = member_displacements_entries[1][i] * 25.4
-            for _, node_displacements_entries in node_displacements.items():
-                for i in range(len(node_displacements_entries[0])):
-                    node_displacements_entries[0][i] = node_displacements_entries[0][i] * 25.4
+        # Normalize translations only; rotations remain radians.
+        displacement_factors = {"in": 25.4, "inch": 25.4, "inches": 25.4,
+                                "mm": 1.0, "cm": 10.0, "m": 1000.0, "ft": 304.8}
+        unit_key = str(displacement_unit).strip().lower()
+        if unit_key not in displacement_factors:
+            raise ValueError(f"Unsupported displacement unit: {displacement_unit}")
+        factor = displacement_factors[unit_key]
+        for entries in (*member_displacements.values(), *node_displacements.values()):
+            for entry in entries:
+                for i in range(min(3, len(entry))):
+                    entry[i] *= factor
 
         forces_summary = summarize_forces_displacements(forces)
         support_reactions_summary = summarize_forces_displacements(support_reactions)
@@ -1470,7 +1483,7 @@ async def send_to_staad(data: dict) -> dict:
                                      "max_X": abs(env_summary_results['displacements']['max_X']['X']),
                                      "min_Z": abs(env_summary_results['displacements']['min_Z']['Z']),
                                      "max_Z": abs(env_summary_results['displacements']['max_Z']['Z'])}
-        node_displacements_limits_exceed_col_height_200 = {key: displacement_limit >= grid_spec.get('col_height_mm')/200 for key, displacement_limit in node_displacements_limits.items()}
+        node_displacements_limits_exceed_col_height_200 = {key: displacement_limit > grid_spec['col_height_mm'] / 200.0 for key, displacement_limit in node_displacements_limits.items()}
         env_summary_results['node_displacements_limits'] = node_displacements_limits
         env_summary_results['node_displacements_limits_exceed_col_height_200'] = node_displacements_limits_exceed_col_height_200
         envelope_summary_results[envelopeId] = env_summary_results
@@ -1523,7 +1536,7 @@ async def send_to_staad(data: dict) -> dict:
     staad_update_status["envelope_governing_forces_by_joint_group"] = envelope_governing_forces_by_joint_group
     staad_update_status["envelope_load_cases_by_joint_group"] = envelope_load_cases_by_joint_group
     staad_update_status["results_local_or_global"] = results_local
-    staad_update_status["units"] = {"force": "kN", "moment": "kN-m", "displacement": "m"}
+    staad_update_status["units"] = {"force": "kN", "moment": "kN-m", "displacement": "mm"}
     staad_update_status["summary_results"] = summary_results
 
     try:

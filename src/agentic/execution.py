@@ -73,7 +73,8 @@ class RunController:
                     except asyncio.TimeoutError:
                         pass
                     state = WORKFLOW_STORE.get_state(run_id) or state
-                    key = (state.current_agent, len(state.logs), str(state.agent_statuses.get(state.current_agent)))
+                    key = (state.current_agent, len(state.logs), str(state.agent_statuses.get(state.current_agent)),
+                           state.deep_agent_model_call_count)
                     if key != progress_key:
                         last_progress, progress_key = time.monotonic(), key
                     now = time.monotonic()

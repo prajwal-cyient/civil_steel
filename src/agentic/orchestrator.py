@@ -10,10 +10,11 @@ Implements:
 """
 
 from typing import Any, Dict, Literal, Optional
+import inspect
 import uuid
 from langgraph.graph import StateGraph, END
 from agentic.state import WorkflowState, fail_workflow
-from agentic.config import settings
+from agentic.config import settings, deep_agents_enabled
 from agentic.agents.a1_requirements_agent import run_a1_requirements
 from agentic.agents.a2_readiness_agent import run_a2_readiness
 from agentic.agents.a3_frame_generator_agent import run_a3_frame_generator
@@ -45,60 +46,48 @@ def _start_agent(state: WorkflowState, agent_id: str):
     _sync_state(state)
 
 
-def node_a1(state: WorkflowState) -> WorkflowState:
-    _start_agent(state, "A1")
-    res = run_a1_requirements(state)
+async def _run_stage(state, agent_id, operation):
+    _start_agent(state, agent_id)
+    if deep_agents_enabled():
+        from agentic.deep_runtime import run_deep_stage
+        return await run_deep_stage(state, agent_id, operation, _sync_state)
+    res = operation(state)
+    if inspect.isawaitable(res):
+        res = await res
     _sync_state(res)
     return res
 
 
-def node_a2(state: WorkflowState) -> WorkflowState:
-    _start_agent(state, "A2")
-    res = run_a2_readiness(state)
-    _sync_state(res)
-    return res
+async def node_a1(state: WorkflowState) -> WorkflowState:
+    return await _run_stage(state, "A1", run_a1_requirements)
 
 
-def node_a3(state: WorkflowState) -> WorkflowState:
-    _start_agent(state, "A3")
-    res = run_a3_frame_generator(state)
-    _sync_state(res)
-    return res
+async def node_a2(state: WorkflowState) -> WorkflowState:
+    return await _run_stage(state, "A2", run_a2_readiness)
+
+
+async def node_a3(state: WorkflowState) -> WorkflowState:
+    return await _run_stage(state, "A3", run_a3_frame_generator)
 
 
 async def node_a4(state: WorkflowState) -> WorkflowState:
-    _start_agent(state, "A4")
-    res = await run_a4_staad_analyzer(state)
-    _sync_state(res)
-    return res
+    return await _run_stage(state, "A4", run_a4_staad_analyzer)
 
 
-def node_a5(state: WorkflowState) -> WorkflowState:
-    _start_agent(state, "A5")
-    res = run_a5_ideastatica_analyzer(state)
-    _sync_state(res)
-    return res
+async def node_a5(state: WorkflowState) -> WorkflowState:
+    return await _run_stage(state, "A5", run_a5_ideastatica_analyzer)
 
 
-def node_a6(state: WorkflowState) -> WorkflowState:
-    _start_agent(state, "A6")
-    res = run_a6_package_validator(state)
-    _sync_state(res)
-    return res
+async def node_a6(state: WorkflowState) -> WorkflowState:
+    return await _run_stage(state, "A6", run_a6_package_validator)
 
 
-def node_a7(state: WorkflowState) -> WorkflowState:
-    _start_agent(state, "A7")
-    res = run_a7_tekla_modeler(state)
-    _sync_state(res)
-    return res
+async def node_a7(state: WorkflowState) -> WorkflowState:
+    return await _run_stage(state, "A7", run_a7_tekla_modeler)
 
 
-def node_a8(state: WorkflowState) -> WorkflowState:
-    _start_agent(state, "A8")
-    res = run_a8_reporting(state)
-    _sync_state(res)
-    return res
+async def node_a8(state: WorkflowState) -> WorkflowState:
+    return await _run_stage(state, "A8", run_a8_reporting)
 
 
 # ─── Conditional Routing Edges (Loop A & Loop B) ───────────────────────────────

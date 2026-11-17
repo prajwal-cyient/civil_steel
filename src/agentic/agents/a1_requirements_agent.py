@@ -43,6 +43,7 @@ class GridInputSchema(BaseModel):
 
     longitudinal_beam_extra_mm: float = 140.0
     vertical_base_eccentricity_mm: float = 0.0
+    base_plate_offset_above_column_base_mm: float = Field(default=30.0, allow_inf_nan=False)
     gusset_plate_thickness_mm: float = 15.0
     embedded_plate_thickness_mm: float = 10.0
     bracing_distance_from_column_mm: float = 20.0

@@ -64,6 +64,7 @@ Thumbs.db
 # Local environment files
 .env
 .env.*
+!.env.example
 
 # Generated project files
 *.log

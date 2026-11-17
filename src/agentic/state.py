@@ -49,6 +49,9 @@ class WorkflowState(BaseModel):
     simulation_mode: bool = False  # Set to True if software is offline to enable safe testing
     model_call_count: int = 0
     model_events: List[Dict[str, Any]] = Field(default_factory=list)
+    # Deep Agent requests are audited separately from optional correction proposals.
+    deep_agent_model_call_count: int = 0
+    deep_agent_events: List[Dict[str, Any]] = Field(default_factory=list)
 
     # A3 Frame Generation
     frame_candidate: Dict[str, Any] = Field(default_factory=dict)

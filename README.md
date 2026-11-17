@@ -37,6 +37,35 @@ Network failures and invalid proposals fall back to the deterministic candidate;
 `PLANT_MODEL_CALL_LIMIT` caps calls. Set `PLANT_LLM_ENABLED=false` to disable it.
 Credentials are never included in workflow state or browser responses.
 
+### Deep Agents execution for A1-A8
+
+Install `requirements.txt` in the project virtual environment and set
+`PLANT_DEEP_AGENTS_ENABLED=true` in the backend `.env`. Configure
+`PLANT_AGENT_MODEL`, `OPENAI_API_KEY` and `OPENAI_BASE_URL` for the intended
+OpenAI-compatible deployment. The key stays on the backend; do not paste it
+into the form or commit it. GPT-6 tool calling uses the Responses API with
+storage disabled. The older correction advisor retains its separate call budget.
+
+When enabled, every A1-A8 stage runs a real `deepagents.create_deep_agent`
+planning/tool/review cycle inside the existing LangGraph sequence. Each stage
+can plan with `write_todos` and execute its own approved engineering tool once.
+The worker runs these tools on its STA thread, including async STAAD calls.
+Deep Agents cannot edit inputs or files, invoke another stage, repeat a native
+tool, override graders, or sign off Gate 3. A model error, skipped tool or
+duplicate execution request fails the run; there is no silent legacy fallback.
+The existing frame/joint graders and Loops A/B/C remain authoritative.
+
+`PLANT_DEEP_AGENT_MODEL_CALL_LIMIT` defaults to 64 model requests per run;
+each stage visit also has a four-request cap and bounded request timeouts.
+`deep_agent_model_call_count` and `deep_agent_events` in saved workflow JSON
+record actual requests, token usage, tool executions, stage outcomes and reviews.
+Repeated stage visits produce separate audit records. A8 includes an execution
+summary and still pauses for engineer acceptance. Set
+`PLANT_DEEP_AGENTS_ENABLED=false` to explicitly select the deterministic
+workflow. The SDK integration tests use the real Deep Agents graph with a
+controlled chat model and mocked engineering tools; they are distinct from
+live FEA and live model verification.
+
 The default `poc2_automation` mode uses the existing reference application's
 8 load combinations and 3 envelopes automatically when the form supplies no
 custom combinations. A1 does not require a new rubric file. The A1?A8 analyzers,

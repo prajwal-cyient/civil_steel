@@ -187,6 +187,10 @@ TEKLA_INT_ATTRIBUTES = {"nb", "nw", "assembly_type"}
 TEKLA_STRING_ATTRIBUTES = {"lbd", "lwd"}
 
 
+def _is_string_attribute(key):
+    return key in TEKLA_STRING_ATTRIBUTES or key == "mat" or (key.startswith("mat") and key[3:].isdigit())
+
+
 def _component_integer(value):
     # pythonnet can choose GetAttribute(string, ref double) for Python int.
     # Explicit Int32 is required for persisted integer attribute read-back.
@@ -200,7 +204,7 @@ def _component_integer(value):
 def set_component_attribute(component, param_name: str, param_value):
     if param_name in TEKLA_INT_ATTRIBUTES:
         accepted = component.SetAttribute(param_name, _component_integer(round(float(param_value))))
-    elif param_name in TEKLA_STRING_ATTRIBUTES:
+    elif _is_string_attribute(param_name):
         accepted = component.SetAttribute(param_name, str(param_value))
     else:
         accepted = component.SetAttribute(param_name, float(param_value))
@@ -213,12 +217,12 @@ def _verify_component(model, component, attributes):
     if persisted is None:
         raise RuntimeError("Inserted Tekla connection could not be read back.")
     for key, expected in (attributes or {}).items():
-        default = "" if key in TEKLA_STRING_ATTRIBUTES else _component_integer(0) if key in TEKLA_INT_ATTRIBUTES else 0.0
+        default = "" if _is_string_attribute(key) else _component_integer(0) if key in TEKLA_INT_ATTRIBUTES else 0.0
         returned = persisted.GetAttribute(key, default)
         if not isinstance(returned, tuple) or len(returned) != 2 or not returned[0]:
             raise RuntimeError(f"Cannot verify persisted Tekla attribute {key}.")
         actual = returned[1]
-        if key in TEKLA_STRING_ATTRIBUTES:
+        if _is_string_attribute(key):
             matches = str(actual).strip() == str(expected).strip()
         else:
             matches = math.isclose(float(actual), float(expected), rel_tol=1e-6, abs_tol=1e-3)
@@ -355,6 +359,13 @@ def send_to_tekla(data: dict) -> dict:
     members = data.get("members", [])
     grid = data.get("grid", {})
     joint_groups = data.get("joint_groups", {})
+    plate_policy = data.get("plate_material_policy")
+    if plate_policy:
+        from agentic.connection_materials import reference_plate_material_policy
+        if plate_policy != reference_plate_material_policy():
+            raise RuntimeError("Standard Tekla material files changed after package validation.")
+    def material_attributes(number):
+        return dict((plate_policy or {}).get("component_attributes", {}).get(str(number), {}))
     def progress(message):
         print(f"Tekla: {message}", flush=True)
         callback = data.get("progress_callback")
@@ -431,7 +442,8 @@ def send_to_tekla(data: dict) -> dict:
     # 1. Base connections
     for member, col in columns:
         try:
-            connect(add_base_connection, model, col, 1004, f"{member.get('name')} base plate", "1004", grid)
+            connect(add_base_connection, model, col, 1004, f"{member.get('name')} base plate", "1004", grid,
+                    attributes=material_attributes(1004))
         except Exception as exc:
             errors.append({"name": member.get("name"), "error": str(exc)})
 
@@ -446,7 +458,8 @@ def send_to_tekla(data: dict) -> dict:
                 try:
                     conn_name = f"{member_name} beam-x-{name_parts[1]} longitudinal beam connection"
                     conn_num = 144
-                    idea_attrs = connection_attributes(joint_groups, column_joint_groups, conn_num)
+                    idea_attrs = {**material_attributes(conn_num),
+                                  **connection_attributes(joint_groups, column_joint_groups, conn_num)}
 
                     col_prof = member.get('profile')
                     beam_prof = longitudinal_beam_member.get('profile')
@@ -495,7 +508,8 @@ def send_to_tekla(data: dict) -> dict:
                     if brace_entry:
                         _, brace_obj = brace_entry
                         dir_str = "longitudinal" if brace_name.startswith("bracing-long") else "transverse"
-                        brace_attrs = connection_attributes(joint_groups, column_joint_groups, 20, dir_str)
+                        brace_attrs = {**material_attributes(20),
+                                       **connection_attributes(joint_groups, column_joint_groups, 20, dir_str)}
                         connect(add_column2beam_connection,
                             model, brace_obj, col, 20, f"{member_name} {brace_name} connection",
                             "20", grid, 1, "bracing_column", attributes=brace_attrs
@@ -517,7 +531,8 @@ def send_to_tekla(data: dict) -> dict:
             beam_pair = (f"beam-x-{t_idx}", f"beam-y-{l_idx}")
             pair_joint_groups = [jg for jg, pairs in beam_pairs_by_joint_group.items() if beam_pair in pairs]
             try:
-                beam_attrs = connection_attributes(joint_groups, pair_joint_groups, 30)
+                beam_attrs = {**material_attributes(30),
+                              **connection_attributes(joint_groups, pair_joint_groups, 30)}
                 connect(add_column2beam_connection,
                     model, t_beam_obj, l_beam_obj, 30,
                     f"beam-x-{t_idx} beam-y-{l_idx} connection",
@@ -559,6 +574,7 @@ def send_to_tekla(data: dict) -> dict:
         "created": created,
         "verified_members": verified_members,
         "verified_connections": len(connection_ids),
+        "plate_materials_verified": bool(plate_policy) and bool(connection_ids) and not errors,
         "connection_ids": connection_ids,
         "failed": len(errors),
         "errors": errors
@@ -584,6 +600,7 @@ def run_a7_tekla_modeler(state: WorkflowState) -> WorkflowState:
         "grid": grid,
         "joint_groups": joint_groups,
         "expected_tekla_model_path": state.readiness.get("tekla_model_path"),
+        "plate_material_policy": state.validation_report.get("plate_material_policy"),
     }
 
     tekla_res = None
@@ -597,7 +614,7 @@ def run_a7_tekla_modeler(state: WorkflowState) -> WorkflowState:
         return fail_workflow(state, "A7", f"Tekla publication failed: {exc}")
 
     state.tekla_results = tekla_res
-    if tekla_res.get("simulation") or tekla_res.get("failed") or tekla_res.get("errors") or tekla_res.get("created") != len(members) or tekla_res.get("verified_members") != len(members):
+    if tekla_res.get("simulation") or tekla_res.get("failed") or tekla_res.get("errors") or tekla_res.get("created") != len(members) or tekla_res.get("verified_members") != len(members) or (payload["plate_material_policy"] and not tekla_res.get("plate_materials_verified")):
         examples = "; ".join(str(error.get("error", error)) if isinstance(error, dict) else str(error)
                              for error in tekla_res.get("errors", [])[:3])
         return fail_workflow(state, "A7", f"Tekla publication incomplete: {tekla_res.get('verified_members', 0)}/{len(members)} members verified, "

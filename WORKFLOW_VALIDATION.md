@@ -1,4 +1,53 @@
-# Workflow validation ? 15 November 2026
+# Workflow validation
+
+## 17 November 2026: Deep Agents A1-A8 verified live
+
+Deep Agents SDK 0.7.39 and langchain-openai 1.8.0 are integrated into every
+A1-A8 stage while LangGraph retains sequencing, recovery loops and engineering
+gates. The local `.env` enables this mode. A blank workflow-mode setting now uses
+the documented `poc2_automation` default rather than failing at A1.
+
+Live run **`run_feea9ea5`** used the existing 8x5 reference input, actual configured
+`gpt-6-sol` requests, and native STAAD, IDEA and Tekla on isolated model copies.
+No model or engineering adapters were mocked in this run.
+
+| Check | Observed result |
+| --- | --- |
+| Deep Agent stage executions | A1-A8 all `VERIFIED`; exactly one stage tool call per stage |
+| Actual GPT requests | 16, two per stage; token usage and reviews saved |
+| A1-A7 engineering statuses | All `PASSED` |
+| A8 | Report generated; `AWAITING_APPROVAL` at Gate 3 |
+| Physical / analytical members | 90 / 168 |
+| STAAD | Maximum ratio 0.1305644222222222; zero errors, one warning |
+| IDEA combined family | Bolts 26.3463%, welds 68.7001%; native checks passed |
+| IDEA longitudinal family | Bolts 34.8327%, welds 63.7858%; native checks passed |
+| Tekla | 90 verified members, 204 connections with verified attributes, zero failures |
+| Package hash | `020f07e5bcb3` |
+
+The 13 remaining joint families retain the reference procedure's standard Tekla
+details; they are not separate IDEA calculation passes. Gate 3 was not accepted.
+The original open models were restored and their saved source STAAD file and
+Tekla database hashes remained unchanged after the isolated run.
+
+The first model smoke request exposed the deployment's rejection of GPT-6
+reasoning/tool calls via Chat Completions. The integration now uses Responses
+with storage disabled; the subsequent smoke and full live run passed.
+
+All **169 Python regression tests passed**, including real Deep Agents SDK graphs
+with a controlled model and mocked engineering adapters. Those tests exercise
+Loops A/B/C, exact-once stage execution on the worker COM thread, unauthorized
+tool rejection, call limits, model failure, and preservation of the engineer gate.
+The successful live run needed zero correction iterations, so live correction
+loops are not claimed to have been exercised by this run. `pip check` and Git
+whitespace checks also passed. No commit or push was made.
+
+Evidence: `output_exports/deep_agents_live_20261117/run_feea9ea5/` contains
+input, complete output, per-agent JSON, final report, execution audit and native
+software files. `live_validation.json` records source-model restoration checks.
+`src/agentic/deep_runtime.py` implements bounded model/tool/review cycles; existing
+deterministic engineering tools and graders remain authoritative.
+
+## Historical validation: 15 November 2026
 
 ## Latest result: senior-scope workflow reached A8
 

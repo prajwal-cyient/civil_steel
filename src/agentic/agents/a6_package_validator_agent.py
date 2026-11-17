@@ -14,6 +14,7 @@ from agentic.agents.a4_staad_analyzer_agent import grade_staad_results
 from agentic.agents.a5_ideastatica_analyzer_agent import grade_joint_check_summary
 from agentic.agents import a5_ideastatica_analyzer_agent as idea_agent
 from agentic.evidence import frame_signature
+from agentic.connection_materials import reference_plate_material_policy, verify_plate_material_evidence
 
 
 def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
@@ -57,6 +58,7 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
     except ValueError as exc:
         from agentic.state import fail_workflow
         return fail_workflow(state, "A6", str(exc))
+    plate_policy = reference_plate_material_policy() if scope["mode"] == "reference_procedure" else None
     for jg_id in scope["idea_required_groups"]:
         grader = state.joint_grader_results.get(jg_id)
         if not grader or not grader.passed:
@@ -69,6 +71,8 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
         if result.get("passed") is not True or result.get("simulation") or not grade_joint_check_summary(result.get("check_summary", {})).passed:
             failures.append(f"Connection source evidence for '{jg_id}' is missing, simulated, or failed.")
         try:
+            verify_plate_material_evidence(result.get("plate_material_evidence"), plate_policy,
+                result.get("iom_connection_data_file"))
             signature = idea_agent._connection_signature(idea_agent._connection_payload(state, jg_id), state.design_generation)
             if result.get("input_signature") != signature:
                 failures.append(f"Connection evidence for '{jg_id}' belongs to different inputs or template.")
@@ -136,6 +140,7 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
         "beam_profile": state.active_beam_profile,
         "frame_signature": frame_signature(state),
         "connection_scope": scope,
+        "plate_material_policy": plate_policy,
         "joint_groups": validated_joint_groups
     }, sort_keys=True)
     pkg_hash = hashlib.sha256(pkg_str.encode("utf-8")).hexdigest()[:12]
@@ -146,6 +151,7 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
         "package_hash": pkg_hash,
         "joint_groups_verified": len(validated_joint_groups),
         "connection_scope": scope,
+        "plate_material_policy": plate_policy,
         "total_members": len(state.frame_candidate.get("members", [])),
         "validated_joint_groups_payload": validated_joint_groups
     }

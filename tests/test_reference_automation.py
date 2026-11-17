@@ -14,6 +14,31 @@ from agentic.state import WorkflowState
 
 
 class ReferenceAutomationTests(unittest.TestCase):
+    def test_base_plate_offset_survives_validation_and_frame_handoff(self):
+        from agentic.agents import a3_frame_generator_agent as a3
+
+        for offset in (0, 30, 47.5):
+            with self.subTest(offset=offset), patch.dict(os.environ, {
+                "PLANT_WORKFLOW_MODE": "poc2_automation", "PLANT_LOAD_COMBINATIONS_FILE": ""
+            }):
+                state = run_a1_requirements(WorkflowState(
+                    run_id="base_plate_offset", raw_input={"grid": {
+                        "base_plate_offset_above_column_base_mm": offset
+                    }}))
+                self.assertEqual(state.agent_statuses["A1"]["status"], "PASSED")
+                self.assertEqual(state.grid_config["base_plate_offset_above_column_base_mm"], offset)
+                with patch.object(a3, "generate_members", side_effect=RuntimeError("handoff inspected")) as generate:
+                    a3.run_a3_frame_generator(state)
+                self.assertEqual(generate.call_args.args[0]["base_plate_offset_above_column_base_mm"], offset)
+
+    def test_base_plate_offset_rejects_nonfinite_input(self):
+        with patch.dict(os.environ, {"PLANT_WORKFLOW_MODE": "poc2_automation"}):
+            state = run_a1_requirements(WorkflowState(
+                run_id="invalid_offset", raw_input={"grid": {
+                    "base_plate_offset_above_column_base_mm": float("inf")
+                }}))
+        self.assertEqual(state.agent_statuses["A1"]["status"], "FAILED")
+
     def test_existing_form_passes_a1_without_an_extra_combination_file(self):
         with patch.dict(os.environ, {"PLANT_WORKFLOW_MODE": "poc2_automation", "PLANT_LOAD_COMBINATIONS_FILE": ""}):
             state = run_a1_requirements(WorkflowState(run_id="reference_form", raw_input={"grid": {}, "load_configuration": {}}))

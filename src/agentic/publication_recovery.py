@@ -27,10 +27,10 @@ async def run_publication_retry(state):
     from agentic.orchestrator import node_a6, node_a7, node_a8
     if not state.readiness.get("publication_resume_source"):
         return fail_workflow(state, "A6", "No publication recovery source was recorded.")
-    state = node_a6(state)
+    state = await node_a6(state)
     if not state.validation_report.get("passed") or state.agent_statuses.get("A6", {}).get("status") != "PASSED":
         return fail_workflow(state, "A6", "Calculation evidence changed or failed revalidation; run the complete workflow again.")
-    state = node_a7(state)
+    state = await node_a7(state)
     if state.agent_statuses.get("A7", {}).get("status") == "PASSED":
-        state = node_a8(state)
+        state = await node_a8(state)
     return state

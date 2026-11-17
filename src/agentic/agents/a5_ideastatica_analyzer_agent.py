@@ -57,6 +57,9 @@ except ImportError:
 from agentic.state import WorkflowState, AgentLogEntry, GraderResult, fail_workflow
 from agentic.config import settings
 from agentic.advisor import choose_correction
+from agentic.connection_materials import (
+    material_only_plate_evidence, reference_plate_material_policy, verify_plate_material_evidence,
+)
 from agentic.ladders import (
     get_next_plate_thickness,
     get_next_bolt_diameter,
@@ -388,6 +391,24 @@ def _localize_failed_weld_parameters(api_client, project_id, connection_id, para
             "probe_expressions_restored": True}
 
 
+def _apply_reference_plate_material(api_client, project_id, connection_id, plate_policy):
+    if plate_policy != reference_plate_material_policy():
+        raise IdeaStaticaJointError("Plate material policy differs from the verified Tekla detail files.")
+    steels = _to_jsonable(api_client.material.get_steel_materials(project_id))
+    matches = [m for m in steels if m.get("name") == plate_policy["idea_material_name"]
+               and m.get("fy") == 355000000.0 and m.get("fu") == 490000000.0]
+    if len(matches) != 1:
+        raise IdeaStaticaJointError("A unique verified S355 plate catalogue material is required.")
+    before = _to_jsonable(api_client.export.export_iom_connection_data(project_id, connection_id))
+    properties = api_client.operation.get_common_operation_properties(project_id, connection_id)
+    properties.plate_material_id = matches[0]["id"]
+    api_client.operation.update_common_operation_properties(project_id, connection_id, properties)
+    # This endpoint returns an aggregate editing selection, not a persisted
+    # plate assignment. Verify the actual exported plates rather than its ID.
+    after = _to_jsonable(api_client.export.export_iom_connection_data(project_id, connection_id))
+    return material_only_plate_evidence(before, after, plate_policy)
+
+
 def design_joint(data: dict) -> dict:
     """
     Opens a template .ideaCon project, updates member sections and applied loads,
@@ -413,6 +434,7 @@ def design_joint(data: dict) -> dict:
     iom_connection_data_file = os.path.join(output_dir, 'iom_connection_data_' + template_basename + '.json')
 
     output_messages = []
+    plate_material_evidence = None
     if not os.path.isfile(template_path):
         raise IdeaStaticaJointError(f"Template project not found: {template_path}")
     os.makedirs(output_dir, exist_ok=True)
@@ -520,6 +542,11 @@ def design_joint(data: dict) -> dict:
             }
             for p in _get_parameters(api_client, project_id, connection_id)
         ]
+        plate_policy = data.get("plate_material_policy")
+        if plate_policy:
+            progress("Aligning plate materials with the declared standard Tekla details")
+            plate_material_evidence = _apply_reference_plate_material(
+                api_client, project_id, connection_id, plate_policy)
         by_key = {p["key"]: p for p in operation_parameters}
         for update in operation_parameter_updates:
             expected = str(update["expression"]).strip("\"'")
@@ -588,14 +615,28 @@ def design_joint(data: dict) -> dict:
         connection_data = api_client.export.export_iom_connection_data(project_id, connection_id)
         with open(iom_connection_data_file, "w") as f:
             f.write(json.dumps(connection_data.to_dict() if hasattr(connection_data, "to_dict") else vars(connection_data), indent=2))
+        if plate_material_evidence:
+            with open(iom_connection_data_file, "rb") as source:
+                plate_material_evidence["iom_sha256"] = hashlib.sha256(source.read()).hexdigest()
+            verify_plate_material_evidence(plate_material_evidence, plate_policy, iom_connection_data_file)
 
         extract_raw_results = data.get("extract_raw_results", False)
         raw_results_file = None
-        if extract_raw_results:
-            raw_results_file = os.path.join(output_dir, "raw_results_" + template_basename + ".json")
-            raw_json_list = api_client.calculation.get_raw_json_results(project_id, [connection_id])
-            with open(raw_results_file, "w") as f:
-                f.write(raw_json_list[0])
+        raw_results_error = None
+        if extract_raw_results or result.passed is not True or not feedback_grade.passed:
+            try:
+                raw_json_list = api_client.calculation.get_raw_json_results(
+                    project_id, [connection_id], _request_timeout=(10.0, 60.0))
+                raw_text = raw_json_list[0]
+                json.loads(raw_text)  # Do not publish incomplete diagnostic JSON.
+                raw_results_file = os.path.join(output_dir, "raw_results_" + template_basename + ".json")
+                with open(raw_results_file, "w") as f:
+                    f.write(raw_text)
+            except Exception as exc:
+                if extract_raw_results:
+                    raise
+                raw_results_file = None
+                raw_results_error = f"{type(exc).__name__}: {exc}"
 
         extract_pdf_report = data.get("extract_pdf_report", False)
         report_pdf_file = None
@@ -606,14 +647,18 @@ def design_joint(data: dict) -> dict:
     return {
         "connection_id": connection_id,
         "joint_group": joint_group_name,
-        "passed": result.passed,
+        "passed": result.passed is True and feedback_grade.passed,
+        "native_calculation_passed": result.passed,
+        "validation_summary": feedback_grade.summary,
         "check_summary": check_summary,
         "output_messages": output_messages,
         "check_summary_file": summary_file,
         "raw_results_file": raw_results_file,
+        "raw_results_error": raw_results_error,
         "iom_connection_data_file": iom_connection_data_file,
         "report_pdf_file": report_pdf_file,
         "saved_project_path": save_project_path,
+        "plate_material_evidence": plate_material_evidence,
     }
 
 
@@ -722,6 +767,7 @@ def _connection_payload(state: WorkflowState, joint_group: str) -> dict:
         "replace_template_loads": True,
         "enforce_member_coverage": True,
         "operation_parameters": state.active_operation_params.get(joint_group, []),
+        "plate_material_policy": reference_plate_material_policy() if scope["mode"] == "reference_procedure" else None,
         "output_dir": os.path.join(root, f"output_{joint_group}"), "extract_raw_results": False,
     }
 
@@ -791,10 +837,12 @@ def run_a5_ideastatica_analyzer(state: WorkflowState) -> WorkflowState:
                 # damaged/missing result, not repeatedly reuse that stale flag.
                 try:
                     validate_calculation_check_coverage(previous.get("check_summary", {}).get("summary", []))
+                    verify_plate_material_evidence(previous.get("plate_material_evidence"),
+                        payload.get("plate_material_policy"), previous.get("iom_connection_data_file"))
                     reusable = (previous.get("passed") is True and not previous.get("simulation")
                                 and not previous.get("output_messages")
                                 and grade_joint_check_summary(previous.get("check_summary", {})).passed)
-                except IdeaStaticaJointError:
+                except (IdeaStaticaJointError, ValueError):
                     reusable = False
                 if reusable:
                     continue

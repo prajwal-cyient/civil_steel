@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def workflow_mode() -> str:
-    value = os.getenv("PLANT_WORKFLOW_MODE", "poc2_automation")
+    value = os.getenv("PLANT_WORKFLOW_MODE", "").strip() or "poc2_automation"
     if value not in ("poc1_automation", "poc2_automation", "reviewed_engineering"):
         raise ValueError(f"Unsupported workflow mode: {value}")
     return value
@@ -37,6 +37,15 @@ def _integer(name: str, default: int, minimum: int = 1) -> int:
     if value < minimum:
         raise ValueError(f"{name} must be at least {minimum}.")
     return value
+
+
+def deep_agents_enabled() -> bool:
+    """Explicit opt-in keeps historical deterministic runs reproducible."""
+    return os.getenv("PLANT_DEEP_AGENTS_ENABLED", "false").lower() == "true"
+
+
+def deep_agent_call_limit() -> int:
+    return _integer("PLANT_DEEP_AGENT_MODEL_CALL_LIMIT", 64)
 
 
 @dataclass(frozen=True)

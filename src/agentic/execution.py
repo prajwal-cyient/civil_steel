@@ -44,7 +44,10 @@ class RunController:
         self._cancelled = True
         await self._terminate()
 
-    async def execute(self, payload: dict, run_id: str, resume_state: WorkflowState | None = None) -> WorkflowState:
+    async def execute(self, payload: dict, run_id: str, resume_state: WorkflowState | None = None,
+                      chat_action: str | None = None) -> WorkflowState:
+        if self.run_id is not None:
+            raise ValueError("An engineering worker is already active.")
         cfg = settings()
         state = resume_state or WorkflowState(run_id=run_id, status="RUNNING", raw_input=payload)
         if state.run_id != run_id or state.status != "RUNNING":
@@ -62,7 +65,8 @@ class RunController:
                 options = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {"start_new_session": True}
                 self.process = await asyncio.create_subprocess_exec(
                     sys.executable, "-u", "-m", "agentic.worker", "--run-id", run_id,
-                    *(["--resume-publication"] if resume_state else []),
+                    *(["--chat-action", chat_action] if chat_action else
+                      ["--resume-publication"] if resume_state else []),
                     cwd=str(ROOT), env=environment, stdout=log, stderr=log, **options,
                 )
                 if self._cancelled:
@@ -93,7 +97,8 @@ class RunController:
             if self._cancelled:
                 state.status, state.error = "CANCELLED", "Run stopped by user."
                 state.agent_statuses[state.current_agent] = {"status": "CANCELLED", "message": state.error}
-            elif state.status not in ("FAILED", "CANCELLED", "PAUSED_AT_GATE3", "COMPLETED") or self.process.returncode:
+            elif state.status not in (("FAILED", "CANCELLED", "PAUSED_AT_GATE3", "COMPLETED", "READY")
+                                      if chat_action else ("FAILED", "CANCELLED", "PAUSED_AT_GATE3", "COMPLETED")) or self.process.returncode:
                 state = fail_workflow(state, state.current_agent, "Worker exited without a completed result. See the worker log.")
             WORKFLOW_STORE.save_state(state)
             return state

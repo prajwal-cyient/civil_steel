@@ -12,6 +12,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--resume-publication", action="store_true")
+    parser.add_argument("--chat-action", choices=("preview_structure", "generate_structure", "analyze_frame",
+                                                 "design_connections", "validate_package", "publish_to_tekla"))
     args = parser.parse_args()
     load_environment()
     # OpenSTAAD explicitly requires STA. Import it before pythonnet can select
@@ -23,10 +25,13 @@ def main():
     if state is None:
         raise RuntimeError("Worker input was not persisted.")
     try:
-        if sys.platform == "win32":
+        if sys.platform == "win32" and args.chat_action != "preview_structure":
             import common.staad_common  # noqa: F401
         from agentic.orchestrator import run_agentic_workflow
-        if args.resume_publication:
+        if args.chat_action:
+            from agentic.chat_actions import run_chat_action
+            result = asyncio.run(run_chat_action(state, args.chat_action))
+        elif args.resume_publication:
             from agentic.publication_recovery import run_publication_retry
             result = asyncio.run(run_publication_retry(state))
         else:

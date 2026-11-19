@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>Structural Frame Generator</title>
+<link rel="stylesheet" href="/static/radiator_support/chat.css">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -2128,7 +2129,38 @@ if (gate3AcceptBtn) {
     }
   });
 }
+// Small integration bridge: chat reuses the existing form and result rendering.
+let chatExtraInput = {grid: {}, load_configuration: {}};
+window.structuralChatBridge = {
+  getInput: () => ({grid: {...chatExtraInput.grid, ...buildPayload().grid},
+                   load_configuration: {...chatExtraInput.load_configuration, ...buildLoadConfiguration()}}),
+  getRunId: () => currentAgenticRunId,
+  setInput: data => {
+    chatExtraInput = JSON.parse(JSON.stringify(data));
+    for (const values of [data.grid || {}, data.load_configuration || {}]) {
+      for (const [key, value] of Object.entries(values)) {
+        const field = document.getElementById(key);
+        if (field && !Array.isArray(value) && value !== null && typeof value !== 'object') {
+          if (field.type === 'checkbox') field.checked = Boolean(value); else field.value = value;
+        }
+      }
+    }
+    (data.grid?.starting_point || []).forEach((value, i) => { const field = document.getElementById(['start_x','start_y','start_z'][i]); if (field) field.value = value; });
+    for (const [key, container] of [['longitudinal_brace_bays','long-brace-list'], ['transverse_brace_bays','trans-brace-list']]) {
+      if (Array.isArray(data.grid?.[key])) { document.getElementById(container).replaceChildren(); data.grid[key].forEach(row => addBraceRow(container, row)); }
+    }
+  },
+  showRun: state => renderAgenticRunState(state),
+  showPreview: data => {
+    if (!data?.members || !data?.summary) return;
+    document.getElementById('empty-hint').style.display = 'none';
+    renderStructure(data.members); renderSummary(data.summary);
+    lastGeneratedResult = data;
+    statusMsg.className = 'ok'; statusMsg.textContent = 'Chat geometry preview — unverified; no structural analysis performed.';
+  }
+};
 </script>
+<script src="/static/radiator_support/chat.js" defer></script>
 
 </body>
 </html>

@@ -480,6 +480,9 @@ def create_app():
     except Exception as exc:
         print(f"Notice: Agentic router import: {exc}")
 
+    from agentic.chat_router import router as chat_router
+    app.include_router(chat_router)
+
     return app
 
 

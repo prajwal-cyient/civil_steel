@@ -43,11 +43,11 @@ def _evidence(state):
     }
 
 
-def _build_model():
+def _build_model(*, require_llm_enabled=True):
     from langchain_openai import ChatOpenAI
     cfg = settings()
     key = os.getenv("OPENAI_API_KEY", "")
-    if not cfg.llm_enabled or not cfg.model or not key:
+    if (require_llm_enabled and not cfg.llm_enabled) or not cfg.model or not key:
         raise ValueError("Deep Agents requires enabled LLM, configured model and API key.")
     base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1/")
     parsed = urlparse(base)

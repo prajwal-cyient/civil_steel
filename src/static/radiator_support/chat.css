@@ -1,0 +1,55 @@
+#structural-chat-toggle{position:fixed;right:22px;bottom:20px;z-index:1000;background:#167d91;color:white;border:1px solid #3cc5d9;border-radius:24px;padding:12px 20px;cursor:pointer;font:600 14px system-ui;box-shadow:0 5px 25px #0006}
+#structural-chat{position:fixed;right:18px;bottom:74px;width:min(470px,calc(100vw - 36px));height:min(740px,calc(100dvh - 100px));z-index:1000;background:var(--navy-deep,#071a2b);color:var(--paper-ink,#dcecf5);border:1px solid var(--line,#3d6a8f);border-radius:18px;box-shadow:0 10px 45px #0009;display:flex;flex-direction:column;font:14px/1.5 system-ui;overflow:hidden}
+#structural-chat [hidden],#structural-chat[hidden]{display:none!important}
+#structural-chat button{font:inherit;cursor:pointer;color:inherit}
+#structural-chat button:disabled{opacity:.45;cursor:wait}
+#structural-chat .sc-header{padding:12px 10px;border-bottom:1px solid var(--line-dim,#234a67);display:flex;gap:5px;align-items:center;flex-shrink:0}
+#structural-chat .sc-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;font-weight:500}
+#structural-chat .sc-icon{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;padding:6px;flex-shrink:0;border:0;border-radius:50%;background:transparent;color:var(--paper-ink-dim,#8fb4cb)}
+#structural-chat .sc-icon:hover{background:#12374f;color:white}
+#structural-chat .sc-icon svg{width:21px;height:21px}
+#structural-chat .sc-menu{position:absolute;right:14px;top:56px;z-index:2;width:200px;background:var(--navy,#0a2338);border:1px solid var(--line,#3d6a8f);border-radius:12px;padding:5px;box-shadow:0 12px 30px #0009}
+#structural-chat .sc-menu button{display:block;width:100%;text-align:left;border:0;border-radius:8px;padding:10px 14px;background:transparent}
+#structural-chat .sc-menu button:hover,#structural-chat .sc-menu button:focus-visible{background:#17435c}
+#structural-chat .sc-rename{padding:10px;display:flex;gap:6px;flex:0 0 auto}
+#structural-chat .sc-rename input{min-width:0;flex:1;background:var(--navy,#0a2338);color:white;border:1px solid var(--line,#3d6a8f);border-radius:6px;padding:7px;font:inherit}
+#structural-chat .sc-rename button{border:1px solid var(--line,#3d6a8f);background:#12374f;border-radius:6px;padding:6px}
+#structural-chat .sc-conversations{padding:12px;max-height:240px;overflow:auto;border-bottom:1px solid var(--line,#3d6a8f);flex-shrink:0}
+#structural-chat .sc-saved{display:block;width:100%;text-align:left;background:var(--navy,#0a2338);border:0;border-radius:7px;margin-top:6px;padding:9px;overflow-wrap:anywhere}
+#structural-chat .sc-saved:hover{background:#17435c}
+#structural-chat .sc-config{padding:6px 16px;color:var(--paper-ink-dim,#8fb4cb);font-size:11px;flex-shrink:0}
+#structural-chat .sc-history{flex:1;overflow:auto;padding:16px;min-height:80px}
+#structural-chat .sc-message{padding:10px 12px;border-radius:12px;margin-bottom:14px;white-space:pre-wrap;overflow-wrap:anywhere;background:#0c2a40}
+#structural-chat .sc-message.user{background:#16455b;margin-left:28px}
+#structural-chat .sc-message.error{background:#502b32;color:#ffe1e1}
+#structural-chat .sc-message small{display:block;color:var(--paper-ink-dim,#8fb4cb);font-size:11px;margin-bottom:4px}
+#structural-chat .sc-tool{border:1px solid var(--line-dim,#234a67);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12px;overflow-wrap:anywhere}
+#structural-chat .sc-tool[data-state=tool_error]{border-color:#df727b}
+#structural-chat .sc-tool summary{cursor:pointer}
+#structural-chat .sc-tool pre{white-space:pre-wrap;max-height:180px;overflow:auto;font:11px/1.4 monospace}
+#structural-chat .sc-progress{padding:4px 18px;color:var(--bright,#7ecbe8);font-size:11px;white-space:pre-wrap;flex-shrink:0}
+#structural-chat .sc-progress:empty{display:none}
+#structural-chat .sc-input{margin:10px 12px 14px;padding:6px;display:flex;gap:6px;align-items:center;background:var(--navy,#0a2338);border:1px solid var(--line,#3d6a8f);border-radius:28px;flex:0 0 auto}
+#structural-chat .sc-input textarea{flex:1;min-width:0;min-height:36px;height:36px;max-height:100px;resize:vertical;box-sizing:border-box;background:transparent;color:white;border:0;outline:0;padding:8px 2px;font:14px/1.4 system-ui}
+#structural-chat .sc-input button[type=submit]{background:var(--bright,#7ecbe8);color:var(--navy-deep,#071a2b)}
+#structural-chat .sc-input button[type=submit]:hover{background:white}
+#structural-chat :focus-visible{outline:2px solid #68bdcf;outline-offset:2px}
+#structural-chat .sc-link{color:#81d9e1;font-size:12px;overflow-wrap:anywhere}
+@media(max-width:480px){#structural-chat{right:10px;width:calc(100vw - 20px);bottom:74px}#structural-chat .sc-header{gap:2px}#structural-chat .sc-title{font-size:14px}}
+#structural-chat{font-family:var(--font-head,'IBM Plex Sans',sans-serif);background-image:linear-gradient(#234a6712 1px,transparent 1px),linear-gradient(90deg,#234a6712 1px,transparent 1px);background-size:24px 24px}
+#structural-chat .sc-header{background:linear-gradient(180deg,#0d3049,#092338);color:var(--paper-ink,#dcecf5)}
+#structural-chat .sc-title{letter-spacing:.02em}
+#structural-chat .sc-attachments,#structural-chat .sc-sent-files{display:flex;gap:10px;overflow-x:auto;padding:12px 18px 2px;flex:0 0 auto;max-height:180px}
+#structural-chat .sc-sent-files{padding:0 0 12px;max-height:none;margin-top:-5px}
+#structural-chat .sc-file-card{position:relative;flex:0 0 142px;width:142px;border:1px solid var(--line,#3d6a8f);background:var(--navy,#0a2338);border-radius:12px;overflow:visible}
+#structural-chat .sc-file-picture{height:60px;display:flex;align-items:center;justify-content:center;background:#0e3048;border-radius:11px 11px 0 0;overflow:hidden;color:var(--bright,#7ecbe8)}
+#structural-chat .sc-file-picture svg{width:27px;height:27px;fill:none}
+#structural-chat .sc-file-picture img{width:100%;height:100%;object-fit:cover}
+#structural-chat .sc-file-label{padding:7px 9px}
+#structural-chat .sc-file-label strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;font-weight:500}
+#structural-chat .sc-file-label span,#structural-chat .sc-file-status{display:block;color:var(--paper-ink-dim,#8fb4cb);font-size:10px}
+#structural-chat .sc-file-status{text-transform:capitalize;color:var(--bright,#7ecbe8)}
+#structural-chat .sc-file-remove{position:absolute;right:-6px;top:-7px;width:23px;height:23px;background:#16455b;border:1px solid var(--line,#3d6a8f);color:var(--paper-ink,#dcecf5);padding:4px}
+#structural-chat .sc-file-remove svg{width:14px;height:14px}
+#structural-chat .sc-file-remove:hover{background:#763a46}
+#structural-chat .sc-progress{max-height:44px;overflow:auto}

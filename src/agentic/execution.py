@@ -10,6 +10,7 @@ import time
 
 from agentic.config import ROOT, settings
 from agentic.state import WorkflowState, fail_workflow
+from agentic.agent_timing import stop_running_timings
 from agentic.store import WORKFLOW_STORE
 
 
@@ -37,6 +38,12 @@ class RunController:
             except ProcessLookupError:
                 pass
         await process.wait()
+        # A terminated worker cannot finalize its own stage clock.
+        if self.run_id:
+            state = WORKFLOW_STORE.get_state(self.run_id)
+            if state:
+                stop_running_timings(state)
+                WORKFLOW_STORE.save_state(state)
 
     async def cancel(self, run_id: str):
         if self.run_id != run_id:
@@ -91,6 +98,7 @@ class RunController:
                     if now - started > cfg.run_timeout or now - last_progress > operation_timeout:
                         await self._terminate()
                         state = fail_workflow(state, state.current_agent, "Calculation timed out; worker stopped. Inspect desktop software before retrying.")
+                        stop_running_timings(state)
                         WORKFLOW_STORE.save_state(state)
                         return state
             state = WORKFLOW_STORE.get_state(run_id) or state
@@ -100,12 +108,14 @@ class RunController:
             elif state.status not in (("FAILED", "CANCELLED", "PAUSED_AT_GATE3", "COMPLETED", "READY")
                                       if chat_action else ("FAILED", "CANCELLED", "PAUSED_AT_GATE3", "COMPLETED")) or self.process.returncode:
                 state = fail_workflow(state, state.current_agent, "Worker exited without a completed result. See the worker log.")
+            stop_running_timings(state)
             WORKFLOW_STORE.save_state(state)
             return state
         except BaseException:
             await self._terminate()
             state = WORKFLOW_STORE.get_state(run_id) or state
             fail_workflow(state, state.current_agent, "Worker execution interrupted.")
+            stop_running_timings(state)
             WORKFLOW_STORE.save_state(state)
             raise
         finally:

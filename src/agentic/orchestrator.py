@@ -15,6 +15,7 @@ import uuid
 from langgraph.graph import StateGraph, END
 from agentic.state import WorkflowState, fail_workflow
 from agentic.config import settings, deep_agents_enabled
+from agentic.agent_timing import start_timing, finish_timing
 from agentic.agents.a1_requirements_agent import run_a1_requirements
 from agentic.agents.a2_readiness_agent import run_a2_readiness
 from agentic.agents.a3_frame_generator_agent import run_a3_frame_generator
@@ -47,15 +48,22 @@ def _start_agent(state: WorkflowState, agent_id: str):
 
 
 async def _run_stage(state, agent_id, operation):
+    started = start_timing(state, agent_id)
     _start_agent(state, agent_id)
-    if deep_agents_enabled():
-        from agentic.deep_runtime import run_deep_stage
-        return await run_deep_stage(state, agent_id, operation, _sync_state)
-    res = operation(state)
-    if inspect.isawaitable(res):
-        res = await res
-    _sync_state(res)
-    return res
+    result = state
+    try:
+        if deep_agents_enabled():
+            from agentic.deep_runtime import run_deep_stage
+            result = await run_deep_stage(state, agent_id, operation, _sync_state)
+        else:
+            candidate = operation(state)
+            if inspect.isawaitable(candidate):
+                candidate = await candidate
+            result = candidate
+        return result
+    finally:
+        finish_timing(result, agent_id, started)
+        _sync_state(result)
 
 
 async def node_a1(state: WorkflowState) -> WorkflowState:

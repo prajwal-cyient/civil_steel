@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <title>Structural Frame Generator</title>
 <link rel="stylesheet" href="/static/radiator_support/chat.css">
+<script src="/static/radiator_support/agent_timers.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -326,6 +327,9 @@
   }
   .agent-step .step-num { font-size: 11px; font-weight: 700; color: #94a3b8; font-family: var(--font-head); }
   .agent-step .step-label { font-size: 10px; color: #64748b; margin-top: 2px; }
+  .agent-step .step-time { font: 500 11px var(--font-mono, monospace); font-variant-numeric: tabular-nums; color: var(--paper-ink-dim); margin-top: 4px; }
+  .agent-step.running .step-time { color: #93c5fd; }
+  .agent-step.passed .step-time { color: #6ee7b7; }
   .agent-step .step-badge {
     display: none;
     font-size: 9px;
@@ -818,14 +822,14 @@
   <div id="right-pane">
     <!-- 8-Agent Autonomous Workflow Status Tracker Bar -->
     <div id="agent-tracker-bar">
-      <div class="agent-step" id="step-A1"><span class="step-num">A1</span><span class="step-label">Brief</span></div>
-      <div class="agent-step" id="step-A2"><span class="step-num">A2</span><span class="step-label">Ready</span></div>
-      <div class="agent-step" id="step-A3"><span class="step-num">A3</span><span class="step-label">Frame</span></div>
-      <div class="agent-step" id="step-A4"><span class="step-num">A4</span><span class="step-label">STAAD</span><span class="step-badge" id="badge-A4"></span></div>
-      <div class="agent-step" id="step-A5"><span class="step-num">A5</span><span class="step-label">IDEA</span><span class="step-badge" id="badge-A5"></span></div>
-      <div class="agent-step" id="step-A6"><span class="step-num">A6</span><span class="step-label">Validate</span></div>
-      <div class="agent-step" id="step-A7"><span class="step-num">A7</span><span class="step-label">Tekla</span></div>
-      <div class="agent-step" id="step-A8"><span class="step-num">A8</span><span class="step-label">Accept</span></div>
+      <div class="agent-step" id="step-A1"><span class="step-num">A1</span><span class="step-label">Brief</span><span class="step-time" id="timer-A1">00:00</span></div>
+      <div class="agent-step" id="step-A2"><span class="step-num">A2</span><span class="step-label">Ready</span><span class="step-time" id="timer-A2">00:00</span></div>
+      <div class="agent-step" id="step-A3"><span class="step-num">A3</span><span class="step-label">Frame</span><span class="step-time" id="timer-A3">00:00</span></div>
+      <div class="agent-step" id="step-A4"><span class="step-num">A4</span><span class="step-label">STAAD</span><span class="step-badge" id="badge-A4"></span><span class="step-time" id="timer-A4">00:00</span></div>
+      <div class="agent-step" id="step-A5"><span class="step-num">A5</span><span class="step-label">IDEA</span><span class="step-badge" id="badge-A5"></span><span class="step-time" id="timer-A5">00:00</span></div>
+      <div class="agent-step" id="step-A6"><span class="step-num">A6</span><span class="step-label">Validate</span><span class="step-time" id="timer-A6">00:00</span></div>
+      <div class="agent-step" id="step-A7"><span class="step-num">A7</span><span class="step-label">Tekla</span><span class="step-time" id="timer-A7">00:00</span></div>
+      <div class="agent-step" id="step-A8"><span class="step-num">A8</span><span class="step-label">Accept</span><span class="step-time" id="timer-A8">00:00</span></div>
     </div>
 
     <!-- Gate 3 Final Acceptance Banner -->
@@ -1914,7 +1918,8 @@ async function loadSavedRunChoices() {
   updateActionControls();
 }
 
-function updateAgentSteps(agentStatuses, loopA, loopB) {
+function updateAgentSteps(agentStatuses, loopA, loopB, timings = {}, workflowStatus = '') {
+  window.AgentTimers?.update(timings, agentStatuses, workflowStatus);
   const steps = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8'];
   for (const step of steps) {
     const el = document.getElementById(`step-${step}`);
@@ -1979,7 +1984,7 @@ function renderUnverifiedPreview(data, runId = null) {
 function renderAgenticRunState(state, { active = ['RUNNING', 'INITIALIZED'].includes(state.status) } = {}) {
   if (state.readiness?.preview_only) {
     renderUnverifiedPreview(state.frame_candidate, state.run_id);
-    updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {});
+    updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {}, state.agent_timings || {}, state.status);
     setAgenticBusy(active);
     return;
   }
@@ -1990,7 +1995,7 @@ function renderAgenticRunState(state, { active = ['RUNNING', 'INITIALIZED'].incl
   if (gate3Banner) gate3Banner.style.display = 'none';
 
   // Update tracker UI with final state
-  updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {});
+  updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {}, state.agent_timings || {}, state.status);
 
   // 1. Update 3D Viewer & Members
   const frameKey = `${state.run_id}:${state.design_generation || 0}`;

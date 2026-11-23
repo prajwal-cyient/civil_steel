@@ -17,6 +17,7 @@ from agentic.ladders import get_next_profile
 from agentic.catalogue import frame_options
 from agentic.advisor import choose_correction
 from agentic.evidence import frame_signature
+from agentic.run_policy import RunPolicy, policy_for
 
 
 async def send_to_staad(data: dict) -> dict:
@@ -25,7 +26,7 @@ async def send_to_staad(data: dict) -> dict:
     return await live_send(data)
 
 
-def frame_correction_scope(results: dict, target: str) -> list[dict]:
+def frame_correction_scope(results: dict, target: str, max_member_ratio: float = 1.0) -> list[dict]:
     """Identify every member changed by a shared section variable.
 
     The reference generator has uniform category profiles and connection
@@ -51,7 +52,7 @@ def frame_correction_scope(results: dict, target: str) -> list[dict]:
         entry = {"id": identifier, "name": member.get("name", row.get("name")),
                  "physical_member": member.get("tekla_name", member.get("name")),
                  "ratio": ratio, "profile": member.get("profile")}
-        (affected if ratio > 1.0 else passing).append(entry)
+        (affected if ratio > max_member_ratio else passing).append(entry)
     if passing:
         raise ValueError(f"Localized correction required: {len(affected)} failing and {len(passing)} passing {target} members. "
                          f"Failing locations: {[(row['id'], row['name']) for row in affected[:8]]}. "
@@ -60,12 +61,14 @@ def frame_correction_scope(results: dict, target: str) -> list[dict]:
     return affected
 
 
-def grade_staad_results(staad_res: Dict[str, Any], col_height_mm: float) -> GraderResult:
+def grade_staad_results(staad_res: Dict[str, Any], col_height_mm: float, run_policy=None) -> GraderResult:
     """
     Evaluates STAAD analysis output against structural boundary conditions:
     1. Member Steel Design Unity Ratio <= 1.0 (EC3 / AISC 360).
     2. Lateral drift <= H_col / 200.
     """
+    policy = RunPolicy.model_validate(run_policy or {})
+    ratio_limit, denominator = policy.max_member_ratio, policy.drift_denominator
     max_ratios = staad_res.get("member_type_max_ratios") or staad_res.get("member_type_max_ratios_by_type_max") or {}
     invalid = []
     status = staad_res.get("analysis_status") or {}
@@ -126,7 +129,7 @@ def grade_staad_results(staad_res: Dict[str, Any], col_height_mm: float) -> Grad
     max_beam_ratio = max(max_ratios.get("beam", 0.0), max_ratios.get("beam_longitudinal", 0.0), max_ratios.get("beam_transverse", 0.0))
     overall_max_ratio = max([v for v in max_ratios.values()] or [0.0])
     failed_members = [{"id": key, "name": row.get("name"), "ratio": row["ratio"]}
-                      for key, row in member_ratios.items() if row["ratio"] > 1.0]
+                      for key, row in member_ratios.items() if row["ratio"] > ratio_limit]
 
     # Check drift limit
     drift_exceeded = False
@@ -134,22 +137,22 @@ def grade_staad_results(staad_res: Dict[str, Any], col_height_mm: float) -> Grad
     for env_id, env_data in env_summaries.items():
         if service_ids and str(env_id) not in service_ids:
             continue
-        exceed_dict = env_data.get("node_displacements_limits_exceed_col_height_200", {})
-        if any(exceed_dict.values()):
+        displacements = env_data.get("node_displacements_limits", {})
+        if any(displacements[key] > col_height_mm / denominator for key in drift_fields):
             drift_exceeded = True
             break
 
     failures = []
-    if overall_max_ratio > 1.0:
-        failures.append(f"Max member stress ratio {overall_max_ratio:.2f} > 1.0 (Column={max_col_ratio:.2f}, Beam={max_beam_ratio:.2f})")
+    if overall_max_ratio > ratio_limit:
+        failures.append(f"Max member stress ratio {overall_max_ratio:.2f} > {ratio_limit:g} (Column={max_col_ratio:.2f}, Beam={max_beam_ratio:.2f})")
     if drift_exceeded:
-        failures.append(f"Lateral drift exceeded allowable H/200 ({col_height_mm/200:.1f} mm)")
+        failures.append(f"Lateral drift exceeded allowable H/{denominator:g} ({col_height_mm/denominator:.1f} mm)")
 
     if not failures:
         return GraderResult(
             passed=True,
             score=1.0,
-            summary=f"All structural checks passed (Max Ratio: {overall_max_ratio:.2f} <= 1.0, Drift <= H/200).",
+            summary=f"All structural checks passed (Max Ratio: {overall_max_ratio:.2f} <= {ratio_limit:g}, Drift <= H/{denominator:g}).",
             details={
                 "overall_max_ratio": overall_max_ratio,
                 "column_ratio": max_col_ratio,
@@ -173,7 +176,7 @@ def grade_staad_results(staad_res: Dict[str, Any], col_height_mm: float) -> Grad
         return GraderResult(passed=False, score=0, summary=f"No approved correction mapping for member type {governing_type}.", details={"invalid_results": True})
     return GraderResult(
         passed=False,
-        score=max(0.0, 1.0 - (overall_max_ratio - 1.0)),
+        score=max(0.0, 1.0 - (overall_max_ratio - ratio_limit)),
         summary="; ".join(failures),
         details={
             "overall_max_ratio": overall_max_ratio,
@@ -228,7 +231,7 @@ async def run_a4_staad_analyzer(state: WorkflowState) -> WorkflowState:
     staad_res["candidate_signature"] = frame_signature(state)
 
     # Run the Frame Grader
-    grader = grade_staad_results(staad_res, col_height)
+    grader = grade_staad_results(staad_res, col_height, state.run_policy)
     state.frame_grader_result = grader
 
     if grader.details.get("invalid_results"):
@@ -255,7 +258,7 @@ async def run_a4_staad_analyzer(state: WorkflowState) -> WorkflowState:
             field = profile_fields[target]
             old_prof = getattr(state, field)
             try:
-                affected_members = frame_correction_scope(staad_res, target)
+                affected_members = frame_correction_scope(staad_res, target, policy_for(state).max_member_ratio)
             except ValueError as exc:
                 return fail_workflow(state, "A4", f"{grader.summary} Correction stopped: {exc}")
             options = frame_options(old_prof, target, state.load_config.get("country", "EUROPE"))

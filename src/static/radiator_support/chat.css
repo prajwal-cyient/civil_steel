@@ -53,3 +53,13 @@
 #structural-chat .sc-file-remove svg{width:14px;height:14px}
 #structural-chat .sc-file-remove:hover{background:#763a46}
 #structural-chat .sc-progress{max-height:44px;overflow:auto}
+
+.sc-change-preview { margin:12px 0; padding:12px; border:1px solid #4a7184; border-radius:8px; overflow-x:auto; }
+.sc-change-table { width:100%; border-collapse:collapse; font-size:12px; margin:10px 0; }
+.sc-change-table th,.sc-change-table td { padding:6px; border-bottom:1px solid #365365; text-align:left; overflow-wrap:anywhere; }
+#structural-chat .sc-change-preview button { margin:4px 8px 0 0; padding:10px 14px; min-height:44px; border:1px solid #7ecbe8; border-radius:8px; font-weight:600; cursor:pointer; }
+#structural-chat .sc-change-approve { background:#7ecbe8; color:#071a2b; }
+#structural-chat .sc-change-approve:hover:not(:disabled) { background:#a4dff3; }
+#structural-chat .sc-change-reject { background:#0d3049; color:#dcecf5; }
+#structural-chat .sc-change-reject:hover:not(:disabled) { background:#17435c; }
+#structural-chat .sc-change-preview button:disabled { opacity:1; background:#173449; color:#a6bfce; border-color:#48667b; cursor:not-allowed; }

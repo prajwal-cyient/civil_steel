@@ -15,6 +15,15 @@ class Element {
   replaceChildren(...children) { this.children = children; }
   setAttribute() {}
   addEventListener() {}
+  querySelectorAll(selector) {
+    const matches = [];
+    const visit = node => {
+      if (selector === 'tbody tr' && node.tag === 'tbody') matches.push(...node.children.filter(child => child.tag === 'tr'));
+      for (const child of node.children) visit(child);
+    };
+    visit(this);
+    return matches;
+  }
   get options() { return this.children; }
 }
 
@@ -44,6 +53,22 @@ function loadViewerFunction(context, name) {
   assert.notEqual(start, -1);
   vm.runInContext(html.slice(start, html.indexOf('\n}', start) + 2), context);
 }
+
+test('IDEA families remain separately visible even when connection IDs repeat', () => {
+  const { context, elements } = setup();
+  const result = (passed, value) => ({ connection_id: 1, passed,
+    check_summary: { summary: [{ name: 'Bolts', check_value: value, check_status: passed, skipped: false }], operation_parameters: [] } });
+  context.renderIdeaStaticaGroups({ first_family: result(true, 40), second_family: result(false, 78) });
+  const content = elements.get('idea-results-content');
+  assert.equal(content.children.length, 2);
+  const output = text(content);
+  for (const expected of ['first_family', 'second_family', '40', '78', 'all checks passed', 'one or more checks failed']) assert.ok(output.includes(expected), expected);
+  context.renderIdeaStaticaGroups({ first_family: result(true, 40), second_family: result(true, 60) });
+  assert.equal(content.children.length, 2);
+  assert.ok(!text(content).includes('78'));
+  context.renderIdeaStaticaResults(result(true, 20));
+  assert.ok(!text(content).includes('first_family'));
+});
 
 test('member types are inferred from names, including split members', () => {
   const { context } = setup();

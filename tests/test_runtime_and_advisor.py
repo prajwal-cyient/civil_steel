@@ -29,6 +29,46 @@ class AdvisorAndPolicyTests(unittest.TestCase):
             self.assertEqual(os.environ["PLANT_PORT"], "9000")
             self.assertEqual(os.environ["PLANT_HOST"], "127.0.0.1")
 
+    def test_file_enables_tracing_despite_inherited_disabled_aliases(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "LANGSMITH_TRACING": "false", "LANGSMITH_TRACING_V2": "false",
+            "LANGCHAIN_TRACING_V2": "false", "PLANT_PORT": "9000"}, clear=True):
+            path = Path(directory) / ".env"
+            path.write_text('LANGSMITH_TRACING=true\nPLANT_PORT=8060\n', encoding="utf-8")
+            load_environment(path)
+            self.assertEqual(os.environ["LANGSMITH_TRACING"], "true")
+            self.assertEqual(os.environ["LANGSMITH_TRACING_V2"], "true")
+            self.assertEqual(os.environ["PLANT_PORT"], "9000")
+            # Same loader is used by the worker on every new run.
+            load_environment(path)
+            self.assertEqual(os.environ["LANGSMITH_TRACING_V2"], "true")
+
+    def test_explicit_file_can_disable_tracing(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "LANGSMITH_TRACING": "true", "LANGSMITH_TRACING_V2": "true"}, clear=True):
+            path = Path(directory) / ".env"
+            path.write_text('LANGSMITH_TRACING="FALSE"\n', encoding="utf-8")
+            load_environment(path)
+            self.assertEqual(os.environ["LANGSMITH_TRACING"], "false")
+            self.assertEqual(os.environ["LANGSMITH_TRACING_V2"], "false")
+
+    def test_absent_file_flag_preserves_inherited_tracing_choice(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "LANGSMITH_TRACING": "false"}, clear=True):
+            path = Path(directory) / ".env"
+            path.write_text('PLANT_PORT=8060\n', encoding="utf-8")
+            load_environment(path)
+            self.assertEqual(os.environ["LANGSMITH_TRACING"], "false")
+            self.assertNotIn("LANGSMITH_TRACING_V2", os.environ)
+
+    def test_explicit_v2_file_flag_takes_precedence(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            path = Path(directory) / ".env"
+            path.write_text('LANGSMITH_TRACING=true\nLANGSMITH_TRACING_V2=false\n', encoding="utf-8")
+            load_environment(path)
+            self.assertEqual(os.environ["LANGSMITH_TRACING"], "false")
+            self.assertEqual(os.environ["LANGSMITH_TRACING_V2"], "false")
+
     def test_opposing_wind_and_temperature_are_rejected(self):
         for factors in ({"W+X": 1, "W-X": 1}, {"W+Z": 1, "W-Z": 1}, {"T+": 1, "T-": 1}):
             with self.subTest(factors=factors), self.assertRaisesRegex(ValueError, "mutually exclusive"):

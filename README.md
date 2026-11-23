@@ -37,6 +37,44 @@ Network failures and invalid proposals fall back to the deterministic candidate;
 `PLANT_MODEL_CALL_LIMIT` caps calls. Set `PLANT_LLM_ENABLED=false` to disable it.
 Credentials are never included in workflow state or browser responses.
 
+### Engineering chat
+
+The radiator-support page includes an **Engineering chat** panel with saved
+conversations and document attachments. Set `PLANT_CHAT_ENABLED=true` and
+configure the backend model, endpoint and API key. Chat uses its own switch;
+`PLANT_LLM_ENABLED=false` and `PLANT_DEEP_AGENTS_ENABLED=false` still select
+the deterministic A1-A8 workflow without disabling conversational tool selection.
+
+Chat calls the existing guarded stages and retains their graders, correction
+loops and human acceptance gate. While a chat turn is calculating, conflicting
+manual actions stay locked, including when another conversation is opened.
+An active worker's intermediate geometry and results update the main viewer.
+General requests such as "21x5 current input run" or "run agentic workflow"
+use the complete A1-A8 path, including Tekla publication. Explicit stage-only
+requests retain their narrower scope. At A8, chat waits for the dashboard's
+manual **Accept & Sign Off** action; it records completion after approval and
+then accepts further messages in the same conversation. Waiting survives refresh.
+Unverified previews clear prior calculation/sign-off displays and cannot be
+sent directly through the manual native-tool buttons, including after refresh.
+See [CHAT_INTERFACE.md](CHAT_INTERFACE.md) for API and attachment details.
+
+### LangSmith tracing
+
+The existing LangChain chat/tools and LangGraph workflow use LangSmith's SDK
+integration. Configure these backend `.env` values and restart the idle API:
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_PROJECT=plant-engineering
+LANGSMITH_API_KEY=<your-private-LangSmith-key>
+```
+
+The API worker inherits these settings. Traces can include model prompts,
+responses, tool inputs/outputs and workflow stage timing. Tracing is independent
+of the A1-A8 LLM/Deep Agents switches and does not change engineering criteria.
+Keep the real key in `.env`; `.env.example` intentionally leaves it blank.
+Some tracing keys permit ingestion but not project listing or trace read-back.
+
 ### Deep Agents execution for A1-A8
 
 Install `requirements.txt` in the project virtual environment and set

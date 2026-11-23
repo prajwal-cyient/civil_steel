@@ -5,15 +5,31 @@ import sqlite3
 from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, ConfigDict, Field
 from agentic.chat import ChatRuntime, project_input, redact, summary
-from agentic.chat_store import ChatStore
+from agentic.chat_store import ChatStore, now
 from agentic.store import WORKFLOW_STORE
 from agentic.chat_attachments import AttachmentStore, MAX_FILE
+from agentic.chat_guardrails import quick_scope, SCOPE_MESSAGE, CLARIFY_MESSAGE
+from agentic.chat_input_lifetime import reset_finished_inputs
 
 router = APIRouter(prefix="/api/v2/chat", tags=["Structural Chat"])
 CHAT_STORE = ChatStore()
 RUNTIME = ChatRuntime(CHAT_STORE)
 TASKS = {}
 ATTACHMENTS = AttachmentStore()
+
+
+def sync_approval(turn):
+    """Only actual, persisted manual workflow acceptance can complete this request."""
+    if turn['status'] != 'AWAITING_APPROVAL' or not turn.get('run_id'):
+        return turn
+    state = WORKFLOW_STORE.get_state(turn['run_id'])
+    if (state and state.status == 'COMPLETED' and state.gate3_approved
+            and state.agent_statuses.get('A8', {}).get('status') == 'PASSED'):
+        completed = CHAT_STORE.complete_approval(turn['id'], state.run_id, redact(state.accepted_by), state.acceptance_timestamp)
+        session = CHAT_STORE.session(turn['session_id'])
+        reset_finished_inputs(session, CHAT_STORE, WORKFLOW_STORE, state)
+        return completed
+    return turn
 
 
 class ChatRequest(BaseModel):
@@ -30,6 +46,7 @@ class ChatRequest(BaseModel):
 async def upload_attachment(session_id: str, request: Request, filename: str = Query(min_length=1, max_length=240)):
     try:
         CHAT_STORE.session(session_id)
+        CHAT_STORE.admit_request(session_id)
         turns = CHAT_STORE.history(session_id, limit=None)
         used = {a['id'] for t in turns for a in t.get('attachments', [])}
         if len(ATTACHMENTS.drafts(session_id, used)) >= 8:
@@ -73,6 +90,10 @@ async def list_sessions():
 
 @router.post("/sessions", status_code=201)
 async def create_session():
+    try:
+        CHAT_STORE.admit_request("_new_sessions")
+    except ValueError as exc:
+        raise HTTPException(429, str(exc)) from exc
     return CHAT_STORE.session()
 
 
@@ -105,6 +126,9 @@ async def send_message(request: ChatRequest):
     try:
         inputs = project_input(request.project_input) if request.project_input is not None else None
         session = CHAT_STORE.session(request.session_id)
+        CHAT_STORE.admit_request(session["id"])
+        for pending in CHAT_STORE.history(session['id'], limit=None):
+            sync_approval(pending)
         files = [ATTACHMENTS.load(ident, session['id']) for ident in dict.fromkeys(request.attachment_ids)]
         if sum(f['size'] for f in files) > 40 * 1024 * 1024:
             raise ValueError('Combined attachments must be at most 40 MB per message.')
@@ -115,23 +139,31 @@ async def send_message(request: ChatRequest):
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
     except sqlite3.IntegrityError as exc:
-        raise HTTPException(409, "This conversation already has an active turn.") from exc
+        raise HTTPException(409, "This conversation has an active request or is waiting for manual engineer approval.") from exc
     except ValueError as exc:
-        raise HTTPException(422, redact(str(exc))) from exc
-    if inputs is not None and inputs != session["project_input"]:
-        session["project_input"] = inputs
-        session["run_id"] = None  # Changed inputs cannot silently reuse old solver evidence.
+        raise HTTPException(429 if "limit reached" in str(exc) else 422, redact(str(exc))) from exc
     if request.run_id:
         state = WORKFLOW_STORE.get_state(request.run_id)
-        if inputs is not None and state.raw_input != inputs:
+        if inputs is not None and (
+                {k: v for k, v in state.raw_input.items() if k != "run_policy"} !=
+                {k: v for k, v in inputs.items() if k != "run_policy"} or
+                ("run_policy" in inputs and inputs["run_policy"] != state.run_policy)):
             # The UI may have different defaults; it must explicitly choose matching inputs to resume.
             turn.update(status="ERROR", error="Selected run inputs differ from the attached form/JSON. Use its original inputs or start a new run.")
             CHAT_STORE.save_turn(turn)
             raise HTTPException(409, turn["error"])
-        session["run_id"] = request.run_id
     if session.get("title", "New chat") == "New chat":
         session["title"] = redact(request.message.strip())[:80]
     CHAT_STORE.save_session(session)
+    turn["request_project_input"] = inputs
+    turn["request_run_id"] = request.run_id
+    quick = quick_scope(turn["message"], bool(session.get("run_id")))
+    if quick is not None and quick.status != "ALLOW":
+        turn.update(status="COMPLETED", scope=quick.model_dump(),
+                    outcome="BLOCKED_OUT_OF_SCOPE" if quick.status == "BLOCK" else "NEEDS_CLARIFICATION",
+                    assistant=quick.reason or (SCOPE_MESSAGE if quick.status == "BLOCK" else CLARIFY_MESSAGE))
+        CHAT_STORE.save_turn(turn)
+        return {"session_id": session["id"], "turn_id": turn["id"], "status": "COMPLETED"}
     CHAT_STORE.save_turn(turn)
     task = asyncio.create_task(RUNTIME.respond(turn, request.allow_native_tools))
     TASKS[turn["id"]] = task
@@ -143,9 +175,11 @@ async def send_message(request: ChatRequest):
 async def session_history(session_id: str):
     try:
         session = CHAT_STORE.session(session_id)
-        turns = CHAT_STORE.history(session_id, limit=None)
+        turns = [sync_approval(turn) for turn in CHAT_STORE.history(session_id, limit=None)]
+        session = CHAT_STORE.session(session_id)
+        reset_finished_inputs(session, CHAT_STORE, WORKFLOW_STORE)
         used = {a['id'] for t in turns for a in t.get('attachments', [])}
-        return {**session, "turns": turns, 'draft_attachments': ATTACHMENTS.drafts(session_id, used)}
+        return {**session, "turns": turns, "pending_changes": CHAT_STORE.pending_plans(session_id), 'draft_attachments': ATTACHMENTS.drafts(session_id, used)}
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
 
@@ -153,13 +187,78 @@ async def session_history(session_id: str):
 @router.get("/turns/{turn_id}")
 async def turn_status(turn_id: str):
     try:
-        turn = CHAT_STORE.turn(turn_id)
+        turn = sync_approval(CHAT_STORE.turn(turn_id))
         session = CHAT_STORE.session(turn["session_id"])
+        reset_finished_inputs(session, CHAT_STORE, WORKFLOW_STORE)
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
-    run_id = turn.get("run_id") or (session.get("run_id") if turn["status"] == "RUNNING" else None)
+    # A running conversation can fork a new candidate for each engineering action.
+    # The turn records the last completed tool; the session tracks the current one.
+    # Keep finished turns tied to their own historical result.
+    run_id = session.get("run_id") if turn["status"] == "RUNNING" else turn.get("run_id")
     return {**turn, "run_id": run_id, "project_input": session["project_input"],
             "progress": summary(WORKFLOW_STORE.get_state(run_id)) if run_id else None}
+
+
+class ChangeApproval(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    allow_native_tools: bool = False
+
+
+@router.get("/sessions/{session_id}/changes/{proposal_id}")
+async def change_proposal(session_id: str, proposal_id: str):
+    try:
+        return CHAT_STORE.plan(proposal_id, session_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/sessions/{session_id}/changes/{proposal_id}/reject")
+async def reject_change(session_id: str, proposal_id: str):
+    try:
+        CHAT_STORE.admit_request(session_id)
+        return CHAT_STORE.transition_plan(proposal_id, session_id, "PENDING", "REJECTED")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/sessions/{session_id}/changes/{proposal_id}/approve", status_code=202)
+async def approve_change(session_id: str, proposal_id: str, approval: ChangeApproval):
+    from agentic.chat_changes import validate_proposal
+    from agentic.execution import CONTROLLER
+    from agentic.router import _RUN_LOCK
+    turn = None
+    try:
+        CHAT_STORE.admit_request(session_id)
+        session = CHAT_STORE.session(session_id)
+        plan = CHAT_STORE.plan(proposal_id, session_id)
+        if plan["status"] != "PENDING" or plan["digest"] != approval.digest:
+            raise ValueError("Proposal is stale, already handled, or approval does not match its preview.")
+        if _RUN_LOCK.locked() or CONTROLLER.run_id:
+            raise ValueError("Another engineering run owns the desktop tools. No change was applied.")
+        if plan["action"] not in ("configuration_only", "preview_structure") and not approval.allow_native_tools:
+            raise ValueError("Live engineering must be explicitly enabled for this approval.")
+        from agentic.config import settings
+        if plan['action'] not in ('configuration_only','preview_structure') and not settings().live_enabled:
+            raise ValueError('Live engineering is disabled in backend configuration.')
+        source = WORKFLOW_STORE.get_state(plan.get("source_run_id") or "") if plan["kind"] == "joint_parameters" else None
+        validate_proposal(plan, session, source)
+        turn = CHAT_STORE.new_turn(session_id, "Apply approved project change " + proposal_id)
+        turn["proposal_id"] = proposal_id
+        plan = CHAT_STORE.transition_plan(proposal_id, session_id, "PENDING", "EXECUTING", approved_at=now(), approval_turn_id=turn["id"])
+        CHAT_STORE.save_turn(turn)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (ValueError, sqlite3.IntegrityError) as exc:
+        if turn is not None:
+            turn.update(status="ERROR", error=redact(str(exc)))
+            CHAT_STORE.save_turn(turn)
+        raise HTTPException(409, redact(str(exc))) from exc
+    task = asyncio.create_task(RUNTIME.execute_approved(turn, plan, approval.allow_native_tools))
+    TASKS[turn["id"]] = task
+    task.add_done_callback(lambda _: TASKS.pop(turn["id"], None))
+    return {"session_id": session_id, "turn_id": turn["id"], "status": "RUNNING"}
 
 
 @router.post("/turns/{turn_id}/cancel")

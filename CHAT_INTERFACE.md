@@ -12,7 +12,7 @@ the A1–A8 implementations, calculations, graders and correction rules are reta
 From PowerShell:
 
 ```powershell
-cd 'D:\Prajwal POC 2 code'
+Set-Location 'C:\Users\lb89380\projects\prajwal\agentic-flow'
 .\.venv\Scripts\python.exe src\server.py --port 8060
 ```
 
@@ -45,7 +45,9 @@ environment, then open its local `/radiator_support` page. Request the desired a
 in chat. Existing A2 readiness checks still verify the configured STAAD, IDEA and Tekla
 services before a live candidate is generated. No software location or service URL
 was changed for chat. First try a preview, then a live validated structure, STAAD,
-IDEA, package validation and explicitly requested Tekla publishing. Gate 3 acceptance
+IDEA, package validation and Tekla publishing. General requests to run the inputs
+or agentic workflow select the complete A1-A8 path, including publication;
+explicit stage-only requests remain limited to those actions. Gate 3 acceptance
 still uses the existing approval control.
 
 ## Use the interface
@@ -90,6 +92,12 @@ still uses the existing approval control.
    before retrying. A server restart marks interrupted turns as errors without replay.
 
 Example conversations:
+
+A full run request stays `AWAITING_APPROVAL` after A8 prepares the report.
+Click **Accept & Sign Off** on the dashboard. Actual persisted workflow acceptance
+then marks that chat request `COMPLETED`, adds one approval confirmation and
+enables another message in the same conversation. Chat cannot approve itself.
+The waiting request survives refresh/restart and is not replayed against native tools.
 
 | Request | Available action and prerequisite |
 | --- | --- |
@@ -269,3 +277,105 @@ session/turn IDs and one of `message_received`, `tools_selected`, `tool_started`
 are redacted before storage and logging. Worker logs remain in
 `data/worker_logs/<run_id>.log`. Controlled tests demonstrate the event sequence;
 they are not evidence of a live model or native solver calculation.
+
+## Project guardrails and approved changes
+
+Chat now checks project relevance before granting tools or applying incoming form
+inputs. Unrelated requests receive a scope message; mixed or unclear requests need
+clarification. Questions have read-only capabilities. Attachments cannot grant
+permission, expose server secrets or override engineering checks. This is a local
+operator workflow, not a new authentication or multi-tenant authorization system.
+
+Registered operations reuse the existing Python/LangGraph worker. Exact existing
+joint-group names and exposed IDEA parameter keys are retained. Numeric aliases
+such as “group 1” and “parameter 1” are not inferred from dropdown positions.
+
+Example (use a group/key actually present in your selected run):
+
+> In `inner_node_2_longitudinal_bracings`, change `GRD_d` from 16 mm to 20 mm.
+> Recalculate the connection checks. Do not change any other group or publish Tekla.
+
+1. Chat reads saved group/parameter evidence and validates explicit units.
+2. It displays current/requested values and the required execution steps.
+3. **Approve & Apply** authorizes that exact persisted proposal; **Reject** leaves
+   inputs and models unchanged. The LLM cannot approve its own proposal.
+4. Changed source data invalidates approval. Repeated approval cannot replay it.
+5. Connection-only changes fork a candidate, reuse eligible unchanged evidence,
+   solve selected families and run the existing A6 package checks.
+6. Failed checks do not trigger unapproved parameter changes or a broader redesign.
+7. Selected results are saved under `output_exports/dynamic_changes/<run_id>/`.
+
+`update_project_inputs` now prepares a preview rather than immediately editing the
+chat project. Approval can save inputs only or run the explicitly requested stage
+with its prerequisites. A normal request to run unchanged inputs still uses the
+existing A1–A8 path and pauses for manual final sign-off.
+
+The selected-edit adapter supports exposed numeric length parameters with an
+existing IDEA-to-Tekla map. Its `mm`/`m` conversion follows the existing factor of
+1000; it does not infer units from ambiguous template labels. Unknown parameters,
+arbitrary formulas and individual-joint edits without a validated mapping are not
+supported. Frame spacing remains a frame-level input.
+
+### Selected Tekla publication
+
+The full A7 publisher retains its existing behavior and additionally records a
+versioned component manifest. Selected publication requires that verified manifest
+and matching model path, component IDs, names, numbers and source attributes.
+Ownership is bound to members at the same physical joint, not simply a shared
+column. Physical member geometry, sections and materials are read back before
+and after a selected update.
+It modifies existing supported attributes, reads them back and checks recorded
+unselected attributes. It never calls full-model cleanup.
+
+After validating selected edits, a later explicit publication request creates a
+new approval preview. It reuses the saved IDEA calculations, repeats A6 package
+validation, updates supported selected Tekla attributes and prepares A8 reporting.
+Final engineer sign-off remains manual. After a chat run completes, fails or is
+cancelled, the next-run inputs reload the read-only
+`src/radiator_support/frame_specs.json` master. Pending sign-off and stage
+continuations retain the current run's inputs. Saved and exported runs keep their
+actual custom inputs. Selected edits remain attached to their saved candidate
+rather than silently changing global defaults.
+
+Legacy publications without a manifest, shared components touching unselected
+groups, and parameters requiring unimplemented derived-layout recalculation are
+blocked. In particular, component 144 diameter/stiffener-layout changes cannot be
+patched by silently retaining old calculated layout dimensions. A failed write
+attempts rollback and reports whether recorded attributes were restored; native
+commits are not claimed to be database transactions. A native model save failure
+requires inspection before retrying. The native adapter needs live verification
+before claiming a particular real model was updated successfully.
+
+### Limits and metrics
+
+See `.env.example` for request-rate, model-call, tool-call, token and context limits.
+Chat usage records reported tokens, calls, model/tool durations and total latency.
+Cost is unset unless input/output prices per million tokens are configured.
+Deep Agents/advisor calls remain separate engineering metrics in run progress.
+Default engineering limits remain unchanged. Run-specific overrides support
+member ratio, drift denominator, bolt, weld, plate and deformation thresholds;
+see `docs/run_policy.md` for the exact accepted ranges. For example, request
+"maximum bolt utilization 90% for this run only" to use 90 instead of the default
+75 for the next new run. Native failed checks and manual sign-off still apply.
+No new dependencies are introduced.
+
+Approved operations also save `project_input.json`, `change_summary.json` and,
+when a candidate exists, `workflow_output.json` alongside their isolated outputs.
+They do not rewrite `.env` or `frame_specs.json`.
+
+Pending previews survive refresh. Executing proposals interrupted by a server
+restart are marked interrupted and are not automatically replayed. Use the normal
+server startup command after any active run finishes, then refresh the browser.
+
+Controlled checks:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_dynamic_chat.py'
+.\.venv\Scripts\python.exe scripts\smoke_chat_changes.py
+```
+
+The browser script requires an installed Edge browser and Playwright. Its HTTP and
+native APIs are fixtures; it does not contact the production server or modify a
+model. Use `PLANT_CHAT_DATABASE_PATH` and `PLANT_RUNS_DATABASE_PATH` pointing to
+disposable stores when running a whole test suite, to keep startup recovery in
+test imports separate from live conversations.

@@ -63,6 +63,8 @@ def run_a1_requirements(state: WorkflowState) -> WorkflowState:
     load_raw = raw.get("load_configuration", {})
 
     try:
+        from agentic.run_policy import RunPolicy
+        state.run_policy = RunPolicy.model_validate(raw.get("run_policy", {})).model_dump()
         validated_grid = GridInputSchema(**grid_raw).model_dump()
         state.grid_config = validated_grid
         state.load_config = {**load_raw, "load_combinations": resolve_combinations(load_raw)}

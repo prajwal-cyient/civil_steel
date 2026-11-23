@@ -38,7 +38,7 @@ clr.AddReference("System")
 from Tekla.Structures.Model import Detail, Model, Beam, Grid, Position, Connection  # noqa: E402
 from Tekla.Structures.Model import ModelObjectEnumerator  # noqa: F401,E402
 from Tekla.Structures.Geometry3d import Point, Vector  # noqa: E402
-from Tekla.Structures.Catalogs import LibraryProfileItem, ProfileItemParameter  # noqa: F401,E402
+from Tekla.Structures.Catalogs import LibraryProfileItem, ParametricProfileItem, ProfileItemParameter  # noqa: F401,E402
 from Tekla.Structures.Model import ModelObject
 from Tekla.Structures.Model.UI import Picker  # noqa: E402
 from Tekla.Structures.Model.UI import ModelObjectSelector
@@ -260,12 +260,14 @@ def _create_beam(member: dict) -> Beam:
 # For CFRHS120X120X5: HEIGHT, WIDTH, PLATE_THICKNESS, ROUNDING_RADIUS
 def _get_profile_parameter(profile_name: str, property_name: str) -> Optional[float]:
     """Shared lookup used by get_profile_height() and get_profile_width()."""
-    profile_item = LibraryProfileItem()
-
-    if profile_item.Select(profile_name):
-        for param in profile_item.aProfileItemParameters:
-            if param.Property.upper() == property_name:
-                return param.Value
+    # CFRHS names such as CFRHS100X100X4 are parametric profiles. Preserve the
+    # supplied name and ask both native catalogues instead of guessing dimensions.
+    for profile_type in (LibraryProfileItem, ParametricProfileItem):
+        profile_item = profile_type()
+        if profile_item.Select(profile_name):
+            for param in profile_item.aProfileItemParameters:
+                if param.Property.upper() == property_name:
+                    return param.Value
 
     return None
 

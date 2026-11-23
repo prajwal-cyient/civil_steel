@@ -27,6 +27,8 @@ def run_a8_reporting(state: WorkflowState) -> WorkflowState:
 
     report = {
         "run_id": state.run_id,
+        "run_policy": state.run_policy,
+        "approved_changes": {k: state.change_scope[k] for k in ("proposal_id", "source_run_id", "groups", "changes", "action", "reuse_calculations") if k in state.change_scope},
         "calculation_source_run": state.readiness.get("publication_resume_source", state.run_id),
         "completed_at": datetime.now().isoformat(),
         "summary": {
@@ -85,6 +87,9 @@ def accept_gate3(state: WorkflowState, engineer_name: str = "Lead Structural Eng
     state.accepted_by = engineer_name
     state.acceptance_timestamp = datetime.now().isoformat()
     state.status = "COMPLETED"
+    if state.final_report:
+        state.final_report.update(gate3_status='ACCEPTED', accepted_by=state.accepted_by,
+                                  acceptance_timestamp=state.acceptance_timestamp)
 
     msg = f"Design accepted and signed off by {engineer_name}."
     state.agent_statuses["A8"] = {"status": "PASSED", "message": msg}

@@ -38,7 +38,7 @@ class SqliteWorkflowStore:
     """Thread-safe SQLite store for durable execution tracking."""
 
     def __init__(self, db_path: Optional[str] = None):
-        self.db_path = db_path or DEFAULT_DB_PATH
+        self.db_path = db_path or os.getenv("PLANT_RUNS_DATABASE_PATH") or DEFAULT_DB_PATH
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._lock = threading.Lock()
         self._cache: Dict[str, WorkflowState] = {}

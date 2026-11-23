@@ -41,6 +41,7 @@
   let sessionId = new URLSearchParams(location.search).get('chat') || localStorage.getItem('structuralChatSession'), turnId = null;
   let busy = false, ready = false, seen = new Set(), revision = 0, uploaded = null, selectedRun = null, lastViewerRun = null;
   let draftFiles = [], sessionPromise = null;
+  const watchedTurns = new Map();
   const bridge = () => window.structuralChatBridge;
   const scroll = () => { history.scrollTop = history.scrollHeight; };
   function canonical(v) { return Array.isArray(v) ? v.map(canonical) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, canonical(v[k])])) : v; }
@@ -48,7 +49,11 @@
   function message(role, text) { const n = el('div', `sc-message ${role}`); n.append(el('small', '', role === 'user' ? 'You' : role === 'error' ? 'Error' : 'Assistant'), document.createTextNode(text)); history.append(n); scroll(); }
   async function request(url, options) { const r = await fetch(url, options); const data = await r.json().catch(() => ({})); if (!r.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || `HTTP ${r.status}`)); return data; }
   const jsonOptions = (method, data) => ({method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
-  function remember(id) { sessionId = id; localStorage.setItem('structuralChatSession', id); }
+  function remember(id) {
+    sessionId = id; localStorage.setItem('structuralChatSession', id);
+    const url = new URL(location.href); url.searchParams.set('chat', id);
+    window.history.replaceState(null, '', url);
+  }
   function setBusy(value) { busy = value; send.disabled = busy || !ready || draftFiles.some(f => f.uploading && !f.removed); attach.disabled = busy; file.disabled = busy; stop.hidden = !busy; send.hidden = busy; for (const button of attachments.querySelectorAll('button')) button.disabled = busy; }
   function discardCards() { for (const item of draftFiles) if (item.preview) URL.revokeObjectURL(item.preview); draftFiles = []; attachments.replaceChildren(); attachments.hidden = true; }
   async function ensureSession(token) {
@@ -82,6 +87,7 @@
   }
   function closeMenu() { menu.hidden = true; more.setAttribute('aria-expanded', 'false'); }
   function resetView() {
+    proposalViews.clear();
     revision++; discardCards(); sessionPromise = null; sessionId = null; turnId = null; selectedRun = null; lastViewerRun = null; uploaded = null; file.value = ''; input.value = '';
     localStorage.removeItem('structuralChatSession'); history.replaceChildren(); seen.clear(); progress.textContent = ''; heading.textContent = 'New chat';
     closeMenu(); renameForm.hidden = true; conversations.hidden = true; setBusy(false);
@@ -95,19 +101,148 @@
     if (event.parameters) box.append(el('pre', '', JSON.stringify(event.parameters,null,2)));
     if (event.result || event.error) box.append(el('pre', '', JSON.stringify(event.result || event.error,null,2))); history.append(box);
   }
+  const proposalViews = new Map();
+  function showProposal(plan) {
+    if (proposalViews.has(plan.id)) return;
+    const box = el('section', 'sc-change-preview');
+    box.append(el('strong', '', 'Proposed project change — approval required'));
+    if (plan.source_run_id) box.append(el('p','','Source run: '+plan.source_run_id));
+    for (const [group,count] of Object.entries(plan.physical_joint_counts || {})) {
+      box.append(el('p','',`${group}: entire group (${count} physical joints)`));
+    }
+    const table = el('table', 'sc-change-table'), head = el('tr');
+    for (const label of ['Group / section', 'Parameter', 'Current', 'Requested']) head.append(el('th', '', label));
+    table.append(head);
+    for (const change of plan.changes || []) {
+      const row = el('tr');
+      const cells = [change.joint_group || change.section, change.parameter,
+        change.old_mm != null ? `${change.old_mm} mm` : JSON.stringify(change.old),
+        change.new_mm != null ? `${change.new_mm} mm` : JSON.stringify(change.new)];
+      for (const value of cells) row.append(el('td', '', value ?? 'Not defined'));
+      table.append(row);
+    }
+    box.append(table, el('p', '', `Execution: ${(plan.steps || []).join(' → ') || 'Save inputs only; analysis required'}`),
+      el('p', '', plan.notice || 'No changes have been applied.'));
+    if (plan.run_policy && Object.keys(plan.run_policy).length) {
+      const rules = el('details'); rules.append(el('summary','','Rules for the proposed execution'),el('pre','',JSON.stringify(plan.run_policy,null,2))); box.append(rules);
+    }
+    if (plan.candidate) {
+      const inputs = el('details'); inputs.append(el('summary','','Inputs for proposed execution'),el('pre','',JSON.stringify(plan.candidate,null,2))); box.append(inputs);
+    }
+    const status = el('p', '', plan.status), approve = el('button', 'sc-change-approve', 'Approve & Apply'), reject = el('button', 'sc-change-reject', 'Reject');
+    approve.type = reject.type = 'button';
+    approve.disabled = reject.disabled = plan.status !== 'PENDING';
+    async function act(approved) {
+      const token = revision;
+      approve.disabled = reject.disabled = true;
+      try {
+        const result = await request(`/api/v2/chat/sessions/${encodeURIComponent(plan.session_id)}/changes/${encodeURIComponent(plan.id)}/${approved ? 'approve' : 'reject'}`,
+          {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(approved ? {digest:plan.digest,allow_native_tools:true} : {})});
+        status.textContent = approved ? 'Approved; executing the stored plan.' : 'Rejected; nothing changed.';
+        if (approved) {
+          watchTurn(result.turn_id);
+          if (token === revision) { turnId = result.turn_id; setBusy(true); await poll(turnId, token); }
+        }
+      } catch (error) {
+        if (token === revision) { message('error',error.message); setBusy(false); }
+        approve.disabled = reject.disabled = false;
+      }
+    }
+    approve.onclick = () => act(true); reject.onclick = () => act(false);
+    box.append(status, approve, reject); history.append(box); proposalViews.set(plan.id, box);
+  }
   async function loadRun(id, token) {
     if (!id || !bridge()) return;
     const state = await request(`/api/v2/agentic/runs/${encodeURIComponent(id)}`); if (token !== revision) return;
-    if (state.readiness?.preview_only) bridge().showPreview(state.frame_candidate); else bridge().showRun(state);
+    const active = await request('/api/v2/agentic/active'); if (token !== revision) return;
+    // Viewing an older conversation must not replace another worker's live view.
+    if (active && active.run_id !== id) return;
+    if (state.readiness?.preview_only) bridge().showPreview(state.frame_candidate, id);
+    else bridge().showRun(state, {active: active?.run_id === id});
     lastViewerRun = bridge()?.getRunId();
   }
-  async function poll(id, token) {
+  function watchTurn(id) {
+    if (watchedTurns.has(id)) return watchedTurns.get(id);
+    const entry = {turn: null, error: null, nativeActive: false, waiters: new Set()};
+    watchedTurns.set(id, entry);
+    bridge()?.setTurnBusy(id, true);
+    const notify = () => { for (const resolve of entry.waiters) resolve(); entry.waiters.clear(); };
+    // Keep ownership/progress monitoring alive when the user changes conversations.
+    entry.task = (async () => {
+      let ownedRun = null, displayedRun = null;
+      try {
+        while (true) {
+          const turn = await request(`/api/v2/chat/turns/${encodeURIComponent(id)}`);
+          entry.nativeActive = false;
+          if (turn.run_id) {
+            const active = await request('/api/v2/agentic/active');
+            entry.nativeActive = active?.run_id === turn.run_id;
+            if (entry.nativeActive) {
+              ownedRun = turn.run_id;
+              if (active.readiness?.preview_only) bridge()?.showPreview(active.frame_candidate, active.run_id);
+              else bridge()?.showRun(active, {active: true});
+              displayedRun = active.run_id;
+            } else if (!active && (ownedRun || displayedRun !== turn.run_id)) {
+              // A quick action may finish between polls. Show its latest saved
+              // candidate while the model plans the next action in this turn.
+              const state = await request(`/api/v2/agentic/runs/${encodeURIComponent(turn.run_id)}`);
+              if (state.readiness?.preview_only) bridge()?.showPreview(state.frame_candidate, state.run_id);
+              else bridge()?.showRun(state, {active: false});
+              displayedRun = state.run_id;
+              ownedRun = null;
+            }
+          }
+          entry.turn = turn;
+          // The solver is finished at Gate 3: release desktop controls so the
+          // engineer can approve, but keep observing this unfinished request.
+          bridge()?.setTurnBusy(id, turn.status === 'RUNNING' || entry.nativeActive);
+          notify();
+          if (!['RUNNING','AWAITING_APPROVAL'].includes(turn.status) && !entry.nativeActive) break;
+          await new Promise(resolve => setTimeout(resolve, 1200));
+        }
+      } catch (error) { entry.error = error; }
+      finally {
+        bridge()?.setTurnBusy(id, false);
+        notify();
+        watchedTurns.delete(id);
+      }
+    })();
+    return entry;
+  }
+  async function poll(id, token, shownAssistant = '') {
+    const observed = watchTurn(id);
+    let waitingDisplayed = false;
     while (token === revision) {
-      const turn = await request(`/api/v2/chat/turns/${encodeURIComponent(id)}`); if (token !== revision) return;
+      if (observed.error) throw observed.error;
+      const turn = observed.turn;
+      if (!turn) { await new Promise(resolve => observed.waiters.add(resolve)); continue; }
       for (const event of turn.events) { const key = `${id}:${event.sequence}`; if (!seen.has(key)) { seen.add(key); toolEvent(event); } }
       if (turn.progress?.current_agent) progress.textContent = `${turn.progress.current_agent}: ${turn.progress.agents?.[turn.progress.current_agent]?.message || turn.progress.status}`;
-      if (turn.status !== 'RUNNING') {
-        if (turn.assistant) message('assistant', turn.assistant); if (turn.error) message('error', turn.error);
+      if (turn.status !== 'RUNNING' && turn.assistant && turn.assistant !== shownAssistant) {
+        const text = shownAssistant && turn.assistant.startsWith(shownAssistant) ? turn.assistant.slice(shownAssistant.length).trim() : turn.assistant;
+        if (text) message('assistant', text);
+        shownAssistant = turn.assistant;
+      }
+      if (turn.status === 'AWAITING_APPROVAL' && !observed.nativeActive) {
+        if (!waitingDisplayed && turn.run_id) {
+          selectedRun = turn.run_id;
+          await loadRun(turn.run_id, token);
+          if (token !== revision) return;
+          waitingDisplayed = true;
+        }
+        // Do not show a stop-worker action while there is no worker to stop.
+        progress.textContent = 'Waiting for engineer approval — click Accept & Sign Off on the dashboard.';
+        stop.hidden = true; send.hidden = false; send.disabled = true;
+      } else if (turn.status !== 'RUNNING' && !observed.nativeActive) {
+        if (turn.error) message('error', turn.error);
+        for (const plan of turn.change_proposals || []) {
+          const current = await request(`/api/v2/chat/sessions/${encodeURIComponent(plan.session_id)}/changes/${encodeURIComponent(plan.id)}`);
+          if (token !== revision) return;
+          showProposal(current);
+        }
+        if (turn.artifacts) {
+          message('assistant', `Saved change files: ${turn.artifacts.files.join(', ')}\nFolder: ${turn.artifacts.directory}`);
+        }
         if (turn.project_input && bridge()) { bridge().setInput(turn.project_input); if (uploaded) uploaded = turn.project_input; }
         if (turn.run_id) {
           selectedRun = turn.run_id;
@@ -117,7 +252,7 @@
         if (token !== revision) return;
         progress.textContent = turn.status === 'COMPLETED' ? 'Response complete' : turn.status; turnId = null; setBusy(false); scroll(); return;
       }
-      await new Promise(resolve => setTimeout(resolve,1200));
+      await new Promise(resolve => observed.waiters.add(resolve));
     }
   }
   async function openSession(id) {
@@ -127,11 +262,15 @@
       heading.textContent = session.title || 'Chat'; selectedRun = session.run_id; lastViewerRun = bridge()?.getRunId();
       if (session.project_input?.grid && bridge()) bridge().setInput(session.project_input);
       draftFiles = (session.draft_attachments || []).map(f => ({...f,session:id})); drawAttachments();
+      let pendingAssistant = '';
       for (const turn of session.turns) {
         message('user', turn.message); sentFiles(turn.attachments); for (const event of turn.events) { seen.add(`${turn.id}:${event.sequence}`); toolEvent(event); }
-        if (turn.assistant) message('assistant', turn.assistant); if (turn.error) message('error', turn.error); if (turn.status === 'RUNNING') turnId = turn.id;
+        if (turn.assistant) message('assistant', turn.assistant); if (turn.error) message('error', turn.error);
+        if (turn.artifacts) message('assistant', `Saved change files: ${turn.artifacts.files.join(', ')}\nFolder: ${turn.artifacts.directory}`);
+        if (['RUNNING','AWAITING_APPROVAL'].includes(turn.status)) { turnId = turn.id; pendingAssistant = turn.assistant || ''; }
       }
-      if (!session.turns.length) greeting(); if (turnId) await poll(turnId,token); else setBusy(false);
+      for (const plan of session.pending_changes || []) showProposal(plan);
+      if (!session.turns.length) greeting(); if (turnId) await poll(turnId,token,pendingAssistant); else setBusy(false);
     } catch(e) { if (token === revision) { message('error', `Could not restore chat: ${e.message}`); setBusy(false); } }
   }
   async function newConversation() {
@@ -152,7 +291,7 @@
     try {
       const data = await request('/api/v2/chat/sessions'); if (token !== revision) return;
       conversations.replaceChildren(el('strong','','Saved conversations')); if (!data.sessions.length) conversations.append(el('p','','No saved conversations yet.'));
-      for (const item of data.sessions) { const button = el('button','sc-saved',`${item.title}${item.running ? ' · Running' : ''}`); button.type = 'button'; button.onclick = () => openSession(item.id); conversations.append(button); }
+      for (const item of data.sessions) { const button = el('button','sc-saved',`${item.title}${item.running ? ' · Running' : item.awaiting_approval ? ' · Awaiting approval' : ''}`); button.type = 'button'; button.onclick = () => openSession(item.id); conversations.append(button); }
     } catch(e) { if (token === revision) conversations.replaceChildren(el('p','',e.message)); }
   };
   rename.onclick = () => { closeMenu(); if (!sessionId) { progress.textContent = 'Start a chat before renaming it.'; return; } titleInput.value = heading.textContent; renameForm.hidden = false; titleInput.focus(); titleInput.select(); };
@@ -215,6 +354,8 @@
   form.onsubmit = async e => {
     e.preventDefault(); if (busy || !ready || send.disabled || !input.value.trim()) return;
     const token = revision, text = input.value.trim(); setBusy(true);
+    const pending = `pending:${token}`;
+    bridge()?.setTurnBusy(pending, true);
     try {
       if (!bridge() && !uploaded) throw new Error('The form/viewer has not loaded yet. Wait for it, or attach project JSON.');
       const inputs = bridge()?.getInput() || uploaded;
@@ -227,10 +368,14 @@
       if (displayed) { const state = await request(`/api/v2/agentic/runs/${encodeURIComponent(displayed)}`); if (token !== revision) return; if (equal(state.raw_input,inputs)) payload.run_id = displayed; }
       if (!payload.session_id) { payload.session_id = await ensureSession(token); if (token !== revision) return; }
       progress.textContent = 'Waiting for tool selection...'; message('user',text); input.value = '';
-      const result = await request('/api/v2/chat/messages',jsonOptions('POST',payload)); if (token !== revision) return;
+      const result = await request('/api/v2/chat/messages',jsonOptions('POST',payload));
+      watchTurn(result.turn_id);
+      bridge()?.setTurnBusy(pending, false); // The observer now owns the request lock.
+      if (token !== revision) return;
       sentFiles(attached); discardCards();
       remember(result.session_id); turnId = result.turn_id; if (heading.textContent === 'New chat') heading.textContent = text.slice(0,80); await poll(turnId,token);
     } catch(error) { if (token === revision) { message('error',error.message); progress.textContent = 'Open Chat history to check saved turn status.'; setBusy(false); } }
+    finally { bridge()?.setTurnBusy(pending, false); }
   };
   input.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } };
   stop.onclick = async () => { if (!turnId) return; const token = revision; try { await request(`/api/v2/chat/turns/${encodeURIComponent(turnId)}/cancel`,{method:'POST'}); } catch(e) { if (token === revision) message('error',e.message); } };

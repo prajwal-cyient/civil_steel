@@ -801,6 +801,14 @@
       <button id="agentic-run-btn" class="agentic-run-btn" type="button">⚡ Run Agentic Design (A1–A8)</button>
       <button id="agentic-cancel-btn" class="agentic-run-btn" type="button" hidden>Stop current run</button>
       <div id="agentic-status-msg" class="agentic-status-pill" style="display:none;"></div>
+      <div id="active-run-id" class="load-config-hint" aria-live="polite" hidden></div>
+      <button id="new-run-btn" class="action-btn" type="button">New Run / Reset View</button>
+      <div class="load-config-hint">Reset clears the view and keeps your inputs and saved runs.</div>
+      <details>
+        <summary>Saved runs</summary>
+        <select id="saved-run-select" aria-label="Saved run" style="width:100%;"></select>
+        <button id="load-saved-run-btn" class="action-btn" type="button" disabled>View saved run</button>
+      </details>
 
       <button id="generate-btn" type="button">Generate Structure (Manual)</button>
       <div id="status-msg"></div>
@@ -1406,7 +1414,7 @@ const TYPE_LABELS = {
   transverse_brace: 'Trans. brace',
 };
 
-function renderSummary(summary) {
+function renderSummary(summary, inputColHeight = parseFloat(document.getElementById('col_height_mm').value)) {
   document.getElementById('hud').style.display = 'block';
   document.getElementById('legend').style.display = 'flex';
   document.getElementById('hud-total').innerHTML = `${summary.total_members} <span>members</span>`;
@@ -1424,7 +1432,6 @@ function renderSummary(summary) {
     breakdown.appendChild(row);
   }
 
-  const inputColHeight = parseFloat(document.getElementById('col_height_mm').value);
   const wasClamped = summary.effective_col_height_mm < inputColHeight - 0.001;
 
   const heightRow = document.createElement('div');
@@ -1466,6 +1473,10 @@ let revCounter = 0;
 let lastGeneratedResult = null;
 
 genBtn.addEventListener('click', async () => {
+  if (!beginManualAction()) return;
+  agenticViewVersion += 1;
+  resetAgenticPresentation();
+  setDisplayedRun(null);
   statusMsg.className = '';
   statusMsg.textContent = '';
   genBtn.disabled = true;
@@ -1502,7 +1513,7 @@ genBtn.addEventListener('click', async () => {
     statusMsg.className = 'error';
     statusMsg.textContent = String(err.message || err);
   } finally {
-    genBtn.disabled = false;
+    finishManualAction();
     genBtn.textContent = 'Generate Structure';
   }
 });
@@ -1516,6 +1527,7 @@ const teklaStatus = document.getElementById('tekla-status');
 
 updateTeklaBtn.addEventListener('click', async () => {
   if (!lastGeneratedResult) return;
+  if (!beginManualAction()) return;
 
   teklaStatus.className = '';
   teklaStatus.textContent = '';
@@ -1551,7 +1563,7 @@ updateTeklaBtn.addEventListener('click', async () => {
     teklaStatus.className = 'error';
     teklaStatus.textContent = String(err.message || err);
   } finally {
-    updateTeklaBtn.disabled = false;
+    finishManualAction();
     updateTeklaBtn.textContent = 'Update Tekla';
   }
 });
@@ -1599,6 +1611,7 @@ function buildLoadConfiguration() {
 
 sendStaadBtn.addEventListener('click', async () => {
   if (!lastGeneratedResult) return;
+  if (!beginManualAction()) return;
 
   staadStatus.className = '';
   staadStatus.textContent = '';
@@ -1651,7 +1664,7 @@ sendStaadBtn.addEventListener('click', async () => {
     staadStatus.className = 'error';
     staadStatus.textContent = String(err.message || err);
   } finally {
-    sendStaadBtn.disabled = false;
+    finishManualAction();
     sendStaadBtn.textContent = 'Send to STAAD';
   }
 });
@@ -1740,6 +1753,7 @@ sendIdeaBtn.addEventListener('click', async () => {
     ideaStatus.textContent = `No load effects from STAAD for joint group ${jointGroup} in envelope ${envelope}.`;
     return;
   }
+  if (!beginManualAction()) return;
   const templateDir = IDEA_STATICA_DEFAULTS.template_project_path.replace(/[^/\\]*$/, '');
   const outputDir = IDEA_STATICA_DEFAULTS.output_dir;
 
@@ -1780,7 +1794,7 @@ sendIdeaBtn.addEventListener('click', async () => {
     ideaStatus.className = 'error';
     ideaStatus.textContent = String(err.message || err);
   } finally {
-    sendIdeaBtn.disabled = false;
+    finishManualAction();
     sendIdeaBtn.textContent = 'Send to IdeaStatica';
   }
 });
@@ -1796,6 +1810,109 @@ const gate3Summary = document.getElementById('gate3-summary');
 const gate3AcceptBtn = document.getElementById('gate3-accept-btn');
 
 let currentAgenticRunId = null;
+let agenticUiBusy = false;
+let manualUiBusy = false;
+const pendingChatTurns = new Set();
+let agenticViewVersion = 0;
+let renderedRun = {};
+
+function updateActionControls() {
+  const busy = agenticUiBusy || manualUiBusy || pendingChatTurns.size > 0;
+  genBtn.disabled = busy;
+  sendStaadBtn.disabled = busy || !lastGeneratedResult;
+  updateTeklaBtn.disabled = busy || !lastGeneratedResult;
+  sendIdeaBtn.disabled = busy || !staadViewResult;
+  agenticRunBtn.disabled = busy;
+  document.getElementById('new-run-btn').disabled = busy;
+  document.getElementById('saved-run-select').disabled = busy;
+  document.getElementById('load-saved-run-btn').disabled = busy || !document.getElementById('saved-run-select').value;
+  if (gate3AcceptBtn) gate3AcceptBtn.disabled = busy;
+}
+
+function setAgenticBusy(busy) {
+  agenticUiBusy = busy;
+  updateActionControls();
+  if (agenticCancelBtn) agenticCancelBtn.hidden = !busy || !currentAgenticRunId;
+}
+
+function beginManualAction() {
+  if (agenticUiBusy || manualUiBusy || pendingChatTurns.size) return false;
+  manualUiBusy = true;
+  updateActionControls();
+  return true;
+}
+
+function finishManualAction() {
+  manualUiBusy = false;
+  updateActionControls();
+}
+
+function setDisplayedRun(runId) {
+  currentAgenticRunId = runId;
+  const label = document.getElementById('active-run-id');
+  label.hidden = !runId;
+  label.textContent = runId ? `Run: ${runId}` : '';
+  const url = new URL(window.location.href);
+  if (runId) {
+    url.searchParams.set('run_id', runId);
+    url.searchParams.delete('new');
+  } else {
+    url.searchParams.delete('run_id');
+    url.searchParams.set('new', '1');
+  }
+  window.history.replaceState(null, '', url);
+}
+
+function resetAgenticPresentation() {
+  renderedRun = {};
+  lastGeneratedResult = null;
+  clearStructureView();
+  for (const kind of ['staad', 'idea', 'tekla']) {
+    document.getElementById(`${kind}-results-content`).replaceChildren();
+    document.getElementById(`${kind}-results-panel`).hidden = true;
+  }
+  for (const element of [statusMsg, staadStatus, ideaStatus, teklaStatus, agenticStatusMsg]) {
+    element.textContent = '';
+    element.className = '';
+  }
+  agenticStatusMsg.style.display = 'none';
+  document.getElementById('results-pane').hidden = true;
+  document.getElementById('results-divider').hidden = true;
+  document.getElementById('empty-hint').style.display = 'block';
+  document.getElementById('hud').style.display = 'none';
+  document.getElementById('legend').style.display = 'none';
+  if (gate3Banner) gate3Banner.style.display = 'none';
+  updateAgentSteps({}, 0, {});
+}
+
+function resetRunView() {
+  if (agenticUiBusy || manualUiBusy || pendingChatTurns.size) return;
+  agenticViewVersion += 1;
+  resetAgenticPresentation();
+  setDisplayedRun(null);
+  updateActionControls();
+}
+
+async function loadSavedRunChoices() {
+  const response = await fetch('/api/v2/agentic/runs?limit=25');
+  if (!response.ok) return;
+  const runs = await response.json();
+  const select = document.getElementById('saved-run-select');
+  const previous = select.value;
+  select.replaceChildren();
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Select a saved run';
+  select.append(placeholder);
+  for (const run of runs) {
+    const option = document.createElement('option');
+    option.value = run.run_id;
+    option.textContent = `${run.run_id} — ${run.status}`;
+    select.append(option);
+  }
+  select.value = runs.some(run => run.run_id === previous) ? previous : '';
+  updateActionControls();
+}
 
 function updateAgentSteps(agentStatuses, loopA, loopB) {
   const steps = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8'];
@@ -1842,24 +1959,71 @@ function updateAgentSteps(agentStatuses, loopA, loopB) {
   }
 }
 
-function renderAgenticRunState(state) {
+function renderUnverifiedPreview(data, runId = null) {
+  if (!data?.members || !data?.summary) return;
+  if (!runId || renderedRun.preview !== runId) {
+    resetAgenticPresentation();
+    setDisplayedRun(runId);
+    renderedRun.preview = runId;
+    document.getElementById('empty-hint').style.display = 'none';
+    renderStructure(data.members);
+    renderSummary(data.summary);
+    // Preview fallbacks do not establish a live validated manual handoff.
+    lastGeneratedResult = null;
+    statusMsg.className = 'ok';
+    statusMsg.textContent = 'Chat geometry preview — unverified; no structural analysis performed.';
+  }
+  updateActionControls();
+}
+
+function renderAgenticRunState(state, { active = ['RUNNING', 'INITIALIZED'].includes(state.status) } = {}) {
+  if (state.readiness?.preview_only) {
+    renderUnverifiedPreview(state.frame_candidate, state.run_id);
+    updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {});
+    setAgenticBusy(active);
+    return;
+  }
+  if (renderedRun.id && renderedRun.id !== state.run_id) resetAgenticPresentation();
+  renderedRun.id = state.run_id;
+  setDisplayedRun(state.run_id);
   if (agenticStatusMsg) agenticStatusMsg.style.display = 'block';
   if (gate3Banner) gate3Banner.style.display = 'none';
-  currentAgenticRunId = state.run_id;
 
   // Update tracker UI with final state
   updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {});
 
   // 1. Update 3D Viewer & Members
-  if (state.frame_candidate?.members) {
+  const frameKey = `${state.run_id}:${state.design_generation || 0}`;
+  const staadReady = state.current_agent !== 'A3' && state.staad_results?.created && !['RUNNING', 'REVISING'].includes(state.agent_statuses?.A4?.status);
+  const staadKey = staadReady ? `${frameKey}:${state.staad_results.candidate_signature || ''}:${state.agent_statuses?.A4?.status || ''}` : null;
+  const geometryKey = staadKey ? `staad:${staadKey}` : `frame:${frameKey}`;
+  if (state.frame_candidate?.members?.length) {
     lastGeneratedResult = state.frame_candidate;
     document.getElementById('empty-hint').style.display = 'none';
-    renderStructure(state.frame_candidate.members);
-    renderSummary(state.frame_candidate.summary);
+    if (renderedRun.frame !== frameKey) {
+      // A revised frame invalidates the previous analysis and connection display.
+      renderedRun.staad = null;
+      renderedRun.idea = null;
+      renderedRun.tekla = null;
+      for (const kind of ['staad', 'idea', 'tekla']) {
+        document.getElementById(`${kind}-results-content`).replaceChildren();
+        document.getElementById(`${kind}-results-panel`).hidden = true;
+      }
+      for (const element of [staadStatus, ideaStatus, teklaStatus]) element.textContent = '';
+      renderSummary(state.frame_candidate.summary, state.grid_config?.col_height_mm);
+      renderedRun.frame = frameKey;
 
-    // Update senior's drawing revision and generation status
-    revCounter += 1;
-    document.getElementById('dwg-rev').textContent = `REV ${revCounter}`;
+      revCounter += 1;
+      document.getElementById('dwg-rev').textContent = `REV ${revCounter}`;
+    }
+    if (renderedRun.geometry !== geometryKey) {
+      const staadMembers = staadReady ? Object.entries(state.staad_results.member_data_by_id || {}).map(([id, member]) => ({
+        ...member, id, type: memberName2type(member.name)
+      })) : [];
+      renderStructure(staadMembers.length ? staadMembers : state.frame_candidate.members,
+        staadReady ? state.staad_results : null);
+      renderedRun.geometry = geometryKey;
+    }
     if (statusMsg) {
       statusMsg.className = 'ok';
       statusMsg.textContent = `Generated ${state.frame_candidate.summary?.total_members || state.frame_candidate.members.length} members successfully.`;
@@ -1867,21 +2031,14 @@ function renderAgenticRunState(state) {
   }
 
   // 2. Update STAAD Results View
-  if (state.staad_results?.created) {
+  if (staadReady && renderedRun.staad !== staadKey) {
     const staadResult = state.staad_results;
-    const staadMembers = Object.entries(staadResult.member_data_by_id || {}).map(([id, member]) => ({
-      ...member, id, type: memberName2type(member.name)
-    }));
-    if (staadMembers.length > 0) {
-      renderStructure(staadMembers, staadResult);
-    } else if (state.frame_candidate?.members) {
-      renderStructure(state.frame_candidate.members, staadResult);
-    }
     renderStaadResults(staadResult);
+    renderedRun.staad = staadKey;
 
     // Senior's STAAD action status badge
     if (staadStatus) {
-      staadStatus.className = 'ok';
+      staadStatus.className = state.agent_statuses?.A4?.status === 'FAILED' ? 'error' : 'ok';
       staadStatus.textContent = `Members: ${staadResult.created} created.`;
     }
     const staadControls = document.getElementById('staad-view-controls');
@@ -1889,39 +2046,42 @@ function renderAgenticRunState(state) {
   }
 
   // 3. Update IDEA StatiCa Results View
-  if (state.ideastatica_results) {
-    for (const [jg, resData] of Object.entries(state.ideastatica_results)) {
-      renderIdeaStaticaResults(resData);
-      if (ideaStatus) {
-        ideaStatus.className = resData.passed ? 'ok' : 'error';
-        ideaStatus.textContent = `Connection ${resData.connection_id || 1} ${resData.passed ? 'passed' : 'failed'} checks.`;
-      }
+  const ideaResults = staadReady ? state.ideastatica_results || {} : {};
+  const ideaKey = JSON.stringify(ideaResults);
+  if (Object.keys(ideaResults).length && renderedRun.idea !== ideaKey) {
+    renderIdeaStaticaGroups(ideaResults);
+    renderedRun.idea = ideaKey;
+    const results = Object.values(ideaResults);
+    const failed = results.filter(result => !result.passed).length;
+    if (ideaStatus) {
+      ideaStatus.className = failed ? 'error' : 'ok';
+      ideaStatus.textContent = `${results.length} connection families calculated: ${results.length - failed} passed, ${failed} failed.`;
     }
   }
 
   // 4. Update Tekla View
-  if (state.tekla_results?.created) {
+  const teklaKey = JSON.stringify(state.tekla_results || {});
+  if (staadReady && state.tekla_results?.created && renderedRun.tekla !== teklaKey) {
     renderTeklaResults(state.tekla_results);
+    renderedRun.tekla = teklaKey;
     if (teklaStatus) {
       teklaStatus.className = 'ok';
       teklaStatus.textContent = `Sent ${state.tekla_results.created} members to Tekla.`;
     }
   }
 
-  // 5. Open Senior's Right-Side Results Drawer and expand all 3 panels
+  // Show only panels with results from this run.
   const resultsPane = document.getElementById('results-pane');
   const resultsDivider = document.getElementById('results-divider');
-  if (resultsPane) resultsPane.hidden = false;
-  if (resultsDivider) resultsDivider.hidden = false;
-  const staadPanel = document.getElementById('staad-results-panel');
-  const ideaPanel = document.getElementById('idea-results-panel');
-  const teklaPanel = document.getElementById('tekla-results-panel');
-  if (staadPanel) { staadPanel.hidden = false; staadPanel.open = true; }
-  if (ideaPanel) { ideaPanel.hidden = false; ideaPanel.open = true; }
-  if (teklaPanel) { teklaPanel.hidden = false; teklaPanel.open = true; }
+  const hasResults = !!(staadReady || Object.keys(ideaResults).length);
+  if (resultsPane) resultsPane.hidden = !hasResults;
+  if (resultsDivider) resultsDivider.hidden = !hasResults;
 
   // 5. Present Gate 3 Acceptance if reached
-  if (state.status === 'PAUSED_AT_GATE3') {
+  if (active) {
+    agenticStatusMsg.className = 'agentic-status-pill running';
+    agenticStatusMsg.textContent = `${state.current_agent}: ${state.agent_statuses?.[state.current_agent]?.message || 'Running calculation…'}`;
+  } else if (state.status === 'PAUSED_AT_GATE3') {
     if (gate3Banner) {
       gate3Banner.style.display = 'flex';
       const maxR = state.final_report?.summary?.staad_max_stress_ratio || 0.0;
@@ -1948,50 +2108,63 @@ function renderAgenticRunState(state) {
     }
   }
 
+  setAgenticBusy(active);
 }
 
-async function restoreSavedAgenticRun() {
-  let runId = new URLSearchParams(window.location.search).get('run_id');
-  if (!runId) {
-    const response = await fetch('/api/v2/agentic/runs?limit=1');
-    if (!response.ok) return;
-    runId = (await response.json())[0]?.run_id;
-  }
-  if (!runId || !agenticRunBtn || agenticRunBtn.disabled) return;
-  currentAgenticRunId = runId;
-  agenticRunBtn.disabled = true;
+async function restoreSavedAgenticRun(requestedRunId = null) {
+  if (agenticUiBusy || manualUiBusy || pendingChatTurns.size) return;
+  const viewVersion = ++agenticViewVersion;
+  const params = new URLSearchParams(window.location.search);
+  let runId = requestedRunId || params.get('run_id');
+  setAgenticBusy(true);
   try {
+    if (!runId) {
+      if (params.get('new') === '1') return;
+      const response = await fetch('/api/v2/agentic/active');
+      if (!response.ok || viewVersion !== agenticViewVersion) return;
+      runId = (await response.json())?.run_id;
+    }
+    if (!runId || viewVersion !== agenticViewVersion) return;
+    resetAgenticPresentation();
+    setDisplayedRun(runId);
     let state;
     do {
       const response = await fetch(`/api/v2/agentic/runs/${encodeURIComponent(runId)}`);
-      if (!response.ok) return;
+      if (!response.ok) throw new Error(`Could not load run ${runId} (${response.status}).`);
       state = await response.json();
-      if (state.status !== 'RUNNING' && state.status !== 'INITIALIZED') break;
+      if (viewVersion !== agenticViewVersion) return;
       const activeResponse = await fetch('/api/v2/agentic/active');
       const active = activeResponse.ok ? await activeResponse.json() : null;
+      if (viewVersion !== agenticViewVersion) return;
+      if (!['RUNNING', 'INITIALIZED'].includes(state.status) && active?.run_id !== runId) break;
       if (active?.run_id !== runId) {
-        renderAgenticRunState(state);
+        renderAgenticRunState(state, { active: false });
         agenticStatusMsg.textContent = `Saved run ${runId} has no active worker. Its results remain available for inspection.`;
         return;
       }
-      updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {});
-      agenticStatusMsg.style.display = 'block';
-      agenticStatusMsg.className = 'agentic-status-pill running';
-      agenticStatusMsg.textContent = `${state.current_agent}: ${state.agent_statuses?.[state.current_agent]?.message || 'Running calculation'}`;
-      if (agenticCancelBtn) agenticCancelBtn.hidden = false;
+      if (viewVersion !== agenticViewVersion) return;
+      renderAgenticRunState(state, { active: true });
       await new Promise(resolve => setTimeout(resolve, 2000));
-    } while (currentAgenticRunId === runId);
-    if (currentAgenticRunId === runId) renderAgenticRunState(state);
+    } while (viewVersion === agenticViewVersion);
+    if (viewVersion === agenticViewVersion) renderAgenticRunState(state);
+  } catch (error) {
+    if (viewVersion === agenticViewVersion) {
+      agenticStatusMsg.style.display = 'block';
+      agenticStatusMsg.className = 'agentic-status-pill error';
+      agenticStatusMsg.textContent = error.message;
+    }
   } finally {
-    agenticRunBtn.disabled = false;
-    if (agenticCancelBtn) agenticCancelBtn.hidden = true;
+    if (viewVersion === agenticViewVersion) setAgenticBusy(false);
   }
 }
 
 if (agenticRunBtn) {
   agenticRunBtn.addEventListener('click', async () => {
-    currentAgenticRunId = null;
-    agenticRunBtn.disabled = true;
+    if (agenticUiBusy || manualUiBusy || pendingChatTurns.size) return;
+    const viewVersion = ++agenticViewVersion;
+    resetAgenticPresentation();
+    setDisplayedRun(null);
+    setAgenticBusy(true);
     agenticRunBtn.innerHTML = '⚙ Running Agentic Workflow…';
     if (agenticStatusMsg) {
       agenticStatusMsg.style.display = 'block';
@@ -2004,6 +2177,7 @@ if (agenticRunBtn) {
     updateAgentSteps({}, 0, {});
 
     let polling = false;
+    let finished = false;
     const progressTimer = setInterval(async () => {
       if (polling) return;
       polling = true;
@@ -2011,14 +2185,9 @@ if (agenticRunBtn) {
         const response = await fetch('/api/v2/agentic/active');
         if (!response.ok) return;
         const progress = await response.json();
-        if (!progress) return;
-        currentAgenticRunId = progress.run_id;
-        if (agenticCancelBtn) agenticCancelBtn.hidden = false;
-        updateAgentSteps(progress.agent_statuses || {}, progress.loop_a_count || 0, progress.loop_b_count || {});
-        const stage = progress.agent_statuses?.[progress.current_agent];
-        if (agenticStatusMsg) {
-          agenticStatusMsg.textContent = `${progress.current_agent}: ${stage?.message || 'Running calculation…'}`;
-        }
+        if (!progress || finished || viewVersion !== agenticViewVersion) return;
+        // The worker may save its final report before releasing the desktop lock.
+        renderAgenticRunState(progress, { active: true });
       } catch (_) {
         // The main request reports terminal connection errors.
       } finally {
@@ -2044,17 +2213,19 @@ if (agenticRunBtn) {
       }
 
       const state = await res.json();
-      renderAgenticRunState(state);
+      finished = true;
+      if (viewVersion === agenticViewVersion) renderAgenticRunState(state);
     } catch (err) {
-      if (agenticStatusMsg) {
+      if (agenticStatusMsg && viewVersion === agenticViewVersion) {
         agenticStatusMsg.className = 'agentic-status-pill error';
         agenticStatusMsg.textContent = String(err.message || err);
       }
     } finally {
+      finished = true;
       clearInterval(progressTimer);
-      if (agenticCancelBtn) agenticCancelBtn.hidden = true;
-      agenticRunBtn.disabled = false;
+      if (viewVersion === agenticViewVersion) setAgenticBusy(false);
       agenticRunBtn.innerHTML = '⚡ Run Agentic Design (A1–A8)';
+      loadSavedRunChoices().catch(() => {});
     }
   });
 }
@@ -2077,10 +2248,19 @@ if (agenticCancelBtn) {
 
 // Recover saved results and ongoing progress after a browser refresh.
 restoreSavedAgenticRun().catch(() => {});
+loadSavedRunChoices().catch(() => {});
+document.getElementById('new-run-btn').addEventListener('click', resetRunView);
+document.getElementById('saved-run-select').addEventListener('change', updateActionControls);
+document.getElementById('load-saved-run-btn').addEventListener('click', () => {
+  const runId = document.getElementById('saved-run-select').value;
+  if (runId) restoreSavedAgenticRun(runId);
+});
 
 if (gate3AcceptBtn) {
   gate3AcceptBtn.addEventListener('click', async () => {
     if (!currentAgenticRunId) return;
+    const acceptedRunId = currentAgenticRunId;
+    const originalLabel = gate3AcceptBtn.textContent;
     gate3AcceptBtn.disabled = true;
     gate3AcceptBtn.textContent = 'Accepting…';
 
@@ -2091,6 +2271,10 @@ if (gate3AcceptBtn) {
         body: JSON.stringify({ engineer_name: 'Lead Structural Engineer' })
       });
       const acceptedState = await res.json();
+      if (!res.ok || acceptedState.status !== 'COMPLETED' || !acceptedState.gate3_approved) {
+        throw new Error(typeof acceptedState.detail === 'string' ? acceptedState.detail : 'Engineer acceptance was not confirmed by the server.');
+      }
+      if (currentAgenticRunId !== acceptedRunId) return;
       if (gate3Banner) {
         gate3Banner.innerHTML = `
           <div style="display:flex; align-items:center; justify-content:space-between; width:100%;">
@@ -2126,6 +2310,7 @@ if (gate3AcceptBtn) {
       alert('Error accepting design: ' + err.message);
     } finally {
       gate3AcceptBtn.disabled = false;
+      gate3AcceptBtn.textContent = originalLabel;
     }
   });
 }
@@ -2135,6 +2320,10 @@ window.structuralChatBridge = {
   getInput: () => ({grid: {...chatExtraInput.grid, ...buildPayload().grid},
                    load_configuration: {...chatExtraInput.load_configuration, ...buildLoadConfiguration()}}),
   getRunId: () => currentAgenticRunId,
+  setTurnBusy: (turnId, busy) => {
+    if (busy) pendingChatTurns.add(turnId); else pendingChatTurns.delete(turnId);
+    updateActionControls();
+  },
   setInput: data => {
     chatExtraInput = JSON.parse(JSON.stringify(data));
     for (const values of [data.grid || {}, data.load_configuration || {}]) {
@@ -2150,14 +2339,8 @@ window.structuralChatBridge = {
       if (Array.isArray(data.grid?.[key])) { document.getElementById(container).replaceChildren(); data.grid[key].forEach(row => addBraceRow(container, row)); }
     }
   },
-  showRun: state => renderAgenticRunState(state),
-  showPreview: data => {
-    if (!data?.members || !data?.summary) return;
-    document.getElementById('empty-hint').style.display = 'none';
-    renderStructure(data.members); renderSummary(data.summary);
-    lastGeneratedResult = data;
-    statusMsg.className = 'ok'; statusMsg.textContent = 'Chat geometry preview — unverified; no structural analysis performed.';
-  }
+  showRun: (state, options) => renderAgenticRunState(state, options),
+  showPreview: renderUnverifiedPreview
 };
 </script>
 <script src="/static/radiator_support/chat.js" defer></script>

@@ -27,7 +27,8 @@ class ReferenceAutomationTests(unittest.TestCase):
                     }}))
                 self.assertEqual(state.agent_statuses["A1"]["status"], "PASSED")
                 self.assertEqual(state.grid_config["base_plate_offset_above_column_base_mm"], offset)
-                with patch.object(a3, "generate_members", side_effect=RuntimeError("handoff inspected")) as generate:
+                with patch.object(a3, "validate_profile_catalogue"), \
+                     patch.object(a3, "generate_members", side_effect=RuntimeError("handoff inspected")) as generate:
                     a3.run_a3_frame_generator(state)
                 self.assertEqual(generate.call_args.args[0]["base_plate_offset_above_column_base_mm"], offset)
 

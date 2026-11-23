@@ -13,7 +13,8 @@ def main():
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--resume-publication", action="store_true")
     parser.add_argument("--chat-action", choices=("preview_structure", "generate_structure", "analyze_frame",
-                                                 "design_connections", "validate_package", "publish_to_tekla"))
+                                                 "design_connections", "validate_package", "publish_to_tekla",
+                                                 "update_selected_connections", "publish_selected_connections"))
     args = parser.parse_args()
     load_environment()
     # OpenSTAAD explicitly requires STA. Import it before pythonnet can select

@@ -54,6 +54,7 @@ except ImportError:
     IdeaParameter = Any
     ParameterUpdateResponse = Any
 
+from agentic.run_policy import RunPolicy
 from agentic.state import WorkflowState, AgentLogEntry, GraderResult, fail_workflow
 from agentic.config import settings
 from agentic.advisor import choose_correction
@@ -585,9 +586,10 @@ def design_joint(data: dict) -> dict:
             for c in (result.result_summary or [])
         ]
         check_summary = {"summary": check_summary, "operation_parameters": operation_parameters,
-                         "physical_limits": physical_limits, "value_kind": "utilization_percent"}
+                         "physical_limits": physical_limits, "value_kind": "utilization_percent",
+                         "run_policy": RunPolicy.model_validate(data.get("run_policy", {})).model_dump()}
         validate_calculation_check_coverage(check_summary["summary"])
-        feedback_grade = grade_joint_check_summary(check_summary)
+        feedback_grade = grade_joint_check_summary(check_summary, data.get("run_policy"))
         if feedback_grade.corrective_action_needed and feedback_grade.corrective_action.get("fix_type") == "weld_size":
             progress("Reading detailed failed weld feedback")
             raw_feedback = json.loads(api_client.calculation.get_raw_json_results(project_id, [connection_id])[0])
@@ -664,8 +666,9 @@ def design_joint(data: dict) -> dict:
 
 # ── Grader Logic ─────────────────────────────────────────────────────────
 
-def grade_joint_check_summary(check_summary: Dict[str, Any]) -> GraderResult:
+def grade_joint_check_summary(check_summary: Dict[str, Any], run_policy=None) -> GraderResult:
     """Grade valid checks; distinguish exceeded limits from SDK status failures."""
+    policy = RunPolicy.model_validate(run_policy or {})
     items = check_summary if isinstance(check_summary, list) else check_summary.get("summary", [])
     failures, fix_types, advisories = [], [], []
     maxima = {"max_plate_utilization": 0.0, "max_deformation_utilization": 0.0, "max_bolt": 0.0, "max_weld": 0.0}
@@ -681,13 +684,13 @@ def grade_joint_check_summary(check_summary: Dict[str, Any]) -> GraderResult:
             unresolved = True
             continue
         if "deformation" in name or "local" in name or "loc." in name:
-            key, limit, fix = "max_deformation_utilization", 100.0, "plate_thickness"
+            key, limit, fix = "max_deformation_utilization", policy.max_deformation_utilization_percent, "plate_thickness"
         elif "plate" in name or "strain" in name:
-            key, limit, fix = "max_plate_utilization", 100.0, "plate_thickness"
+            key, limit, fix = "max_plate_utilization", policy.max_plate_utilization_percent, "plate_thickness"
         elif "bolt" in name:
-            key, limit, fix = "max_bolt", 75.0, "bolt_dia"
+            key, limit, fix = "max_bolt", policy.max_bolt_utilization_percent, "bolt_dia"
         elif "weld" in name:
-            key, limit, fix = "max_weld", 100.0, "weld_size"
+            key, limit, fix = "max_weld", policy.max_weld_utilization_percent, "weld_size"
         else:
             if status is not True:
                 failures.append(f"IDEA {name} reports check_status=False (value={val}); inspect calculation details.")
@@ -719,6 +722,12 @@ def grade_joint_check_summary(check_summary: Dict[str, Any]) -> GraderResult:
         corrective_action_needed=fix_type is not None,
         corrective_action={"fix_type": fix_type} if fix_type else None,
     )
+
+
+def connection_output_dir(state, joint_group, root):
+    if joint_group in state.change_scope.get('groups', []) and not state.change_scope.get('reuse_calculations'):
+        return os.path.join(root, 'output_exports', 'dynamic_changes', state.run_id, joint_group)
+    return state.change_scope.get('artifact_dirs', {}).get(joint_group, os.path.join(root, f'output_{joint_group}'))
 
 
 def _connection_payload(state: WorkflowState, joint_group: str) -> dict:
@@ -761,6 +770,7 @@ def _connection_payload(state: WorkflowState, joint_group: str) -> dict:
     updates = [{**update, "material_mprl_name": material_map.get(update["material_mprl_name"], update["material_mprl_name"])}
                if "material_mprl_name" in update else update for update in updates]
     return {
+        **({"run_policy": state.run_policy} if state.run_policy and state.run_policy != RunPolicy().model_dump() else {}),
         "joint_group_name": joint_group,
         "template_project_path": template, "connection_selector": {"name": "CON1"},
         "member_updates": updates, "load_effects": loads,
@@ -768,7 +778,8 @@ def _connection_payload(state: WorkflowState, joint_group: str) -> dict:
         "enforce_member_coverage": True,
         "operation_parameters": state.active_operation_params.get(joint_group, []),
         "plate_material_policy": reference_plate_material_policy() if scope["mode"] == "reference_procedure" else None,
-        "output_dir": os.path.join(root, f"output_{joint_group}"), "extract_raw_results": False,
+        "output_dir": connection_output_dir(state, joint_group, root),
+        "extract_raw_results": False,
     }
 
 
@@ -825,7 +836,9 @@ def run_a5_ideastatica_analyzer(state: WorkflowState) -> WorkflowState:
         scope = scope_for_state(state)
     except ValueError as exc:
         return fail_workflow(state, "A5", str(exc))
-    for joint_group in scope["idea_required_groups"]:
+    selected = set(state.change_scope.get("groups", []))
+    groups = sorted(scope["idea_required_groups"], key=lambda name: name in selected) if selected else scope["idea_required_groups"]
+    for joint_group in groups:
         try:
             payload = _connection_payload(state, joint_group)
             signature = _connection_signature(payload, state.design_generation)
@@ -841,11 +854,13 @@ def run_a5_ideastatica_analyzer(state: WorkflowState) -> WorkflowState:
                         payload.get("plate_material_policy"), previous.get("iom_connection_data_file"))
                     reusable = (previous.get("passed") is True and not previous.get("simulation")
                                 and not previous.get("output_messages")
-                                and grade_joint_check_summary(previous.get("check_summary", {})).passed)
+                                and grade_joint_check_summary(previous.get("check_summary", {}), state.run_policy).passed)
                 except (IdeaStaticaJointError, ValueError):
                     reusable = False
                 if reusable:
                     continue
+            if selected and joint_group not in selected:
+                return fail_workflow(state, "A5", f"Unselected group {joint_group} lacks reusable verified evidence. Broader analysis requires a new approved plan.")
             from agentic.store import WORKFLOW_STORE
             state.agent_statuses["A5"] = {"status": "RUNNING", "message": f"Calculating {joint_group} (corrections used: {state.loop_b_count.get(joint_group, 0)}/{state.max_loop_b})."}
             WORKFLOW_STORE.save_state(state)
@@ -866,13 +881,17 @@ def run_a5_ideastatica_analyzer(state: WorkflowState) -> WorkflowState:
             # Use the parameters actually exposed by this template, not a fabricated default.
             parameters = result.get("check_summary", {}).get("operation_parameters", [])
             result["input_signature"] = _connection_signature(payload, state.design_generation)
+            if payload.get('output_dir'):
+                result['artifact_dir'] = payload['output_dir']
             state.ideastatica_results[joint_group] = result
-            grader = grade_joint_check_summary(result.get("check_summary", {}))
+            grader = grade_joint_check_summary(result.get("check_summary", {}), state.run_policy)
             if result.get("passed") is not True and grader.passed:
                 grader = GraderResult(passed=False, score=0, summary="IDEA did not report overall calculation success; inspect calculation details.")
             state.joint_grader_results[joint_group] = grader
             if grader.passed:
                 continue
+            if selected:
+                return fail_workflow(state, "A5", f"{joint_group}: approved values failed engineering checks. Further corrections require a new change preview and approval. {grader.summary}")
             if not grader.corrective_action_needed:
                 return fail_workflow(state, "A5", f"{joint_group}: {grader.summary}")
             count = state.loop_b_count.get(joint_group, 0)

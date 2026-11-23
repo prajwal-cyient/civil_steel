@@ -322,6 +322,7 @@ class EngineeringGuardTests(unittest.TestCase):
                  patch.object(a3, "generate_members", return_value=candidate), \
                  patch.object(a3, "validate_profile_catalogue"), \
                  patch.object(a3, "template_coverage", return_value={"missing": []}), \
+                 patch.object(a4, "frame_options", return_value=[{"id": "CFRHS120X120X6", "profile": "CFRHS120X120X6", "target": "column"}]), \
                  patch.object(a4, "send_to_staad", new=AsyncMock(side_effect=[bad_frame, good_frame])), \
                  patch.object(a5, "_connection_payload", side_effect=payload), \
                  patch.object(a5, "design_joint", side_effect=results) as solve, \

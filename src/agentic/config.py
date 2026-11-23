@@ -15,10 +15,11 @@ def workflow_mode() -> str:
 
 
 def load_environment(path: Path | None = None) -> None:
-    """Load simple KEY=value settings without executing shell code or interpolation."""
+    """Load settings; explicit file tracing flags override inherited tracing flags."""
     source = path or ROOT / ".env"
     if not source.is_file():
         return
+    tracing_flags = {}
     for raw in source.read_text(encoding="utf-8-sig").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -30,6 +31,15 @@ def load_environment(path: Path | None = None) -> None:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
         os.environ.setdefault(key, value)
+        if key in ("LANGSMITH_TRACING", "LANGSMITH_TRACING_V2"):
+            tracing_flags[key] = value.strip().lower()
+    if tracing_flags:
+        # The SDK prefers TRACING_V2 (including the legacy LANGCHAIN alias).
+        # Keep both canonical flags aligned with the explicit local setting so
+        # a stale PowerShell value cannot silently disable API/worker tracing.
+        enabled = tracing_flags.get("LANGSMITH_TRACING_V2", tracing_flags.get("LANGSMITH_TRACING"))
+        os.environ["LANGSMITH_TRACING"] = enabled
+        os.environ["LANGSMITH_TRACING_V2"] = enabled
 
 
 def _integer(name: str, default: int, minimum: int = 1) -> int:

@@ -103,7 +103,7 @@ class AttachmentAPI(unittest.TestCase):
             store = ChatStore(Path(root)/'chat.db'); files = AttachmentStore(Path(root)/'files')
             session = store.session(); image = BytesIO(); Image.new('RGB',(20,10),'blue').save(image,format='PNG')
             attached = files.save(session['id'],'frame.png',image.getvalue())
-            turn = store.new_turn(session['id'],'Explain the image')
+            turn = store.new_turn(session['id'],'Explain this structural frame image')
             turn['attachments'] = [files.public(attached)]; store.save_turn(turn)
             model = Model()
             with patch.object(chat_router,'ATTACHMENTS',files):
@@ -143,7 +143,7 @@ class AttachmentAPI(unittest.TestCase):
                     unused = client.post(path+'/attachments?filename=unused.txt',content=b'Unsent note').json()
                     self.assertEqual(client.delete(path+'/attachments/'+unused['id']).status_code,200)
                     self.assertEqual(len(client.get(path).json()['draft_attachments']),1)
-                    response = client.post('/api/v2/chat/messages',json={'session_id':session,'message':'Explain the note','attachment_ids':[attached['id']]})
+                    response = client.post('/api/v2/chat/messages',json={'session_id':session,'message':'Explain this project note','attachment_ids':[attached['id']]})
                     self.assertEqual(response.status_code,202)
                     import time
                     for _ in range(100):

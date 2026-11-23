@@ -45,6 +45,31 @@ async def run_chat_action(state, action):
                 return False
         return state.validation_report.get("passed") is True
 
+    if action in ("update_selected_connections", "publish_selected_connections"):
+        from agentic.chat_changes import verify_selected_values, template_fingerprints
+        if not state.change_scope or not state.change_scope.get("proposal_digest"):
+            return fail_workflow(state, "CHAT", "An approved selected-change proposal is required.")
+        if state.staad_results.get("candidate_signature") != frame_signature(state):
+            return fail_workflow(state, "CHAT", "Current passing STAAD evidence is required.")
+        if template_fingerprints(state,state.change_scope['groups']) != state.change_scope.get('template_fingerprints'):
+            return fail_workflow(state,'CHAT','Templates changed after approval; no selected calculation was started.')
+        if not state.change_scope.get('reuse_calculations') and not await checked("a5"):
+            return state
+        verify_selected_values(state)
+        if not await checked("a6") or not state.validation_report.get("passed"):
+            return fail_workflow(state, "A6", "Selected change needs broader recovery or failed package validation; no additional groups were changed.")
+        verify_selected_values(state)
+        if action == "publish_selected_connections":
+            from agentic.tekla_selected_updates import run_selected_tekla
+            state = await flow._run_stage(state, "A7", run_selected_tekla)
+            if state.status == "FAILED" or not await checked("a8"):
+                return state
+        else:
+            state.status = "READY"
+        return state
+    if state.change_scope:
+        return fail_workflow(state, "CHAT", "Selected changes require their scoped execution path; a full-model rebuild is not permitted.")
+
     if action in ("preview_structure", "generate_structure"):
         if not await checked("a1"):
             return state

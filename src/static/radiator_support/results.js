@@ -297,8 +297,16 @@ function renderTeklaResults(result) {
   if (Object.keys(extra).length) resultData(resultSection(content, 'Additional Results', true), extra);
 }
 
-function renderIdeaStaticaResults(result) {
+function renderIdeaStaticaGroups(results) {
   const content = openResultPanel('idea');
+  for (const [group, result] of Object.entries(results)) {
+    const section = resultSection(content, group, true);
+    renderIdeaStaticaResults(result, section);
+  }
+}
+
+function renderIdeaStaticaResults(result, parent = null) {
+  const content = parent || openResultPanel('idea');
   content.append(resultElement('p', `Connection ${result.connection_id}: ${result.passed ? 'all checks passed.' : 'one or more checks failed.'}`,
     `result-notice ${result.passed ? 'result-success' : 'result-failure'}`));
 

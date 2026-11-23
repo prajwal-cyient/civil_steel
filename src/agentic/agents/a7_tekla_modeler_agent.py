@@ -91,6 +91,16 @@ def generate_y_axis_labels(n_trans_bays: int) -> list:
     return [_index_to_letters(i) for i in range(1, n_trans_bays + 2)]
 
 
+def component_joint_groups(joint_groups, member_names):
+    """Record group ownership from members at the same joint, not a whole column."""
+    targets = set(member_names)
+    if len(targets) != 2:
+        return []
+    return [name for name, group in joint_groups.items() if any(
+        targets.issubset({member.get('tekla_name') or member.get('name') for member in joint.get('members', [])})
+        for joint in group.get('joints', []))]
+
+
 def get_bolt_parameters(bolt_dia: float) -> dict:
     tolerance = 2 if bolt_dia <= 27 else 3
     hole_dia = bolt_dia + tolerance
@@ -403,10 +413,19 @@ def send_to_tekla(data: dict) -> dict:
     errors = []
     inserted_members = []
     connection_ids = []
+    connection_manifest = []
 
     def connect(factory, *args, **kwargs):
+        scope_members = kwargs.pop("scope_members", [])
+        scope_groups = component_joint_groups(joint_groups, scope_members)
+        direction = kwargs.pop("scope_direction", None)
         connection = factory(*args, **kwargs)
         connection_ids.append(int(connection.Identifier.ID))
+        connection_manifest.append({"identifier": int(connection.Identifier.ID),
+            "number": int(connection.Number), "name": str(connection.Name),
+            "groups": list(scope_groups), "direction": direction,
+            "member_names": list(scope_members), "scope_basis": "joint_member_pair",
+            "attributes": dict(kwargs.get("attributes") or {})})
         if len(connection_ids) % 20 == 0:
             progress(f"Inserted and verified {len(connection_ids)} connections")
         return connection
@@ -488,7 +507,8 @@ def send_to_tekla(data: dict) -> dict:
                     idea_attrs.update(computed_attrs)
                     connect(add_column2beam_connection,
                         model, col, longitudinal_beam_obj, conn_num, conn_name,
-                        str(conn_num), grid, 6, attributes=idea_attrs
+                        str(conn_num), grid, 6, attributes=idea_attrs,
+                        scope_members=[member_name, longitudinal_beam_member['name']]
                     )
                 except Exception as exc:
                     errors.append({"connection": f"144 {member_name}", "error": str(exc)})
@@ -512,7 +532,8 @@ def send_to_tekla(data: dict) -> dict:
                                        **connection_attributes(joint_groups, column_joint_groups, 20, dir_str)}
                         connect(add_column2beam_connection,
                             model, brace_obj, col, 20, f"{member_name} {brace_name} connection",
-                            "20", grid, 1, "bracing_column", attributes=brace_attrs
+                            "20", grid, 1, "bracing_column", attributes=brace_attrs,
+                            scope_members=[member_name, brace_name], scope_direction=dir_str
                         )
             except Exception as exc:
                 errors.append({"connection": f"20 {member_name}", "error": str(exc)})
@@ -536,7 +557,7 @@ def send_to_tekla(data: dict) -> dict:
                 connect(add_column2beam_connection,
                     model, t_beam_obj, l_beam_obj, 30,
                     f"beam-x-{t_idx} beam-y-{l_idx} connection",
-                    "30", grid, 1, "longitudinal_beam_transverse_beam", attributes=beam_attrs
+                    "30", grid, 1, "longitudinal_beam_transverse_beam", attributes=beam_attrs, scope_members=list(beam_pair)
                 )
             except Exception as exc:
                 errors.append({"connection": f"30 {beam_pair}", "error": str(exc)})
@@ -576,6 +597,10 @@ def send_to_tekla(data: dict) -> dict:
         "verified_connections": len(connection_ids),
         "plate_materials_verified": bool(plate_policy) and bool(connection_ids) and not errors,
         "connection_ids": connection_ids,
+        "connection_manifest": connection_manifest,
+        "component_manifest_version": 1,
+        "member_manifest": [{"identifier": int(identifier.ID), "member": member} for member, identifier in inserted_members],
+        "model_path": str(model.GetInfo().ModelPath),
         "failed": len(errors),
         "errors": errors
     }
@@ -585,6 +610,9 @@ def run_a7_tekla_modeler(state: WorkflowState) -> WorkflowState:
     """
     Executes Agent A7: Connects to Tekla Structures via .NET and inserts physical 3D elements and details.
     """
+    if state.change_scope:
+        from agentic.state import fail_workflow
+        return fail_workflow(state, "A7", "Selected changes must use the scoped Tekla adapter; full-model cleanup is blocked.")
     ts = datetime.now().strftime("%H:%M:%S")
     state.current_agent = "A7"
     from agentic.state import fail_workflow

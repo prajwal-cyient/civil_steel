@@ -36,7 +36,7 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
         failures.append("STAAD evidence does not belong to the current frame and loads.")
 
     # Recheck source evidence instead of trusting previously cached PASS flags.
-    raw_frame_grade = grade_staad_results(state.staad_results, state.grid_config.get("col_height_mm", 5000))
+    raw_frame_grade = grade_staad_results(state.staad_results, state.grid_config.get("col_height_mm", 5000), state.run_policy)
     if not raw_frame_grade.passed:
         failures.append(f"STAAD source evidence is invalid or failed: {raw_frame_grade.summary}")
 
@@ -68,7 +68,7 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
             idea_agent.validate_calculation_check_coverage(result.get("check_summary", {}).get("summary", []))
         except idea_agent.IdeaStaticaJointError as exc:
             failures.append(f"Connection check coverage for '{jg_id}' is incomplete: {exc}")
-        if result.get("passed") is not True or result.get("simulation") or not grade_joint_check_summary(result.get("check_summary", {})).passed:
+        if result.get("passed") is not True or result.get("simulation") or not grade_joint_check_summary(result.get("check_summary", {}), state.run_policy).passed:
             failures.append(f"Connection source evidence for '{jg_id}' is missing, simulated, or failed.")
         try:
             verify_plate_material_evidence(result.get("plate_material_evidence"), plate_policy,
@@ -135,6 +135,7 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
 
     # Compute package integrity hash
     pkg_str = json.dumps({
+        "run_policy": state.run_policy,
         "grid": state.grid_config,
         "col_profile": state.active_column_profile,
         "beam_profile": state.active_beam_profile,
@@ -148,6 +149,7 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
 
     state.validation_report = {
         "passed": True,
+        "run_policy": state.run_policy,
         "package_hash": pkg_hash,
         "joint_groups_verified": len(validated_joint_groups),
         "connection_scope": scope,

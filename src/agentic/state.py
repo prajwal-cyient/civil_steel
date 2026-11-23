@@ -41,6 +41,8 @@ class WorkflowState(BaseModel):
 
     # A1 Inputs
     raw_input: Dict[str, Any] = Field(default_factory=dict)
+    run_policy: Dict[str, Any] = Field(default_factory=dict)
+    change_scope: Dict[str, Any] = Field(default_factory=dict)
     grid_config: Dict[str, Any] = Field(default_factory=dict)
     load_config: Dict[str, Any] = Field(default_factory=dict)
 

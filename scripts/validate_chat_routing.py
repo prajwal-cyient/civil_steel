@@ -20,6 +20,10 @@ async def validate(output):
         ("Show an unverified geometry preview of my current frame without invoking any desktop engineering applications.", "preview_structure"),
         ("Run STAAD frame analysis for my already validated selected structure. Do not design connections or publish.", "analyze_frame"),
         ("Calculate the connection designs in IDEA for the selected frame that has current passing STAAD evidence. Do not publish.", "design_connections"),
+        ("21X5 current input run", "run_complete_workflow"),
+        ("Run agentic workflow", "run_complete_workflow"),
+        ("Just run the current inputs", "run_complete_workflow"),
+        ("Run STAAD only for my selected validated frame.", "analyze_frame"),
     ]
     with tempfile.TemporaryDirectory() as directory:
         store = ChatStore(Path(directory) / "chat.db")
@@ -29,6 +33,9 @@ async def validate(output):
             store.save_session(session)
             turn = store.new_turn(session["id"], message)
             async def fake_engineering(selected, action, allow_native):
+                if action == 'run_complete_workflow':
+                    return {'status':'PAUSED_AT_GATE3', 'run_id':'run_mock_fixture',
+                            'notice':'MOCK_ONLY: no native software ran; fixture awaits manual approval.'}
                 return {"status": "MOCK_ONLY", "action": action, "notice": "Routing fixture only: no engineering software ran."}
             async def fixture_status(run_id: str = ""):
                 return {"status": "READY", "run_id": "run_mock_fixture", "agents": {"A3": {"status": "PASSED"}}, "frame_grade": {"passed": True}, "notice": "MOCK_ONLY input evidence"}
@@ -46,7 +53,7 @@ async def validate(output):
             names = [e["tool"] for e in turn["events"] if e["type"] == "tool_started"]
             records.append({"kind": "REAL LLM; MOCKED engineering, not live FEA", "message": message,
                             "expected_tool": expected, "selected_tools": names,
-                            "passed": expected in names and turn["status"] == "COMPLETED",
+                            "passed": expected in names and turn["status"] == ('AWAITING_APPROVAL' if expected == 'run_complete_workflow' else 'COMPLETED'),
                             "status": turn["status"], "error": turn["error"], "events": turn["events"], "assistant": turn["assistant"]})
             print(json.dumps({k: v for k, v in records[-1].items() if k not in ("events", "assistant")}), flush=True)
     output.parent.mkdir(parents=True, exist_ok=True)

@@ -60,10 +60,11 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         model = ControlledModel(call("get_project_context"), call("update_project_inputs", {"grid_updates": {"n_long_bays": 10}}, "second"), AIMessage(content="Updated to 10 longitudinal bays; no analysis performed."))
         turn = await self.respond(model, "Change longitudinal bays to 10")
         self.assertEqual(turn["status"], "COMPLETED")
-        self.assertEqual(self.store.session(self.session["id"])["project_input"]["grid"]["n_long_bays"], 10)
+        self.assertEqual(self.store.session(self.session["id"])["project_input"]["grid"]["n_long_bays"], 8)
+        self.assertEqual(turn["outcome"], "CHANGE_APPROVAL_REQUIRED")
         outputs = [json.loads(m.content) for m in model.messages if isinstance(m, ToolMessage)]
-        self.assertEqual(len(outputs), 2)
-        self.assertEqual(outputs[1]["project_input"]["grid"]["n_long_bays"], 10)
+        self.assertEqual(len(outputs), 1)
+        self.assertEqual(turn["change_proposals"][0]["candidate"]["grid"]["n_long_bays"], 10)
         self.assertEqual([e["tool"] for e in turn["events"] if e["type"] == "tool_completed"], ["get_project_context", "update_project_inputs"])
         self.assertEqual(self.store.history(self.session["id"])[0]["assistant"], turn["assistant"])
 
@@ -85,12 +86,12 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(e["type"] == "tool_error" and "not enabled" in e["error"] for e in turn["events"]))
 
     async def test_unknown_tool_and_duplicate_mutation_are_rejected(self):
-        model = ControlledModel(call("execute_shell"), call("update_project_inputs", {"grid_updates": {"n_long_bays": 9}}), call("update_project_inputs", {"grid_updates": {"n_long_bays": 11}}, "duplicate"), AIMessage(content="Unsupported actions stopped."))
-        turn = await self.respond(model)
+        model = ControlledModel(call("execute_shell"), call("set_next_run_policy", {"run_policy": {}}), call("set_next_run_policy", {"run_policy": {}}, "duplicate"), AIMessage(content="Unsupported actions stopped."))
+        turn = await self.respond(model, "Set the next workflow rules to defaults")
         errors = [e["error"] for e in turn["events"] if e["type"] == "tool_error"]
         self.assertTrue(any("Unregistered" in e for e in errors))
         self.assertTrue(any("Duplicate" in e for e in errors))
-        self.assertEqual(self.store.session(self.session["id"])["project_input"]["grid"]["n_long_bays"], 9)
+        self.assertEqual(self.store.session(self.session["id"])["project_input"]["grid"]["n_long_bays"], 8)
 
     async def test_model_error_and_credentials_are_not_exposed(self):
         class Broken(ControlledModel):
@@ -112,7 +113,12 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
     async def test_input_changes_invalidate_selected_run_and_reject_forged_results(self):
         self.session["run_id"] = "run_12345678"
         self.store.save_session(self.session)
-        await self.respond(ControlledModel(call("update_project_inputs", {"grid_updates": {"n_trans_bays": 6}}), AIMessage(content="New generation needed.")))
+        proposed = await self.respond(ControlledModel(call("update_project_inputs", {"grid_updates": {"n_trans_bays": 6}}), AIMessage(content="New generation needed.")), "Change transverse bays to 6")
+        self.assertEqual(self.store.session(self.session["id"])["run_id"], "run_12345678")
+        plan = proposed["change_proposals"][0]
+        plan = self.store.transition_plan(plan["id"], self.session["id"], "PENDING", "EXECUTING")
+        approved = self.store.new_turn(self.session["id"], "Apply approved project change")
+        await ChatRuntime(self.store).execute_approved(approved, plan, False)
         self.assertIsNone(self.store.session(self.session["id"])["run_id"])
         raw = {"grid": {"n_long_bays": 8}, "frame_grader_result": {"passed": True}}
         self.assertNotIn("frame_grader_result", project_input(raw))
@@ -226,6 +232,51 @@ class ChatApiTests(unittest.TestCase):
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             self.assertEqual(self.client.get('/api/v2/chat/config').json()["enabled"], False)
             self.assertEqual(self.client.post('/api/v2/chat/messages', json={"message":"Hi"}).status_code, 503)
+
+    def test_running_turn_follows_each_current_candidate_before_tool_completion(self):
+        workflows = SqliteWorkflowStore(str(Path(self.temp.name) / 'runs.db'))
+        session = self.store.session()
+        turn = self.store.new_turn(session['id'], 'Generate, analyze and check connections')
+        turn['run_id'] = 'run_11111111'  # Previous completed tool; still stale during the next action.
+        self.store.save_turn(turn)
+        with patch.object(self.module, 'WORKFLOW_STORE', workflows):
+            for number, agent in enumerate(('A3', 'A4', 'A5', 'A6'), 2):
+                run_id = 'run_' + str(number) * 8
+                workflows.save_state(WorkflowState(run_id=run_id, status='RUNNING', current_agent=agent))
+                session['run_id'] = run_id
+                self.store.save_session(session)
+                response = self.client.get('/api/v2/chat/turns/' + turn['id']).json()
+                self.assertEqual(response['run_id'], run_id)
+                self.assertEqual(response['progress']['run_id'], run_id)
+                self.assertEqual(response['progress']['current_agent'], agent)
+        self.assertEqual(self.store.turn(turn['id'])['run_id'], 'run_11111111',
+                         'Polling must not rewrite historical tool evidence.')
+
+    def test_cleared_inputs_do_not_reuse_a_running_turns_previous_candidate(self):
+        session = self.store.session()
+        turn = self.store.new_turn(session['id'], 'Change inputs before generation')
+        turn['run_id'] = 'run_11111111'
+        self.store.save_turn(turn)
+        session['run_id'] = None
+        self.store.save_session(session)
+        response = self.client.get('/api/v2/chat/turns/' + turn['id']).json()
+        self.assertIsNone(response['run_id'])
+        self.assertIsNone(response['progress'])
+
+    def test_completed_turn_keeps_its_result_when_the_session_selects_another_run(self):
+        workflows = SqliteWorkflowStore(str(Path(self.temp.name) / 'runs.db'))
+        session = self.store.session()
+        turn = self.store.new_turn(session['id'], 'Previous calculation')
+        turn.update(status='COMPLETED', run_id='run_11111111')
+        self.store.save_turn(turn)
+        session['run_id'] = 'run_22222222'
+        self.store.save_session(session)
+        workflows.save_state(WorkflowState(run_id='run_11111111', status='READY', current_agent='A4'))
+        workflows.save_state(WorkflowState(run_id='run_22222222', status='RUNNING', current_agent='A5'))
+        with patch.object(self.module, 'WORKFLOW_STORE', workflows):
+            response = self.client.get('/api/v2/chat/turns/' + turn['id']).json()
+        self.assertEqual(response['run_id'], 'run_11111111')
+        self.assertEqual(response['progress']['current_agent'], 'A4')
 
     def test_saved_sessions_rename_and_complete_history_survive_new_chat(self):
         original = self.client.post('/api/v2/chat/sessions').json()

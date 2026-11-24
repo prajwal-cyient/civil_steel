@@ -73,3 +73,6 @@ data/*.db
 
 generated_grid*.json
 analysis_output*.json
+
+# Per-run engineering evidence and native model snapshots
+/store output run/

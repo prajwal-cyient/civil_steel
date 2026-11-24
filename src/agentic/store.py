@@ -86,12 +86,14 @@ class SqliteWorkflowStore:
     def save_state(self, state: WorkflowState) -> WorkflowState:
         """Saves or updates a WorkflowState record atomically."""
         now_str = monotonic_now_iso()
-        state_dict = state.model_dump()
-        state_json = json.dumps(state_dict)
 
         with self._lock:
-            self._cache[state.run_id] = state
             with self._connection() as conn:
+                from agentic.run_archive import guarded, prepare_archive
+                existing = conn.execute('SELECT created_at FROM workflow_runs WHERE run_id=?', (state.run_id,)).fetchone()
+                guarded(state, prepare_archive, self.db_path, existing['created_at'] if existing else now_str)
+                state_json = json.dumps(state.model_dump())
+                self._cache[state.run_id] = state
                 conn.execute("""
                     INSERT INTO workflow_runs (run_id, status, current_agent, created_at, updated_at, state_json)
                     VALUES (?, ?, ?, ?, ?, ?)
@@ -109,6 +111,8 @@ class SqliteWorkflowStore:
                     state_json
                 ))
                 conn.commit()
+        from agentic.run_archive import guarded, checkpoint
+        guarded(state, checkpoint)
         return state
 
     def get_state(self, run_id: str) -> Optional[WorkflowState]:

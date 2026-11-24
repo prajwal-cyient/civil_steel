@@ -1,266 +1,559 @@
-# civil-steel-standard-web
-Web App to design Steel Standard structures in Tekla, Staad.Pro and Idea Statica
+# Civil Steel Standard - Agentic Workflow
 
-## Agentic workflow checks
+A Windows application for radiator-support steel-frame design using **STAAD.Pro**, **IDEA StatiCa Connection**, and **Tekla Structures**. A browser dashboard and engineering chat feed a controlled A1-A8 pipeline that generates geometry, runs calculations, validates evidence, publishes a model and prepares a package for **manual engineer sign-off**.
 
-Live runs stop when an application call fails, STAAD results are incomplete,
-or a connection check cannot be corrected using exposed numeric template
-parameters. Live failures are never replaced with simulated passing results.
-Connection retries recalculate the changed group and reuse unchanged passing
-groups. All strength envelopes must supply actual member properties and loads;
-sample loads and unrelated connection templates are not substituted.
+LangGraph controls execution. Optional Deep Agents add LLM planning and review around the same engineering tools; they do not replace native calculations or graders.
 
-The UI displays saved agent progress while a run is executing. Only one agentic
-run can use the desktop tools at a time. A failed run cannot be signed off.
-The final review gate still requires an engineer; automated checks do not
-establish engineering acceptance by themselves.
+> Live operations modify the open engineering models. Use designated working models. The application is intended for a controlled local/RDP desktop; authentication is not implemented.
 
-The server loads `.env` from the repository without overriding existing process
-environment variables. `PLANT_HOST` defaults to loopback and `PLANT_PORT` defaults
-to 8080. A separate STA-initialized worker owns each run; the UI's **Stop current
-run** button terminates that worker. `PLANT_RUN_TIMEOUT_SECONDS` and
-`PLANT_AGENT_TIMEOUT_SECONDS` bound the run and stalled calculation time.
-IDEA's solve budget is the greater of the per-effect agent budget and
-`PLANT_IDEA_CALCULATION_TIMEOUT_SECONDS` (default 600 seconds), capped by the
-total run budget. Services with calculation-job endpoints are polled and receive
-a cancellation request on timeout. Older services use a bounded synchronous
-request; its timeout does not confirm that their native computation stopped.
-On Windows, readiness and IDEA attachment also wait briefly for native solver
-cleanup and reject a new operation while an IDEA-owned `k2fem64.exe` is active.
-An IDEA request with several load effects receives the per-effect allowance
-multiplied by the effect count, capped by the total run limit.
+## Contents
 
-`PLANT_AGENT_MODEL`, `OPENAI_API_KEY`, and `OPENAI_BASE_URL` configure the optional
-GPT correction advisor. It selects only prevalidated candidate IDs when a
-failure is severe or repeated. Every proposal is rechecked and recalculated.
-Network failures and invalid proposals fall back to the deterministic candidate;
-`PLANT_MODEL_CALL_LIMIT` caps calls. Set `PLANT_LLM_ENABLED=false` to disable it.
-Credentials are never included in workflow state or browser responses.
+- [Architecture](#architecture)
+- [Installation](#installation)
+- [Start and stop services](#start-and-stop-services)
+- [Configuration](#configuration)
+- [A1-A8 workflow](#a1-a8-workflow)
+- [Dashboard and chat](#dashboard-and-chat)
+- [Rules for one run](#rules-for-one-run)
+- [API reference](#api-reference)
+- [Outputs and storage](#outputs-and-storage)
+- [Repository structure](#repository-structure)
+- [Testing](#testing)
+- [Troubleshooting](#troubleshooting)
 
-### Engineering chat
+## Architecture
 
-The radiator-support page includes an **Engineering chat** panel with saved
-conversations and document attachments. Set `PLANT_CHAT_ENABLED=true` and
-configure the backend model, endpoint and API key. Chat uses its own switch;
-`PLANT_LLM_ENABLED=false` and `PLANT_DEEP_AGENTS_ENABLED=false` still select
-the deterministic A1-A8 workflow without disabling conversational tool selection.
-
-Chat calls the existing guarded stages and retains their graders, correction
-loops and human acceptance gate. While a chat turn is calculating, conflicting
-manual actions stay locked, including when another conversation is opened.
-An active worker's intermediate geometry and results update the main viewer.
-General requests such as "21x5 current input run" or "run agentic workflow"
-use the complete A1-A8 path, including Tekla publication. Explicit stage-only
-requests retain their narrower scope. At A8, chat waits for the dashboard's
-manual **Accept & Sign Off** action; it records completion after approval and
-then accepts further messages in the same conversation. Waiting survives refresh.
-Unverified previews clear prior calculation/sign-off displays and cannot be
-sent directly through the manual native-tool buttons, including after refresh.
-See [CHAT_INTERFACE.md](CHAT_INTERFACE.md) for API and attachment details.
-
-### LangSmith tracing
-
-The existing LangChain chat/tools and LangGraph workflow use LangSmith's SDK
-integration. Configure these backend `.env` values and restart the idle API:
-
-```env
-LANGSMITH_TRACING=true
-LANGSMITH_PROJECT=plant-engineering
-LANGSMITH_API_KEY=<your-private-LangSmith-key>
+```mermaid
+flowchart LR
+    U[Dashboard or chat] --> API[FastAPI server]
+    API --> C[One desktop job at a time]
+    C --> W[Separate Windows STA worker]
+    W --> G[LangGraph A1-A8 and correction loops]
+    G --> N[STAAD / IDEA / Tekla]
+    N --> G
+    G --> S[SQLite and per-run archive]
+    S --> API
+    API --> V[Live viewer, results and timers]
+    V --> H[Manual engineer sign-off]
+    H --> API
 ```
 
-The API worker inherits these settings. Traces can include model prompts,
-responses, tool inputs/outputs and workflow stage timing. Tracing is independent
-of the A1-A8 LLM/Deep Agents switches and does not change engineering criteria.
-Keep the real key in `.env`; `.env.example` intentionally leaves it blank.
-Some tracing keys permit ingestion but not project listing or trace read-back.
-
-### Deep Agents execution for A1-A8
-
-Install `requirements.txt` in the project virtual environment and set
-`PLANT_DEEP_AGENTS_ENABLED=true` in the backend `.env`. Configure
-`PLANT_AGENT_MODEL`, `OPENAI_API_KEY` and `OPENAI_BASE_URL` for the intended
-OpenAI-compatible deployment. The key stays on the backend; do not paste it
-into the form or commit it. GPT-6 tool calling uses the Responses API with
-storage disabled. The older correction advisor retains its separate call budget.
-
-When enabled, every A1-A8 stage runs a real `deepagents.create_deep_agent`
-planning/tool/review cycle inside the existing LangGraph sequence. Each stage
-can plan with `write_todos` and execute its own approved engineering tool once.
-The worker runs these tools on its STA thread, including async STAAD calls.
-Deep Agents cannot edit inputs or files, invoke another stage, repeat a native
-tool, override graders, or sign off Gate 3. A model error, skipped tool or
-duplicate execution request fails the run; there is no silent legacy fallback.
-The existing frame/joint graders and Loops A/B/C remain authoritative.
-
-`PLANT_DEEP_AGENT_MODEL_CALL_LIMIT` defaults to 64 model requests per run;
-each stage visit also has a four-request cap and bounded request timeouts.
-`deep_agent_model_call_count` and `deep_agent_events` in saved workflow JSON
-record actual requests, token usage, tool executions, stage outcomes and reviews.
-Repeated stage visits produce separate audit records. A8 includes an execution
-summary and still pauses for engineer acceptance. Set
-`PLANT_DEEP_AGENTS_ENABLED=false` to explicitly select the deterministic
-workflow. The SDK integration tests use the real Deep Agents graph with a
-controlled chat model and mocked engineering tools; they are distinct from
-live FEA and live model verification.
-
-The default `poc2_automation` mode uses the existing reference application's
-8 load combinations and 3 envelopes automatically when the form supplies no
-custom combinations. A1 does not require a new rubric file. The A1?A8 analyzers,
-graders, correction loops, failure handling and result checks remain active.
-Connection scope follows the senior project's saved handoff: inner longitudinal
-and combined longitudinal/transverse families receive IDEA calculations; other
-families use the standard Tekla components (1004, 144, 20 and 30). Available
-double-longitudinal templates map explicitly to their inner families. Required
-IDEA templates are checked during generation. The final package distinguishes
-IDEA-checked families from standard details; standard details are never recorded
-as separate IDEA passes. `S355JR` uses the senior templates' `S 355` static-analysis
-catalogue entry in this mode, retaining the requested Tekla material and recording
-the catalogue mapping in the package.
-
-Explicit `load_configuration.load_combinations` or a JSON file selected by
-`PLANT_LOAD_COMBINATIONS_FILE` override the reference defaults. The file contains
-a `combinations` array; entries have `name`, `envelope`, `factors`, and optionally
-`envelope_id`. Custom combinations are validated. `reviewed_engineering` mode
-retains mandatory explicit criteria and early template coverage checks. Reference
-procedure defaults are recorded as `reference_procedure`; this does not label
-them as an independently approved project rubric.
-
-`POST /api/v2/agentic/retry-publication/{run_id}` retries a failed A7 handoff in
-a new tracked run. A6 first rechecks the original STAAD/IDEA evidence and template
-hashes; changed or failed evidence requires a complete new analysis. The failed
-source run is preserved. A7 verifies typed attributes and saves the model before
-the package reaches final engineer review.
-
-`PLANT_TEMPLATE_DIRECTORY` selects the template folder (default:
-`sample_projects`). The live IDEA adapter checks actual members, applied
-parameters and physical check limits. Missing templates are not replaced with
-unrelated connections or simulated passing results. IDEA summary values are
-utilization percentages, not raw strain percentages; see the
-[official result contract](https://developer.ideastatica.com/docs/api/connection-api/connection_api_concepts.html).
+| Component | Responsibility |
+|---|---|
+| Static frontend | HTML, JavaScript and Three.js dashboard; no React build or separate Node server. |
+| FastAPI | Request validation, chat tools, run dispatch, progress and approval endpoints. |
+| Worker | Disposable process owning the STA/COM thread required by native adapters. |
+| LangGraph | Sequential agents, correction routing and final approval pause. |
+| Optional LLM | Conversational tool selection, bounded Deep Agents review and supported correction advice. |
+| Storage | Saved run/chat state, logs, agent timings and per-run evidence archives. |
 
 ## Installation
 
-Prerequisites (Windows):
-- Python 3.10 or newer, on `PATH`. Get it from [python downloads](https://www.python.org/downloads/windows/). Preferred [python stable release 3.14](https://www.python.org/ftp/python/3.14.10/python-3.14.10-amd64.exe). Install for your own user id if you do not have admin access.
-- Tekla Structures, STAAD.Pro and IDEA StatiCa Connection installed and
-  licensed. Each tool is only needed for its own "Send to ..." button; the
-  server starts without them.
+### Prerequisites
 
-1. Create and activate a virtual environment in the project folder
-   (Command Prompt):
+| Requirement | Notes |
+|---|---|
+| Windows engineering desktop/RDP | Run the API and native applications in the same interactive user/session. |
+| 64-bit Python **3.11+** | Required by pinned Deep Agents/LangChain packages. Check native SDK compatibility; the development installation uses Python 3.14. |
+| STAAD.Pro | Installed, licensed, with a **saved analytical `.std` model** open. |
+| Tekla Structures | Installed, licensed, with a saved working model and matching Open API DLLs. |
+| IDEA StatiCa Connection REST | Running service and compatible Python client product release. |
+| Authorized model credentials | Needed for chat, Deep Agents or correction advice. Deterministic dashboard execution does not require LLM calls. |
+| Node.js / Playwright | Optional development tools for frontend/browser tests. |
 
-   ```bat
-   cd path\to\civil-steel-standard-web
-   python -m venv .venv
-   .venv\Scripts\activate.bat
-   ```
+### Create the Python environment
 
-   In PowerShell, activate with `.venv\Scripts\Activate.ps1` instead. If
-   script execution is blocked, run
-   `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
+Use PowerShell. The repository is private; use your authorized Git credentials.
 
-2. Install the packages into the venv:
-
-   ```bat
-   python -m pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-
-   `openstaadpy` is not on PyPI; it ships with STAAD.Pro. Install it into the
-   venv from the STAAD.Pro installation (adjust the path and version to your
-   install):
-
-   ```bat
-   pip install "C:\Program Files\Bentley\Engineering\STAAD.Pro 2025\STAAD\OpenSTAADPy\Setup\openstaadpy-25.0.1.1.tar.gz"
-   ```
-
-   `ideastatica-connection-api` must match the installed IDEA StatiCa product
-   release (for example, 26.0.x for a 26.0 service); edit its pin in
-   `requirements.txt` if yours differs. Tekla has no
-   pip package: its Open API DLLs are loaded through `pythonnet` from
-   `C:\TeklaStructures\2025.0\bin`, or from the `TEKLA_BIN_PATH` environment
-   variable if set.
-
-3. Start the web server:
-
-   ```bat
-   start_server.bat
-   ```
-
-   The script activates `.venv` itself if it exists, so it can also be
-   started by double-clicking it.
-
-   Then open http://localhost:8080/radiator_support in your browser.
-
-Before using the integrations, open Tekla Structures with a model and
-STAAD.Pro, and start IDEA StatiCa's `IdeaStatiCa.ConnectionRestApi.exe`
-(default URL `http://localhost:5000`, override with `IDEA_STATICA_BASE_URL`).
-
-## Cleaning open models
-
-These utilities are **destructive** and save changes automatically. Back up
-important models first. Importing either module has no application side effects;
-calling its synchronous `main()` performs cleanup without prompting.
-
-```python
-from common.tekla_common import clean_tekla
-from common.staad_common import clean_staad
-
-clean_tekla()
-clean_staad()
+```powershell
+git clone --branch chat_interface_agenticworkflow https://github.com/SiddharthSo1210/civil-steel-standard-agentic.git agentic-flow
+Set-Location .\agentic-flow
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-They can also be run separately with `python src/common/tekla_common.py --clean` or
-`python src/common/staad_common.py --clean`.
+If activation is blocked, use `.\.venv\Scripts\python.exe` directly instead of `python`; activation is optional. Keep an existing host's `.env`, models and virtual environment rather than replacing them with another machine's copies.
 
-- [tekla_common.py](./src/common/tekla_common.py) uses the existing Tekla connection setup
-  (`pythonnet`, `TEKLA_BIN_PATH`). It deletes all enumerated model objects except
-  grids (including radial grids), grid surfaces/planes and Tekla's `DefaultGroup`
-  load group (reported explicitly, since Tekla does not allow deleting it).
-  Components are
-  connections/details that can generate parts, bolts and welds; these are removed
-  along with the structural objects. It commits and saves the open model.
-  It does not remove drawings, catalogs, attributes or project-directory files.
-- [staad_common.py](./src/common/staad_common.py) uses `openstaadpy` and requires an open,
-  saved analytical `.std` model with no analysis running. It saves current edits,
-  creates a unique `*.before-cleanup-*.std.bak` backup beside the input, opens
-  a temporary copy of [empty_staad_project.std](./sample_projects/empty_staad_project.std)
-  and waits up to 30 seconds for STAAD's asynchronous file opening to make it
-  active and empty. It then replaces the original input
-  with that template, reopens the original path, verifies it and saves. The saved
-  input must match the template's tokens (including its title and job information).
-  This clears geometry, loads, supports,
-  materials/properties, groups, units, original job information, and analysis/design
-  commands. Physical models are rejected. External result files and other
-  project-directory files are not deleted; the backup contains the input only.
+### Install OpenSTAADPy separately
 
-Connection, deletion, verification and save errors propagate to the caller.
-Cleanup is not transactional: on failure, inspect the open model before retrying;
-for STAAD, the printed backup path holds the saved pre-cleanup input. If switching
-back to the original file fails, the staging `.std` is retained and its path printed.
+`openstaadpy` ships with STAAD.Pro and is not installed by `requirements.txt`. Adjust this example to the installed version:
 
-## STAAD results viewer
+```powershell
+python -m pip install "C:\Program Files\Bentley\Engineering\STAAD.Pro 2025\STAAD\OpenSTAADPy\Setup\openstaadpy-25.0.1.1.tar.gz"
+```
 
-After **Send to STAAD**, the 3D preview is replaced with the returned
-`member_data_by_id` geometry in STAAD's Y-up coordinate system. Member colours
-represent their `class`; pyramids mark `support_nodes`. The load-case selector
-combines the cases from all load envelopes and displays their `load_case_title`.
-The STAAD view starts rotated 180 degrees horizontally, with column indices
-shown along all four edges of the ground grid, offset beyond the support icons.
-Longitudinal indices are numeric; transverse (Y) indices use spreadsheet-style
-letters: A through Z, then AA, AB, and so on, in both preview and STAAD views.
+Current pins include `deepagents==0.7.39`, `langchain-openai==1.8.0`, and `ideastatica-connection-api==26.0.5.1427`. A2 checks the IDEA service/client **major and minor release**, not an exact build match. Tekla DLLs are loaded through `pythonnet` from `TEKLA_BIN_PATH`.
 
-Hover over a member for its metadata, name-derived type, start/end forces and
-any support reactions for the selected case. Hover over a support joint for its
-reactions. Force and moment units are taken from the response. Click a joint to
-highlight the member ends reported by `joint_member_ends`; click empty space to
-clear the selection. Generating a new structure resets the STAAD view.
+### Configure the host
 
-In the left pane, **Idea Statica Connection Design** lists the returned
-`joint_groups`. Selecting a group highlights all its joints and connected
-members. Selecting the placeholder clears the highlighting; clicking a joint
-replaces the group selection with that individual joint. The dropdown resets
-when a new structure is generated and is disabled when no groups are available.
+Copy the template only when `.env` does not already exist:
 
-Run the results UI unit tests with `node --test tests\test_staad_results.cjs`.
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+Edit `.env` with host paths, execution switches and private credentials. It is ignored by Git. Prepare the native applications below, then start the API.
+
+## Start and stop services
+
+These executable paths are **examples** for STAAD 2025, Tekla 2025 and IDEA 26.0. Use installed shortcuts if they supply environment/licensing arguments. Avoid duplicate services.
+
+### Native applications - open once
+
+```powershell
+# Open a saved analytical .std model; no analysis should already be running.
+Start-Process -FilePath "C:\Program Files\Bentley\Engineering\STAAD.Pro 2025\STAAD\Bentley.Staad.exe"
+
+# Select the appropriate Tekla environment and open a saved working model.
+Start-Process -FilePath "C:\TeklaStructures\2025.0\bin\TeklaStructures.exe"
+```
+
+### Terminal 1 - IDEA REST service
+
+```powershell
+& "C:\Program Files\IDEA StatiCa\StatiCa 26.0\IdeaStatiCa.ConnectionRestApi.exe"
+```
+
+Keep this terminal open for diagnostics. `IDEA_STATICA_BASE_URL` normally points to `http://localhost:5000`; changing it changes the client destination, not the native service listener. Read-only check from another terminal:
+
+```powershell
+Invoke-RestMethod "http://localhost:5000/api/4/clients/idea-service-version"
+```
+
+### Terminal 2 - API and dashboard
+
+From the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe -u src\server.py --port 8060
+```
+
+| URL | Purpose |
+|---|---|
+| <http://localhost:8060/radiator_support> | Dashboard and engineering chat |
+| <http://localhost:8060/docs> | Interactive request/response schemas |
+| <http://localhost:8060/openapi.json> | Generated API contract |
+
+The API launches its own workers. No separate frontend server, LangGraph daemon or queue service is required. `--port` overrides `PLANT_PORT`; the template uses `8060`, while the code fallback is `8080`. `start_server.bat` works too, but its printed URL is hardcoded to 8080.
+
+### Stop and restart
+
+Let an active run finish, or use **Stop current run** before maintenance. Press **Ctrl+C** in the API terminal, then rerun the start command. Use **Ctrl+F5** after UI updates. Python and `.env` updates require an API restart; healthy native applications need not restart.
+
+If the server terminal is unavailable, stop the listener on 8060:
+
+```powershell
+Get-NetTCPConnection -LocalPort 8060 -State Listen -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique |
+    ForEach-Object { Stop-Process -Id $_ -Force }
+```
+
+Forced server termination is not the normal way to cancel native calculations.
+
+## Configuration
+
+`.env` loads from the repository root. Existing process environment variables normally take precedence. Explicit `.env` tracing flags are an exception: startup aligns `LANGSMITH_TRACING` and `LANGSMITH_TRACING_V2` with the file. New workers inherit server settings.
+
+### Execution switches
+
+| Setting | `false` | `true` |
+|---|---|---|
+| `PLANT_CHAT_ENABLED` | Chat disabled; dashboard/API available. | Conversational tools enabled when credentials are configured. |
+| `PLANT_LLM_ENABLED` | Correction advice and Deep Agents model access disabled. | Allows correction advice and Deep Agents model access. |
+| `PLANT_DEEP_AGENTS_ENABLED` | Direct engineering functions inside LangGraph. | Bounded Deep Agents wrapper for each stage; also requires LLM enabled and credentials. |
+| `PLANT_LIVE_ENGINEERING_ENABLED` | Blocks live readiness/dispatch; saved results and explicit unverified preview remain available. | Allows native operations subject to checks. |
+| `LANGSMITH_TRACING` | Tracing disabled when explicitly set in `.env`. | SDK tracing to the configured LangSmith project/key. |
+
+**Deterministic A1-A8, with optional LLM-powered chat:**
+
+```env
+PLANT_WORKFLOW_MODE=poc2_automation
+PLANT_DEEP_AGENTS_ENABLED=false
+PLANT_LLM_ENABLED=false
+PLANT_CHAT_ENABLED=true
+```
+
+Set `PLANT_CHAT_ENABLED=false` too if no conversational model calls are wanted. Chat's model is independent of the stage/advisor switches.
+
+**Deep Agents:**
+
+```env
+PLANT_WORKFLOW_MODE=poc2_automation
+PLANT_DEEP_AGENTS_ENABLED=true
+PLANT_LLM_ENABLED=true
+PLANT_CHAT_ENABLED=true
+PLANT_AGENT_MODEL=<model-or-deployment-supported-by-your-endpoint>
+OPENAI_BASE_URL=<your-OpenAI-compatible-base-URL>
+OPENAI_API_KEY=<your-private-key>
+```
+
+Chat cannot switch the worker engine just by mentioning Deep Agents. The environment selects it. Enabling Deep Agents while disabling LLM access fails stage execution; it does not silently fall back.
+
+### Settings reference
+
+The table distinguishes template values from code fallbacks where they differ.
+
+| Setting | Meaning / starting value |
+|---|---|
+| `PLANT_HOST`, `PLANT_PORT` | `127.0.0.1`; template port `8060`, fallback `8080`. |
+| `PLANT_AGENT_MODEL`, `OPENAI_BASE_URL`, `OPENAI_API_KEY` | Authorized tool-calling model, endpoint and secret. Template model names must be valid for your deployment. |
+| `TEKLA_BIN_PATH` | Tekla DLL folder; template `C:/TeklaStructures/2025.0/bin`. |
+| `IDEA_STATICA_BASE_URL` | REST endpoint; `http://localhost:5000`. |
+| `PLANT_TEMPLATE_DIRECTORY` | Optional template folder; fallback `sample_projects/`. |
+| `PLANT_LOAD_COMBINATIONS_FILE` | Optional JSON with `combinations`; used when request combinations are absent. |
+| `STAAD_SECTION_DATABASE_PATH` | Optional explicit section-database location; otherwise discovered from installed software. |
+| `PLANT_MAX_FRAME_REVISIONS`, `PLANT_MAX_CONNECTION_REVISIONS` | Template `2` each; fallback `3` each. Loop C defaults to `2` in state, not `.env`. |
+| `PLANT_AGENT_TIMEOUT_SECONDS`, `PLANT_RUN_TIMEOUT_SECONDS` | Progress budget `180`; total worker budget `3600` seconds. |
+| `PLANT_IDEA_CALCULATION_TIMEOUT_SECONDS` | Minimum IDEA allowance; fallback `600`. Actual budget: `min(run_timeout, max(minimum, agent_timeout * effect_count))`. |
+| `PLANT_MODEL_CALL_LIMIT` | Correction-advisor budget; `6`. |
+| `PLANT_DEEP_AGENT_MODEL_CALL_LIMIT` | `64` model requests per run; each stage visit also has a four-request cap. |
+| `PLANT_CHAT_MODEL_CALL_LIMIT`, `PLANT_CHAT_TOOL_CALL_LIMIT` | `10` model / `12` tool calls per turn. |
+| `PLANT_CHAT_TOKEN_LIMIT`, `PLANT_CHAT_CONTEXT_CHAR_LIMIT` | `64000` reported tokens / `60000` context characters. |
+| `PLANT_CHAT_REQUESTS_PER_MINUTE`, `PLANT_CHAT_GLOBAL_REQUESTS_PER_MINUTE` | `30` per session / `120` globally. |
+| `PLANT_CHAT_CONCURRENT_REQUESTS` | `4` chat turns; native desktop workflows remain serialized. |
+| `PLANT_CHAT_INPUT_COST_PER_MILLION`, `PLANT_CHAT_OUTPUT_COST_PER_MILLION` | Optional usage prices; blank means no cost estimate. Backend usage remains stored; its chat panel is hidden. |
+| `PLANT_CHAT_DATABASE_PATH`, `PLANT_RUNS_DATABASE_PATH` | Optional alternate stores; blank uses `data/chat.db`, `data/runs.db`. |
+| `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` | Tracing key and project; template project `plant-engineering`. |
+
+Reserved settings do not implement additional behaviour: `PLANT_ENVIRONMENT`, `PLANT_INITIALIZE_DATABASE`, `PLANT_WORKER_ID`, `PLANT_AUTH_ENABLED`, `PLANT_ENGINEER_TOKEN`, `PLANT_APPROVER_TOKEN`, `PLANT_ANALYSIS_APPROVAL_MODE`, `PLANT_PUBLICATION_APPROVAL_MODE`. They do not add authentication or bypass final approval.
+
+LangSmith traces can include prompts, responses and tool data. Use an authorized destination; never paste credentials into chat. Check actual trace delivery in the configured dashboard after a request.
+
+### Workflow modes
+
+| `PLANT_WORKFLOW_MODE` | Implemented behaviour |
+|---|---|
+| `poc1_automation` | Reference procedure and standard connection details, still within the A1-A8 graph. |
+| `poc2_automation` | Default reference basis with existing graders and supported correction/validation loops. |
+| `reviewed_engineering` | Explicit load combinations and IDEA template coverage for every required joint family. Standard details do not substitute for individual IDEA verification. |
+
+Both reference modes share the existing graph and checks; mode names do not select the LLM engine or disable correction loops.
+
+Reference modes use **8 combinations and 3 envelopes** when custom combinations are absent. Request combinations take precedence over the optional file. Reference defaults reproduce the existing procedure; they do not independently establish project-code compliance.
+
+## A1-A8 workflow
+
+| Agent | Responsibility | Output / decision |
+|---|---|---|
+| **A1 - Requirements Validator** | Validate grid and run policy; resolve loads/combinations. | Normalized brief, active profiles and thresholds. |
+| **A2 - Readiness Checker** | Check saved STAAD/Tekla models, IDEA service/SDK and templates. | Readiness evidence or early failure. |
+| **A3 - Frame Generator** | Generate physical and split analytical geometry; check native profile dimensions and templates. | Frame candidate and joint-family scope. |
+| **A4 - STAAD Analyzer** | Run structural analysis and grade ratios/displacements. | Results, frame grade or Loop A correction. |
+| **A5 - IDEA Analyzer** | Calculate required connection families and grade supported corrections. | Connection evidence, joint grades or Loop B correction. |
+| **A6 - Package Validator** | Independently recheck grades, signatures, materials and coverage. | Verified package/hash or Loop C recovery. |
+| **A7 - Tekla Modeler** | Publish members/connections, read back attributes and save. | Publication results and member/component manifests. |
+| **A8 - Reporting and Acceptance** | Assemble the package and pause for review. | `PAUSED_AT_GATE3`; manual acceptance sets `COMPLETED`. |
+
+```mermaid
+flowchart LR
+    A1 --> A2 --> A3 --> A4 --> A5 --> A6 --> A7 --> A8
+    A4 -- Loop A: frame correction --> A3
+    A5 -- Loop B: connection correction --> A5
+    A6 -- Loop C: frame recovery --> A3
+    A6 -- Loop C: connection recovery --> A5
+    A8 --> Review[Manual Accept & Sign Off]
+```
+
+- Execution is sequential. A controller/lock permits one agentic desktop job at a time.
+- Corrections need verified mappings and exposed parameters. Unsupported localization stops the run instead of guessing changes to several details.
+- Failed native checks are never replaced with simulated passes. Unchanged signature-matched IDEA evidence may be reused and is rechecked.
+- Full A7 publication cleans/rebuilds the working model. Selected connection edits use a separate guarded adapter and cannot silently call that rebuild.
+
+### LangGraph versus Deep Agents
+
+With Deep Agents disabled, LangGraph directly executes the Python stages. With it enabled, each stage visit runs a bounded **plan -> execute-stage tool once -> review** cycle using `create_deep_agent`. The engineering function, graders and correction routing stay authoritative.
+
+The stage model has its stage tool and `write_todos`; it cannot invoke another stage, edit arbitrary files, bypass checks or approve A8. A model failure, skipped execution or duplicate tool request fails the run without a silent deterministic fallback. The separate correction advisor selects supported candidates and has its own deterministic fallback behaviour.
+
+### What is actually verified
+
+A joint-group dropdown entry means STAAD identified that family, not that IDEA calculated it separately. Reference modes calculate groups mapped in `reference_procedure.py` and use declared Tekla details for the rest. A common double-longitudinal frame calculates:
+
+- `inner_node_2_longitudinal_bracings`
+- `inner_node_2_longitudinal_1_transverse_bracing`
+
+Other geometries may use the mapped single-longitudinal families. Standard components include **1004, 144, 20 and 30**. The final package distinguishes calculated families from standard details; the latter must not be called individually IDEA-verified.
+
+Checks cover grid dimensions, load combinations, finite results, native profiles/templates, calculation coverage, evidence signatures, material identity, configured limits and publication readback. These checks do not imply every possible engineering requirement is implemented.
+
+## Dashboard and chat
+
+### Dashboard
+
+1. Prepare the three native applications and their working models.
+2. Review grid, profiles, materials, bracing and loads. Initial form defaults do not automatically read every value from `frame_specs.json` on page load.
+3. Select **Run Agentic Design (A1-A8)**. Geometry, results and status update from saved progress.
+4. Review failures or the A8 package. An engineer uses **Accept & Sign Off** for final acceptance.
+
+Manual **Generate Structure**, **Send to STAAD**, **Send to IDEA StatiCa** and **Update Tekla** are separate operations. They do not alone create a complete A1-A8 archive. **New Run / Reset View** clears the presentation while retaining inputs and saved runs; it is not a master-input reset.
+
+### Engineering chat
+
+Chat includes current form inputs automatically. For exact file inputs, attach JSON through **+**. To use the master, attach `src/radiator_support/frame_specs.json`, then send:
+
+```text
+Run the complete A1-A8 workflow using the attached JSON exactly.
+Use default engineering rules. Show the input preview for approval first.
+Continue through Tekla and A8, then wait for my manual sign-off.
+Stop and explain any required check failure.
+```
+
+Example customization:
+
+```text
+Run A1-A8 for an 8x5 frame. Longitudinal brace bays: 4 and 6,
+mirror unchecked. Transverse brace bays: 2 and 4, mirror unchecked.
+Use maximum bolt utilization 90% for this run only; keep other inputs
+and rules unchanged. Show the approval preview first, then run through
+Tekla and A8. Wait for my manual final sign-off.
+```
+
+```text
+Message + inputs -> scope check -> tool selection -> validated policy/inputs
+-> change preview -> manual Approve & Apply -> existing worker pipeline
+-> live results -> A8 manual sign-off -> same conversation remains available
+```
+
+| Capability | Behaviour |
+|---|---|
+| Scope guardrails | Block unrelated requests; clarify mixed/ambiguous requests. Questions receive read-only capabilities. |
+| Change approval | Execute the exact stored preview once or reject it. The LLM cannot approve its own proposal. Changed inputs/templates invalidate it. |
+| Selected joint edits | Exact existing names/keys and verified units. "Group 1" or "parameter 1" is not inferred from dropdown positions. |
+| Selected Tekla changes | Require verified manifests and supported attribute mappings. Legacy, shared or derived-layout changes can be blocked. |
+| Attachments | Bounded text/preview readers; no macros or arbitrary instructions. Original binary documents are not retained as executable files. |
+| Live progress | Chat and buttons use saved workflow progress. Old solver evidence is not rebound to modified inputs. |
+| General versus narrow requests | "Run workflow" includes A7/A8; "STAAD only" retains narrower scope. |
+| Saved conversations | History, rename/share/copy, refresh restoration and continued chat after sign-off. |
+
+After a **chat-dispatched** run completes, fails or is cancelled, next-run geometry and loads reload the read-only master `frame_specs.json`. Active calculations, stage continuations and pending A8 approval keep their current inputs. Saved results retain the actual custom inputs; chat never rewrites the master. A historical browser view can still show the inspected run rather than a fresh master view.
+
+### Live timers
+
+Each A1-A8 box displays **`MM:SS`** beneath its label. Timers use saved backend timestamps, update live and survive refresh. Repeated stage visits add execution time, including LLM/Deep Agents overhead. Time between stages and manual A8 approval waiting are excluded. New stages show `00:00`; older stages without recorded timing show `--:--`. These are elapsed times, not completion estimates.
+
+## Rules for one run
+
+Supply supported thresholds through chat or top-level `run_policy` JSON. When rules and geometry change together, chat must set the policy **before** creating the input preview. A backend check prevents explicit numeric rules from being omitted or silently replaced with defaults.
+
+| Field | Default | Accepted range |
+|---|---:|---|
+| `max_member_ratio` | `1.0` | `0 < value <= 1.0` |
+| `drift_denominator` | `200` | `value >= 200`; H/300 uses `300` |
+| `max_bolt_utilization_percent` | `75` | `0 < value <= 100`; one-run `90` is supported |
+| `max_weld_utilization_percent` | `100` | `0 < value <= 100` |
+| `max_plate_utilization_percent` | `100` | `0 < value <= 100` |
+| `max_deformation_utilization_percent` | `100` | `0 < value <= 100` |
+
+A4, A5, correction decisions and A6 use the validated policy; A8 and the archive record it. An 85% bolt result can satisfy a 90% rubric, but still fails when IDEA reports a native failure. Disabling checks, nonfinite values, arbitrary formulas and unknown fields are unsupported. Manual acceptance remains mandatory.
+
+Chat consumes queued rules when a new live run is dispatched, including a failed run. Busy/disabled dispatch and geometry-only preview do not consume them. Later new runs use defaults unless another override is supplied. Direct API resubmission of custom JSON explicitly requests that policy again; continuations retain their source policy.
+
+## API reference
+
+Request schemas: `/docs`. Generated contract: `/openapi.json`. Agents are internal graph nodes; individual `/A1` through `/A8` HTTP endpoints are not implemented.
+
+### Workflow - prefix `/api/v2/agentic`
+
+| Method | Path | Purpose / side effect |
+|---|---|---|
+| POST | `/run` | Start A1-A8 with `{grid, load_configuration?, run_policy?}`. Uses native tools; response waits for worker outcome. |
+| GET | `/active` | Read current state or `null`. |
+| GET | `/runs?limit=50` | List saved runs. |
+| GET | `/runs/{run_id}` | Read complete workflow JSON, progress, results, timings and logs. |
+| POST | `/cancel/{run_id}` | Cancel the owned worker. |
+| POST | `/retry-publication/{source_run_id}` | Fork an eligible failed publication, re-audit evidence and retry A7/A8. |
+| POST | `/accept/{run_id}` | Manual Gate 3 acceptance; optional `{"engineer_name":"Your name"}`. Rejects failed/unverified packages. |
+
+Read-only examples:
+
+```powershell
+Invoke-RestMethod "http://localhost:8060/api/v2/agentic/active"
+Invoke-RestMethod "http://localhost:8060/api/v2/agentic/runs?limit=10"
+```
+
+This next command **starts native operations** and can take several minutes:
+
+```powershell
+$inputJson = Get-Content -LiteralPath .\src\radiator_support\frame_specs.json -Raw
+Invoke-RestMethod -Method Post -Uri "http://localhost:8060/api/v2/agentic/run" `
+    -ContentType "application/json" -Body $inputJson
+```
+
+The direct API runs supplied JSON; it does not merge in the master automatically. Master reset is a chat-session feature.
+
+### Chat - prefix `/api/v2/chat`
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/config` | Chat readiness/model; no credentials. |
+| GET / POST | `/sessions` | List / create conversations. |
+| GET / PATCH | `/sessions/{session_id}` | Read history, drafts, pending changes / rename with `{"title":"..."}`. |
+| POST | `/messages` | Submit `message`, optional session/input/run/attachment fields and `allow_native_tools`; returns `202` with `turn_id`. |
+| GET | `/turns/{turn_id}` | Poll tool events, inputs and engineering progress. |
+| POST | `/turns/{turn_id}/cancel` | Cancel active chat task; inspect associated run before retrying. |
+| POST | `/sessions/{session_id}/attachments?filename=...` | Upload raw file bytes. |
+| DELETE | `/sessions/{session_id}/attachments/{attachment_id}` | Remove unsent attachment; sent history retained. |
+| GET | `/sessions/{session_id}/changes/{proposal_id}` | Read approval preview. |
+| POST | `/sessions/{session_id}/changes/{proposal_id}/reject` | Reject without applying. |
+| POST | `/sessions/{session_id}/changes/{proposal_id}/approve` | Approve exact `digest`; native action also needs `allow_native_tools:true`. Returns an execution turn. |
+
+Internal tools cover context/status reads, input/policy proposals, joint parameters, preview, generation, analysis, connections, validation, publication and full workflow. Tool names are not separate HTTP endpoints. Details: [CHAT_INTERFACE.md](CHAT_INTERFACE.md).
+
+### Manual integration endpoints
+
+| Method | Full path | Purpose |
+|---|---|---|
+| POST | `/api/v1/radiator_support/generate` | Generate geometry from `grid`; native profile dimensions may be required. |
+| POST | `/api/v1/radiator_support/to_staad` | Send grid, split analytical members and loads to STAAD. |
+| POST | `/api/v1/to_ideastatica` | Run a native connection-design request. |
+| POST | `/api/v1/radiator_support/to_tekla` | Send physical members, grid and joint groups to Tekla. |
+
+The server blocks conflicting integration calls while its agentic worker owns the desktop tools. Manual integration requests do not replace full package validation or engineer acceptance.
+
+## Outputs and storage
+
+New workflow runs create a directory under **`store output run/`**, named with the run ID and start date/time in IST. Files update at saved checkpoints and stage boundaries; retries and individual IDEA calculations keep separate evidence.
+
+```text
+store output run/
++-- run_<id>_23_November_2026_17-20-44_IST/
+    +-- 00_input/
+    |   +-- original_input.json
+    |   +-- effective_input.json
+    |   +-- run_policy.json
+    +-- 01_agents/
+    |   +-- A1/attempt_001/{input.json, output.json, process.json}
+    |   +-- A2/ ... A8/
+    |   +-- A5/attempt_002/             # when retried
+    +-- 02_software/
+    |   +-- STAAD/attempt_001/
+    |   +-- IDEA_StatiCa/<exact_group>/calculation_001/
+    |   +-- Tekla/attempt_001/          # model_snapshot/ when copied
+    +-- 03_final_output/
+    |   +-- workflow_output.json
+    |   +-- final_report.json
+    |   +-- validation_results.json
+    |   +-- agent_timings.json
+    |   +-- engineer_approval.json
+    +-- 04_logs/{events.json, worker.log}
+    +-- manifest.json
+```
+
+| Location | Contents |
+|---|---|
+| `data/runs.db` | Authoritative saved state: input, policy, results, timing, logs and approval. Latest state updates; archive folders preserve stage attempts. |
+| `data/chat.db` | Conversations, tool events, change plans and usage. |
+| `data/worker_logs/<run_id>.log` | Worker diagnostics. |
+| `store output run/<run_id>/` | Run evidence and native copies. Saved JSON identifies it in `output_archive.directory`. |
+| `output_exports/dynamic_changes/` | Additional exports for approved chat changes. |
+| `output_<joint_group>/` | Existing native working-output folders. Available artifacts are copied to the archive before a later solve overwrites them. |
+
+- `original_input.json` is the JSON dispatched to the workflow. `effective_input.json` contains normalized inputs and rules. Agent input/output files are boundary snapshots of shared state; `process.json` records events, loops, errors and timing, not private LLM reasoning.
+- STAAD copies include available `.std`/companion files. IDEA copies include `.ideaCon`, summary, connection data, raw results and PDFs **when generated**. Archiving does not enable additional native calculations/reports.
+- Tekla copies saved model files/attributes, excludes locks/temp files and checks for changes during copying. These are **open-model copies, not independently reopen-verified backups**. Read `snapshot_status` and the software copy manifests.
+- Copy manifests list hashes, missing/locked files and exclusions. Unexecuted agents have no invented outputs; inherited evidence is distinguishable from newly recorded execution.
+- Final approval updates the archive. Report preparation alone is not acceptance: inspect `engineer_approval.json` and run status.
+- Archive I/O uses time and disk space. Failures are logged/recorded where possible without bypassing engineering checks. Successful calculations do not guarantee every file copied successfully.
+- Archives, databases, logs and `.env` are excluded from Git. Historical jobs are not replayed to manufacture missing records.
+
+Detailed contract: [docs/run_outputs.md](docs/run_outputs.md).
+
+## Repository structure
+
+```text
+agentic-flow/
++-- README.md
++-- .env.example                  # template; real .env stays local
++-- requirements.txt
++-- start_server.bat
++-- src/
+|   +-- server.py                 # FastAPI and manual integration routes
+|   +-- agentic/
+|   |   +-- agents/a1_* ... a8_*.py # engineering stages
+|   |   +-- orchestrator.py       # graph sequencing and correction routing
+|   |   +-- state.py              # WorkflowState and grader records
+|   |   +-- execution.py          # worker, timeouts and cancellation
+|   |   +-- worker.py             # disposable STA worker entry point
+|   |   +-- deep_runtime.py       # bounded per-stage Deep Agents
+|   |   +-- advisor.py            # correction-candidate advice
+|   |   +-- router.py / store.py  # workflow API and persistence
+|   |   +-- chat*.py              # chat runtime, scope, lifetime and edits
+|   |   +-- run_policy.py         # run-specific thresholds
+|   |   +-- agent_timing.py       # execution clocks
+|   |   +-- run_archive.py        # per-run JSON and native copies
+|   |   +-- evidence.py           # candidate signatures
+|   |   +-- reference_procedure.py / load_combinations.py
+|   |   +-- tekla_selected_updates.py / publication_recovery.py
+|   +-- common/                   # shared native adapters
+|   +-- radiator_support/
+|   |   +-- frame_specs.json      # master input; preserve project edits
+|   |   +-- generate_grid.py
+|   |   +-- *_integration.py
+|   +-- static/radiator_support/  # dashboard, results, chat and timers
++-- sample_projects/              # samples and IDEA templates
++-- tekla_connection_attributes/  # native component attributes
++-- typings/                      # native API editor assistance
++-- scripts/                      # regression, browser and live probes
++-- tests/                        # controlled backend/frontend tests
++-- docs/                         # implementation documentation
++-- data/                         # generated local state
++-- output_exports/               # generated change/verification exports
++-- store output run/             # generated per-run archives
+```
+
+Further reading: [CHAT_INTERFACE.md](CHAT_INTERFACE.md), [run policy](docs/run_policy.md), [run outputs](docs/run_outputs.md). Source and generated OpenAPI remain authoritative if older technical reports differ from current implementation.
+
+## Testing
+
+Use isolated databases: chat-store imports perform startup recovery and must not touch live conversations. Run from the repository root in a **separate test terminal**:
+
+```powershell
+New-Item -ItemType Directory -Force .\output_exports\tests | Out-Null
+$env:PLANT_CHAT_DATABASE_PATH = Join-Path $PWD 'output_exports\tests\chat.db'
+$env:PLANT_RUNS_DATABASE_PATH = Join-Path $PWD 'output_exports\tests\runs.db'
+$env:LANGSMITH_TRACING = 'false'
+$env:LANGSMITH_TRACING_V2 = 'false'
+.\.venv\Scripts\python.exe -m unittest discover -s tests
+```
+
+Do not launch production from that test terminal: inherited database variables take precedence over `.env`. Use a fresh server terminal.
+
+Frontend tests need Node.js, not a frontend server:
+
+```powershell
+node tests\test_agent_timers.cjs
+node tests\test_agentic_restore.cjs
+node tests\test_staad_results.cjs
+```
+
+Optional approval-preview browser check, using an installed Edge browser and fixture APIs:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install playwright
+.\.venv\Scripts\python.exe scripts\smoke_chat_changes.py
+```
+
+Inspect other scripts before executing them: some perform live operations. `validate_dynamic_chat.py --live-model` sends test prompts to the configured LLM and may incur charges.
+
+Latest archive verification: **297 backend tests and 31 frontend checks passed**. These are controlled tests with native operations mocked or synthetic files. They do not guarantee future native calculations or independent Tekla model reopening.
+
+## Troubleshooting
+
+| Symptom | Check / action |
+|---|---|
+| Port already occupied | Inspect `Get-NetTCPConnection`; stop the old project server before starting another. |
+| Changes not visible | Restart the idle API for Python/`.env` updates; Ctrl+F5 for static assets. Existing jobs retain their original inputs/engine. |
+| Chat unavailable | Check the chat switch, endpoint/model/key and `/api/v2/chat/config`. Credentials never belong in messages. |
+| Deep Agents fails immediately | Check both execution switches and credentials. Inspect `deep_agent_events`; no silent engine fallback is provided. |
+| Profile unavailable | Check exact names in the active Tekla environment. Live lookup checks library and parametric profiles; guessed dimensions are not verification evidence. |
+| A5 progress unchanged | Legacy synchronous IDEA solves may provide no intermediate progress while processing several load effects. `RUNNING` alone does not prove active solver work. Inspect logs and the native service. |
+| IDEA timeout or cancellation | Async jobs request cancellation. A legacy HTTP timeout/worker stop does not prove native computation stopped; readiness checks for lingering IDEA-owned solvers. |
+| Tekla looks blank | Verify model path, work area, filters and view. Redraw does not move a misplaced work area; try **Fit work area to entire model**. |
+| Timer shows `--:--` | Historical run lacks timing data. New workers record timing; refresh cannot create missing past records. |
+| Customized fields remain visible | Distinguish the inspected historical run from next-run inputs. Pending approval keeps current inputs; attach the master in a fresh request to explicitly select its exact values. |
+| Native archive incomplete | Read `copy_manifest.json` and `output_archive.warnings`; locked/missing files do not become successful exports. |
+| Approval rejected | Inputs, source evidence, policy or templates may be stale. Create a fresh preview. A8 acceptance requires passing validation and A7. |
+
+Shared STAAD/Tekla cleanup utilities in `src/common` are destructive and save changes; they are not a normal startup step. Inspect their implementation and use designated working models before invoking them.

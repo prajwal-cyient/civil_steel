@@ -39,6 +39,7 @@ class WorkflowState(BaseModel):
     logs: List[AgentLogEntry] = Field(default_factory=list)
     agent_statuses: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     agent_timings: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    output_archive: Dict[str, Any] = Field(default_factory=dict)
 
     # A1 Inputs
     raw_input: Dict[str, Any] = Field(default_factory=dict)

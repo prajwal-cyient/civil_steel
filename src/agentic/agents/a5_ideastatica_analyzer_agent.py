@@ -858,6 +858,8 @@ def run_a5_ideastatica_analyzer(state: WorkflowState) -> WorkflowState:
                 except (IdeaStaticaJointError, ValueError):
                     reusable = False
                 if reusable:
+                    from agentic.run_archive import guarded, record_idea
+                    guarded(state, record_idea, joint_group, payload, {**previous, 'archive_evidence_reused':True})
                     continue
             if selected and joint_group not in selected:
                 return fail_workflow(state, "A5", f"Unselected group {joint_group} lacks reusable verified evidence. Broader analysis requires a new approved plan.")
@@ -873,7 +875,14 @@ def run_a5_ideastatica_analyzer(state: WorkflowState) -> WorkflowState:
                 state.agent_statuses["A5"] = {"status": "RUNNING", "message": f"{joint_group}: {message}",
                                                "operation_timeout_seconds": timeout}
                 WORKFLOW_STORE.save_state(state)
-            result = design_joint({**payload, "progress_callback": update_progress})
+            from agentic.run_archive import guarded, start_idea, record_idea
+            archive_calculation = guarded(state, start_idea, joint_group, payload)
+            try:
+                result = design_joint({**payload, "progress_callback": update_progress})
+            except Exception as exc:
+                guarded(state, record_idea, joint_group, payload, {'error':str(exc)}, archive_calculation)
+                raise
+            guarded(state, record_idea, joint_group, payload, result, archive_calculation)
             if result.get("simulation"):
                 raise IdeaStaticaJointError("Simulated results cannot verify a live connection.")
             if result.get("output_messages"):

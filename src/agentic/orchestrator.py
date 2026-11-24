@@ -16,6 +16,7 @@ from langgraph.graph import StateGraph, END
 from agentic.state import WorkflowState, fail_workflow
 from agentic.config import settings, deep_agents_enabled
 from agentic.agent_timing import start_timing, finish_timing
+from agentic.run_archive import guarded, start_stage, finish_stage
 from agentic.agents.a1_requirements_agent import run_a1_requirements
 from agentic.agents.a2_readiness_agent import run_a2_readiness
 from agentic.agents.a3_frame_generator_agent import run_a3_frame_generator
@@ -50,7 +51,9 @@ def _start_agent(state: WorkflowState, agent_id: str):
 async def _run_stage(state, agent_id, operation):
     started = start_timing(state, agent_id)
     _start_agent(state, agent_id)
+    guarded(state, start_stage, agent_id)
     result = state
+    archive_error = None
     try:
         if deep_agents_enabled():
             from agentic.deep_runtime import run_deep_stage
@@ -61,9 +64,13 @@ async def _run_stage(state, agent_id, operation):
                 candidate = await candidate
             result = candidate
         return result
+    except BaseException as exc:
+        archive_error = f'{type(exc).__name__}: {exc}'
+        raise
     finally:
         finish_timing(result, agent_id, started)
         _sync_state(result)
+        guarded(result, finish_stage, agent_id, archive_error)
 
 
 async def node_a1(state: WorkflowState) -> WorkflowState:

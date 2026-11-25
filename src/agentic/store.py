@@ -81,6 +81,9 @@ class SqliteWorkflowStore:
                         FOREIGN KEY (run_id) REFERENCES workflow_runs(run_id)
                     )
                 """)
+                conn.execute('''CREATE TABLE IF NOT EXISTS workflow_audit_events (
+                    run_id TEXT NOT NULL, event_id TEXT NOT NULL, event_json TEXT NOT NULL,
+                    PRIMARY KEY (run_id, event_id))''')
                 conn.commit()
 
     def save_state(self, state: WorkflowState) -> WorkflowState:
@@ -110,10 +113,38 @@ class SqliteWorkflowStore:
                     now_str,
                     state_json
                 ))
+                for entry in state.logs:
+                    self._insert_log(conn, state.run_id, entry)
+                for event in state.audit_events:
+                    conn.execute('''INSERT INTO workflow_audit_events VALUES (?, ?, ?)
+                        ON CONFLICT(run_id,event_id) DO UPDATE SET event_json=excluded.event_json''',
+                        (state.run_id, event['id'], json.dumps(event)))
                 conn.commit()
         from agentic.run_archive import guarded, checkpoint
-        guarded(state, checkpoint)
+        warning_count = len(state.output_archive.get('warnings', []))
+        guarded(state, checkpoint, self.db_path)
+        if len(state.output_archive.get('warnings', [])) > warning_count:
+            # Preserve export failures without overwriting a newer worker/API state.
+            with self._lock, self._connection() as conn:
+                conn.execute('BEGIN IMMEDIATE')
+                row = conn.execute('SELECT state_json FROM workflow_runs WHERE run_id=?', (state.run_id,)).fetchone()
+                latest = json.loads(row['state_json'])
+                warnings = latest.setdefault('output_archive', {}).setdefault('warnings', [])
+                for warning in state.output_archive['warnings']:
+                    if warning not in warnings:
+                        warnings.append(warning)
+                conn.execute('UPDATE workflow_runs SET state_json=? WHERE run_id=?', (json.dumps(latest), state.run_id))
+                conn.commit()
         return state
+
+    @staticmethod
+    def _insert_log(conn, run_id, entry):
+        values = (run_id, entry.agent_id, entry.status, entry.message, entry.timestamp, entry.loop_info)
+        conn.execute('''INSERT INTO workflow_events
+            (run_id,agent_id,status,message,timestamp,loop_info)
+            SELECT ?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM workflow_events WHERE
+            run_id=? AND agent_id IS ? AND status IS ? AND message IS ? AND timestamp=? AND loop_info IS ?)''',
+            values + values)
 
     def get_state(self, run_id: str) -> Optional[WorkflowState]:
         """Retrieves a WorkflowState by run_id (from cache or SQLite)."""
@@ -147,17 +178,7 @@ class SqliteWorkflowStore:
         """Appends an individual execution event to the events table."""
         with self._lock:
             with self._connection() as conn:
-                conn.execute("""
-                    INSERT INTO workflow_events (run_id, agent_id, status, message, timestamp, loop_info)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    run_id,
-                    entry.agent_id,
-                    entry.status,
-                    entry.message,
-                    entry.timestamp,
-                    entry.loop_info
-                ))
+                self._insert_log(conn, run_id, entry)
                 conn.commit()
 
 

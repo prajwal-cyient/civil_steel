@@ -634,14 +634,25 @@ def run_a7_tekla_modeler(state: WorkflowState) -> WorkflowState:
     tekla_res = None
     try:
         def update_progress(message):
+            from agentic.audit import event
+            event(state, 'progress', 'Tekla', message=message)
             from agentic.store import WORKFLOW_STORE
             state.agent_statuses["A7"] = {"status": "RUNNING", "message": message}
             WORKFLOW_STORE.save_state(state)
-        tekla_res = send_to_tekla({**payload, "progress_callback": update_progress})
+        from agentic.audit import observe
+        with observe(state, 'Tekla native publication', 'Tekla'):
+            tekla_res = send_to_tekla({**payload, "progress_callback": update_progress})
     except Exception as exc:
         return fail_workflow(state, "A7", f"Tekla publication failed: {exc}")
 
     state.tekla_results = tekla_res
+    from agentic.audit import evaluation
+    valid_publication = not (tekla_res.get('simulation') or tekla_res.get('failed') or tekla_res.get('errors') or
+        tekla_res.get('created') != len(members) or tekla_res.get('verified_members') != len(members) or
+        (payload['plate_material_policy'] and not tekla_res.get('plate_materials_verified')))
+    evaluation(state, 'Tekla', {'passed': valid_publication, 'created': tekla_res.get('created'),
+        'verified_members': tekla_res.get('verified_members'),
+        'verified_connections': tekla_res.get('verified_connections'), 'errors': tekla_res.get('errors', [])})
     if tekla_res.get("simulation") or tekla_res.get("failed") or tekla_res.get("errors") or tekla_res.get("created") != len(members) or tekla_res.get("verified_members") != len(members) or (payload["plate_material_policy"] and not tekla_res.get("plate_materials_verified")):
         examples = "; ".join(str(error.get("error", error)) if isinstance(error, dict) else str(error)
                              for error in tekla_res.get("errors", [])[:3])
@@ -656,7 +667,7 @@ def run_a7_tekla_modeler(state: WorkflowState) -> WorkflowState:
         agent_name="Tekla 3D Modeler",
         status="PASSED",
         message=msg,
-        timestamp=ts
+        timestamp=datetime.now().astimezone().isoformat()
     ))
 
     return state

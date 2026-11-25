@@ -70,7 +70,7 @@ def run_a8_reporting(state: WorkflowState) -> WorkflowState:
         agent_name="Reporting & Human Gate",
         status="AWAITING_APPROVAL",
         message=msg,
-        timestamp=ts
+        timestamp=datetime.now().astimezone().isoformat()
     ))
 
     return state
@@ -98,7 +98,7 @@ def accept_gate3(state: WorkflowState, engineer_name: str = "Lead Structural Eng
         agent_name="Reporting & Human Gate",
         status="PASSED",
         message=msg,
-        timestamp=ts
+        timestamp=datetime.now().astimezone().isoformat()
     ))
 
     return state

@@ -17,6 +17,7 @@ from agentic.state import WorkflowState, fail_workflow
 from agentic.config import settings, deep_agents_enabled
 from agentic.agent_timing import start_timing, finish_timing
 from agentic.run_archive import guarded, start_stage, finish_stage
+from agentic.audit import observe, stage_outcome, exception_record
 from agentic.agents.a1_requirements_agent import run_a1_requirements
 from agentic.agents.a2_readiness_agent import run_a2_readiness
 from agentic.agents.a3_frame_generator_agent import run_a3_frame_generator
@@ -33,8 +34,8 @@ def _sync_state(state: WorkflowState):
     try:
         from agentic.store import WORKFLOW_STORE
         WORKFLOW_STORE.save_state(state)
-    except Exception:
-        pass
+    except Exception as exc:
+        exception_record(state, 'persist_workflow_state', exc)
     try:
         from agentic.router import RUN_STORE
         RUN_STORE[state.run_id] = state
@@ -54,20 +55,30 @@ async def _run_stage(state, agent_id, operation):
     guarded(state, start_stage, agent_id)
     result = state
     archive_error = None
+    outcome_recorded = False
+    history_sizes = {key: len(getattr(state, key)) for key in
+                     ('loop_a_history', 'loop_b_history', 'loop_c_history')}
     try:
-        if deep_agents_enabled():
-            from agentic.deep_runtime import run_deep_stage
-            result = await run_deep_stage(state, agent_id, operation, _sync_state)
-        else:
-            candidate = operation(state)
-            if inspect.isawaitable(candidate):
-                candidate = await candidate
-            result = candidate
+        with observe(state, f'Agent {agent_id}', kind='agent') as audit:
+            if deep_agents_enabled():
+                from agentic.deep_runtime import run_deep_stage
+                result = await run_deep_stage(state, agent_id, operation, _sync_state)
+            else:
+                candidate = operation(state)
+                if inspect.isawaitable(candidate):
+                    candidate = await candidate
+                result = candidate
+            stage_outcome(result, history_sizes)
+            outcome_recorded = True
+            audit.update(status=result.agent_statuses.get(agent_id, {}).get('status', result.status),
+                         reason=result.agent_statuses.get(agent_id, {}).get('message'))
         return result
     except BaseException as exc:
         archive_error = f'{type(exc).__name__}: {exc}'
         raise
     finally:
+        if not outcome_recorded:
+            stage_outcome(result, history_sizes)
         finish_timing(result, agent_id, started)
         _sync_state(result)
         guarded(result, finish_stage, agent_id, archive_error)

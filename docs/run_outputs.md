@@ -44,3 +44,32 @@ run_<id>_23_November_2026_17-20-44_IST/
 - The folder is ignored by Git. Existing historical runs are not replayed or
   reconstructed. New runs need the updated API/worker after restart. Test
   databases use archive folders next to their isolated database, not live data.
+
+## Evaluation and correction audit
+
+- `04_logs/events.json` retains the existing agent messages used by the UI.
+  `04_logs/audit_events.json` adds operation timings, progress, evaluations,
+  exception frame locations and corrections, correlated by run, agent and attempt.
+- `03_final_output/evaluation_results.json` and `corrective_actions.json` provide
+  filtered views of that same audit. Agent `process.json` also contains its audit.
+- Corrections start as `AWAITING_RECHECK`. The next matching tool/group evaluation
+  links back to them and records `VERIFIED` or `RECHECK_FAILED`. A terminal failure
+  marks unresolved actions `BLOCKED`. Tekla retries identify the source run and
+  require the existing package revalidation; logging does not enable new repairs.
+- SQLite saves agent messages and audit records alongside the workflow snapshot.
+  Repeated checkpoints do not duplicate the same recorded event. Historical runs
+  are not replayed or assigned invented operation timestamps.
+- Archive JSON uses short temporary names, Windows extended paths, bounded
+  sharing-violation retries and a cross-process checkpoint lock. Checkpoints read
+  the latest committed database state to avoid exporting an older caller snapshot.
+  Permanent failures remain explicit archive warnings and do not change grades.
+- When configured tracing is enabled, agent, tool, evaluation, correction and
+  advisor-request spans include correlation metadata and bounded summaries.
+  The worker supplies a parent workflow span; local operation records retain
+  trace/span IDs when available for locating the corresponding cloud trace.
+  Tracing is optional; delivery problems do not change engineering decisions.
+  Worker shutdown flushes pending traces with a bounded wait. Dashboard receipt
+  still depends on network access and valid LangSmith configuration.
+- Diagnostic traces contain exception types and stack-frame locations, without
+  arbitrary SDK response bodies or local variables. This does not collect native
+  solver CPU/memory telemetry or invent progress unavailable from the native API.

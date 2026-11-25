@@ -9,6 +9,12 @@ def prepare_publication_retry(source, run_id):
         raise ValueError("Publication retry requires a failed A7 run with a previously validated calculation package.")
     state = source.model_copy(deep=True)
     state.run_id, state.status, state.error = run_id, "RUNNING", None
+    from agentic.audit import event
+    event(state, 'correction', 'Tekla', status='AWAITING_RECHECK',
+          operation='Publication retry requested', source_run_id=source.run_id,
+          action={'reason':source.error, 'previous_errors':source.tekla_results.get('errors', []),
+                  'revalidate_before_publication':True,
+                  'notice':'Retry only; no engineering parameters automatically changed.'})
     state.readiness["publication_resume_source"] = source.run_id
     state.current_agent = "A6"
     state.tekla_results.clear()
@@ -19,7 +25,7 @@ def prepare_publication_retry(source, run_id):
         state.agent_statuses.pop(agent, None)
     state.logs.append(AgentLogEntry(agent_id="A6", agent_name="Publication Recovery", status="RUNNING",
         message=f"Revalidating unchanged calculation evidence from {source.run_id} before retrying Tekla publication.",
-        timestamp=datetime.now().strftime("%H:%M:%S")))
+        timestamp=datetime.now().astimezone().isoformat()))
     return state
 
 

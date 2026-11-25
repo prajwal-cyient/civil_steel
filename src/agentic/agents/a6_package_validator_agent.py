@@ -103,7 +103,7 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
                 agent_name="Package Validator",
                 status="REVISING",
                 message=msg,
-                timestamp=ts,
+                timestamp=datetime.now().astimezone().isoformat(),
                 loop_info=f"Loop C #{state.loop_c_count}",
             ))
             return state
@@ -117,7 +117,7 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
             agent_name="Package Validator",
             status="FAILED",
             message=err_msg,
-            timestamp=ts
+            timestamp=datetime.now().astimezone().isoformat()
         ))
         return state
 
@@ -166,7 +166,7 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
         agent_name="Package Validator",
         status="PASSED",
         message=msg,
-        timestamp=ts
+        timestamp=datetime.now().astimezone().isoformat()
     ))
 
     return state

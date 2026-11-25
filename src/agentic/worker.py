@@ -25,20 +25,32 @@ def main():
     state = WORKFLOW_STORE.get_state(args.run_id)
     if state is None:
         raise RuntimeError("Worker input was not persisted.")
-    try:
-        if sys.platform == "win32" and args.chat_action != "preview_structure":
-            import common.staad_common  # noqa: F401
-        from agentic.orchestrator import run_agentic_workflow
-        if args.chat_action:
-            from agentic.chat_actions import run_chat_action
-            result = asyncio.run(run_chat_action(state, args.chat_action))
-        elif args.resume_publication:
-            from agentic.publication_recovery import run_publication_retry
-            result = asyncio.run(run_publication_retry(state))
-        else:
-            result = asyncio.run(run_agentic_workflow(state.raw_input, run_id=args.run_id))
-    except Exception as exc:
-        result = fail_workflow(state, state.current_agent, f"Worker initialization failed: {exc}")
+    from agentic.audit import observe, exception_record, flush_traces
+    with observe(state, 'Engineering workflow', kind='workflow') as run_audit:
+        try:
+            if sys.platform == "win32" and args.chat_action != "preview_structure":
+                import common.staad_common  # noqa: F401
+            from agentic.orchestrator import run_agentic_workflow
+            if args.chat_action:
+                from agentic.chat_actions import run_chat_action
+                result = asyncio.run(run_chat_action(state, args.chat_action))
+            elif args.resume_publication:
+                from agentic.publication_recovery import run_publication_retry
+                result = asyncio.run(run_publication_retry(state))
+            else:
+                result = asyncio.run(run_agentic_workflow(state.raw_input, run_id=args.run_id))
+        except Exception as exc:
+            exception_record(state, 'worker', exc)
+            result = fail_workflow(state, state.current_agent, f"Worker initialization failed: {exc}")
+        run_audit.update(status=result.status, reason=result.error)
+    # Full graph execution creates its own state; retain the parent operation
+    # alongside the stage records returned by that graph.
+    existing = next((e for e in result.audit_events if e['id']==run_audit['id']), None)
+    if existing is None:
+        result.audit_events.insert(0, run_audit)
+    else:
+        existing.update(run_audit)
+    flush_traces(result)
     WORKFLOW_STORE.save_state(result)
 
 

@@ -1,14 +1,17 @@
 """Best-effort, per-run evidence archives. Never changes native source files."""
 from datetime import datetime, timedelta, timezone
+from contextlib import closing
 import hashlib
 import json
 import logging
 from pathlib import Path
 import re
 import shutil
+import sqlite3
 import uuid
 
 from agentic.config import ROOT
+from agentic.archive_io import io_path, retry_replace, checkpoint_lock
 
 logger = logging.getLogger(__name__)
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -16,11 +19,12 @@ TERMINAL = {'COMPLETED', 'FAILED', 'CANCELLED'}
 
 
 def write_json(path, value):
+    path = io_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name('.' + path.name + '.' + uuid.uuid4().hex + '.tmp')
+    temporary = path.with_name('.a' + uuid.uuid4().hex[:12] + '.tmp')
     try:
         temporary.write_text(json.dumps(value, indent=2, allow_nan=False, default=str), encoding='utf-8')
-        temporary.replace(path)
+        retry_replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -35,7 +39,8 @@ def guarded(state, operation, *args):
     try:
         return operation(state, *args)
     except Exception as exc:
-        notice = f'{operation.__name__}: {type(exc).__name__}: {exc}'
+        from agentic.audit import clean
+        notice = clean(f'{operation.__name__}: {type(exc).__name__}: {exc}')
         warnings = state.output_archive.setdefault('warnings', [])
         if notice not in warnings:
             warnings.append(notice)
@@ -82,6 +87,7 @@ def process_record(state, agent, exception=None):
     return {'run_id': state.run_id, 'agent': agent, 'timing': state.agent_timings.get(agent, {}),
             'status': state.agent_statuses.get(agent, {}), 'error': exception or state.error,
             'events': [entry.model_dump() for entry in state.logs if entry.agent_id == agent],
+            'audit_events': [entry for entry in state.audit_events if entry.get('agent') == agent],
             'loop_a_count': state.loop_a_count, 'loop_b_count': state.loop_b_count,
             'loop_c_count': state.loop_c_count,
             'notice': 'Recorded operations and evidence only; no private LLM reasoning.'}
@@ -95,7 +101,23 @@ def start_stage(state, agent):
     write_json(folder / 'process.json', process_record(state, agent))
 
 
-def checkpoint(state):
+def checkpoint(state, database_path=None):
+    folder = archive_folder(state)
+    if folder is None:
+        return
+    with checkpoint_lock(folder):
+        if database_path:
+            # Another API/worker save may have won while we waited for the lock.
+            # Export the latest committed snapshot rather than a stale caller.
+            with closing(sqlite3.connect(database_path, timeout=10)) as conn:
+                row = conn.execute('SELECT state_json FROM workflow_runs WHERE run_id=?', (state.run_id,)).fetchone()
+            if row:
+                from agentic.state import WorkflowState
+                state = WorkflowState.model_validate_json(row[0])
+        _checkpoint(state)
+
+
+def _checkpoint(state):
     folder = archive_folder(state)
     if folder is None:
         return
@@ -109,10 +131,13 @@ def checkpoint(state):
     write_json(final / 'final_report.json', state.final_report)
     write_json(final / 'validation_results.json', state.validation_report)
     write_json(final / 'agent_timings.json', state.agent_timings)
+    write_json(final / 'evaluation_results.json', [e for e in state.audit_events if e.get('kind') == 'evaluation'])
+    write_json(final / 'corrective_actions.json', [e for e in state.audit_events if e.get('kind') == 'correction'])
     write_json(final / 'engineer_approval.json', {'approved':state.gate3_approved,
         'accepted_by':state.accepted_by, 'accepted_at':state.acceptance_timestamp,
         'run_status':state.status})
     write_json(folder / '04_logs' / 'events.json', [entry.model_dump() for entry in state.logs])
+    write_json(folder / '04_logs' / 'audit_events.json', state.audit_events)
     for n in range(1,9):
         agent = f'A{n}'
         attempt = attempt_folder(state, agent)
@@ -141,6 +166,7 @@ def checkpoint(state):
 
 def copy_files(files, destination, source_root=None):
     """Copy exact evidence with hashes; unstable, locked and missing files are explicit."""
+    destination = io_path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     saved, missing, excluded = [], [], []
     for source in files:
@@ -151,10 +177,11 @@ def copy_files(files, destination, source_root=None):
         relative = source.relative_to(source_root) if source_root else Path(source.name)
         target = destination / relative
         try:
-            before = source.stat()
+            source_io = io_path(source)
+            before = source_io.stat()
             target.parent.mkdir(parents=True,exist_ok=True)
-            shutil.copy2(source,target)
-            after = source.stat()
+            shutil.copy2(source_io,target)
+            after = source_io.stat()
             with target.open('rb') as stream:
                 digest = hashlib.file_digest(stream, 'sha256').hexdigest()
             if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:

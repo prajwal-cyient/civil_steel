@@ -224,7 +224,9 @@ async def run_a4_staad_analyzer(state: WorkflowState) -> WorkflowState:
     state.frame_grader_result = None
     state.gate3_approved = False
     try:
-        staad_res = await send_to_staad(payload)
+        from agentic.audit import observe
+        with observe(state, 'STAAD native analysis', 'STAAD'):
+            staad_res = await send_to_staad(payload)
     except Exception as exc:
         return fail_workflow(state, "A4", f"STAAD execution failed: {exc}")
     state.staad_results = staad_res
@@ -233,6 +235,8 @@ async def run_a4_staad_analyzer(state: WorkflowState) -> WorkflowState:
     # Run the Frame Grader
     grader = grade_staad_results(staad_res, col_height, state.run_policy)
     state.frame_grader_result = grader
+    from agentic.audit import evaluation
+    evaluation(state, 'STAAD', grader)
 
     if grader.details.get("invalid_results"):
         return fail_workflow(state, "A4", grader.summary)
@@ -245,7 +249,7 @@ async def run_a4_staad_analyzer(state: WorkflowState) -> WorkflowState:
             agent_name="STAAD Structural Analyzer",
             status="PASSED",
             message=msg,
-            timestamp=ts
+            timestamp=datetime.now().astimezone().isoformat()
         ))
     else:
         # Boundary conditions failed -> Check if Loop A can correct it
@@ -296,7 +300,7 @@ async def run_a4_staad_analyzer(state: WorkflowState) -> WorkflowState:
                     agent_name="STAAD Structural Analyzer",
                     status="REVISING",
                     message=msg,
-                    timestamp=ts,
+                    timestamp=datetime.now().astimezone().isoformat(),
                     loop_info=f"Loop A #{state.loop_a_count}"
                 ))
                 return state
@@ -311,7 +315,7 @@ async def run_a4_staad_analyzer(state: WorkflowState) -> WorkflowState:
             agent_name="STAAD Structural Analyzer",
             status="FAILED",
             message=msg,
-            timestamp=ts
+            timestamp=datetime.now().astimezone().isoformat()
         ))
 
     return state

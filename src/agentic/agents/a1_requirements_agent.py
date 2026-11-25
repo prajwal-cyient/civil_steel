@@ -87,7 +87,7 @@ def run_a1_requirements(state: WorkflowState) -> WorkflowState:
             agent_name="Requirements Validator",
             status="PASSED",
             message=msg,
-            timestamp=ts
+            timestamp=datetime.now().astimezone().isoformat()
         ))
 
     except Exception as exc:
@@ -100,7 +100,7 @@ def run_a1_requirements(state: WorkflowState) -> WorkflowState:
             agent_name="Requirements Validator",
             status="FAILED",
             message=err_msg,
-            timestamp=ts
+            timestamp=datetime.now().astimezone().isoformat()
         ))
 
     return state

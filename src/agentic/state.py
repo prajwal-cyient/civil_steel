@@ -40,6 +40,7 @@ class WorkflowState(BaseModel):
     agent_statuses: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     agent_timings: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     output_archive: Dict[str, Any] = Field(default_factory=dict)
+    audit_events: List[Dict[str, Any]] = Field(default_factory=list)
 
     # A1 Inputs
     raw_input: Dict[str, Any] = Field(default_factory=dict)
@@ -105,6 +106,8 @@ class WorkflowState(BaseModel):
 def fail_workflow(state: WorkflowState, agent_id: str, message: str) -> WorkflowState:
     """Record a terminal failure rather than leaving an ended run as RUNNING."""
     from datetime import datetime
+    from agentic.audit import clean
+    message = clean(message)
 
     state.status = "FAILED"
     state.current_agent = agent_id
@@ -112,7 +115,7 @@ def fail_workflow(state: WorkflowState, agent_id: str, message: str) -> Workflow
     state.agent_statuses[agent_id] = {"status": "FAILED", "message": message}
     state.logs.append(AgentLogEntry(
         agent_id=agent_id, agent_name=agent_id, status="FAILED",
-        message=message, timestamp=datetime.now().strftime("%H:%M:%S"),
+        message=message, timestamp=datetime.now().astimezone().isoformat(),
     ))
     return state
 

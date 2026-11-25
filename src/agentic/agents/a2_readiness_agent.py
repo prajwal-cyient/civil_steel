@@ -68,5 +68,5 @@ def run_a2_readiness(state: WorkflowState) -> WorkflowState:
     message = "Saved STAAD and Tekla models and IDEA API are ready."
     state.agent_statuses["A2"] = {"status": "PASSED", "message": message}
     state.logs.append(AgentLogEntry(agent_id="A2", agent_name="Readiness Checker",
-        status="PASSED", message=message, timestamp=datetime.now().strftime("%H:%M:%S")))
+        status="PASSED", message=message, timestamp=datetime.now().astimezone().isoformat()))
     return state

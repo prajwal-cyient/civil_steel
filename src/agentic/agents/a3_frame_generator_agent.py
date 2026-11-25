@@ -457,7 +457,7 @@ def run_a3_frame_generator(state: WorkflowState) -> WorkflowState:
             agent_name="Frame Geometry Generator",
             status="PASSED",
             message=msg,
-            timestamp=ts,
+            timestamp=datetime.now().astimezone().isoformat(),
             loop_info=loop_note or None
         ))
 
@@ -471,7 +471,7 @@ def run_a3_frame_generator(state: WorkflowState) -> WorkflowState:
             agent_name="Frame Geometry Generator",
             status="FAILED",
             message=err_msg,
-            timestamp=ts
+            timestamp=datetime.now().astimezone().isoformat()
         ))
 
     return state

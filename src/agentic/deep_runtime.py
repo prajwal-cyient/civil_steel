@@ -135,8 +135,10 @@ async def run_deep_stage(state: WorkflowState, agent_id: str, operation, persist
             result = operation(state)
             if inspect.isawaitable(result):
                 result = await result
-        except Exception:
+        except Exception as exc:
             # Native exception text can contain credentials/response bodies. Keep audit bounded.
+            from agentic.audit import exception_record
+            exception_record(state, 'deep_agent_stage_tool', exc)
             result = fail_workflow(state, agent_id, "Engineering stage tool raised an exception; inspect worker diagnostics.")
         event["stage_status"] = result.agent_statuses.get(agent_id, {}).get("status")
         persist(result)
@@ -171,6 +173,8 @@ async def run_deep_stage(state: WorkflowState, agent_id: str, operation, persist
                                      for e in result.deep_agent_events],
             }
     except Exception as exc:
+        from agentic.audit import exception_record
+        exception_record(state, 'deep_agent_model', exc)
         event["status"] = "FAILED"
         event["error_type"] = type(exc).__name__
         result = fail_workflow(result, agent_id,

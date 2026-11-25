@@ -53,8 +53,10 @@ def choose_correction(state, stage: str, evidence: dict, options: list[dict], de
     event = {"stage": stage, "model": cfg.model, "call": state.model_call_count}
     try:
         request = Request(base + "chat/completions", data=json.dumps(body).encode(), headers=headers, method="POST")
-        with urlopen(request, timeout=min(cfg.agent_timeout, 60)) as response:
-            result = json.load(response)
+        from agentic.audit import observe
+        with observe(state, 'Correction advisor model request', kind='model', model=cfg.model, stage=stage):
+            with urlopen(request, timeout=min(cfg.agent_timeout, 60)) as response:
+                result = json.load(response)
         message = result["choices"][0]["message"]
         if message.get("refusal"):
             raise ValueError("Model declined to propose a correction.")
@@ -74,3 +76,5 @@ def choose_correction(state, stage: str, evidence: dict, options: list[dict], de
         return by_id[default_id]
     finally:
         state.model_events.append(event)
+        from agentic.audit import event as audit_event
+        audit_event(state, 'correction_proposal', **event)

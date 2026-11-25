@@ -867,6 +867,8 @@ def run_a5_ideastatica_analyzer(state: WorkflowState) -> WorkflowState:
             state.agent_statuses["A5"] = {"status": "RUNNING", "message": f"Calculating {joint_group} (corrections used: {state.loop_b_count.get(joint_group, 0)}/{state.max_loop_b})."}
             WORKFLOW_STORE.save_state(state)
             def update_progress(message):
+                from agentic.audit import event
+                event(state, 'progress', 'IDEA_StatiCa', joint_group=joint_group, message=message)
                 timeout = settings().agent_timeout
                 if message.startswith("Running IDEA finite-element calculation"):
                     timeout = calculation_budget(len(payload["load_effects"]))
@@ -878,7 +880,10 @@ def run_a5_ideastatica_analyzer(state: WorkflowState) -> WorkflowState:
             from agentic.run_archive import guarded, start_idea, record_idea
             archive_calculation = guarded(state, start_idea, joint_group, payload)
             try:
-                result = design_joint({**payload, "progress_callback": update_progress})
+                from agentic.audit import observe
+                with observe(state, 'IDEA native connection calculation', 'IDEA_StatiCa',
+                             joint_group=joint_group, load_effects=len(payload.get('load_effects', []))):
+                    result = design_joint({**payload, "progress_callback": update_progress})
             except Exception as exc:
                 guarded(state, record_idea, joint_group, payload, {'error':str(exc)}, archive_calculation)
                 raise
@@ -897,6 +902,8 @@ def run_a5_ideastatica_analyzer(state: WorkflowState) -> WorkflowState:
             if result.get("passed") is not True and grader.passed:
                 grader = GraderResult(passed=False, score=0, summary="IDEA did not report overall calculation success; inspect calculation details.")
             state.joint_grader_results[joint_group] = grader
+            from agentic.audit import evaluation
+            evaluation(state, 'IDEA_StatiCa', grader, joint_group=joint_group)
             if grader.passed:
                 continue
             if selected:
@@ -938,12 +945,14 @@ def run_a5_ideastatica_analyzer(state: WorkflowState) -> WorkflowState:
                     if key in result["check_summary"]}})
             message = f"Loop B ({count + 1}/{state.max_loop_b}): {joint_group}: {changes}"
             state.agent_statuses["A5"] = {"status": "REVISING", "message": message}
-            state.logs.append(AgentLogEntry(agent_id="A5", agent_name="Connection Designer", status="REVISING", message=message, timestamp=ts))
+            state.logs.append(AgentLogEntry(agent_id="A5", agent_name="Connection Designer", status="REVISING", message=message, timestamp=datetime.now().astimezone().isoformat()))
             return state
         except Exception as exc:
+            from agentic.audit import exception_record
+            exception_record(state, 'IDEA connection execution', exc)
             return fail_workflow(state, "A5", f"{joint_group}: connection execution failed: {exc}")
     message = (f"All {len(scope['idea_required_groups'])} required IDEA connection groups passed the configured rubric; "
                f"{len(scope['standard_detail_groups'])} families use the senior workflow's standard Tekla details.")
     state.agent_statuses["A5"] = {"status": "PASSED", "message": message}
-    state.logs.append(AgentLogEntry(agent_id="A5", agent_name="Connection Designer", status="PASSED", message=message, timestamp=ts))
+    state.logs.append(AgentLogEntry(agent_id="A5", agent_name="Connection Designer", status="PASSED", message=message, timestamp=datetime.now().astimezone().isoformat()))
     return state

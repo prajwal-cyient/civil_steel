@@ -8,13 +8,14 @@ with attributes designed by IDEA StatiCa.
 """
 
 from datetime import datetime
+from copy import deepcopy
 import json
 import math
 import os
 import sys
 from typing import Any, Dict, List, Optional
 
-from agentic.state import WorkflowState, AgentLogEntry
+from agentic.state import WorkflowState, AgentLogEntry, workflow_stage
 
 # Ensure repo root is on sys.path
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -62,6 +63,9 @@ TEKLA_CONNECTION_PARAMETER_MAP = {
         ("CPL_overlap_length", 20, "in", "longitudinal"),
     ],
 }
+
+class TeklaPrePublicationConnectionError(RuntimeError):
+    """Connection failed before the publisher made any model or file changes."""
 
 IDEA_TO_TEKLA_LENGTH_FACTOR = 1000.0
 
@@ -388,7 +392,11 @@ def send_to_tekla(data: dict) -> dict:
     expected_path = data.get("expected_tekla_model_path")
     if expected_path:
         from pathlib import Path
-        actual_path = Path(tekla_common._get_connected_model().GetInfo().ModelPath).resolve()
+        try:
+            connected_model = tekla_common._get_connected_model()
+        except tekla_common.TeklaConnectionError as exc:
+            raise TeklaPrePublicationConnectionError(str(exc)) from exc
+        actual_path = Path(connected_model.GetInfo().ModelPath).resolve()
         if actual_path != Path(expected_path).resolve():
             raise RuntimeError(f"Tekla active model changed during the run: {actual_path}; expected {expected_path}.")
     progress("Preparing the target model and reference attributes")
@@ -606,68 +614,146 @@ def send_to_tekla(data: dict) -> dict:
     }
 
 
-def run_a7_tekla_modeler(state: WorkflowState) -> WorkflowState:
-    """
-    Executes Agent A7: Connects to Tekla Structures via .NET and inserts physical 3D elements and details.
-    """
-    if state.change_scope:
-        from agentic.state import fail_workflow
-        return fail_workflow(state, "A7", "Selected changes must use the scoped Tekla adapter; full-model cleanup is blocked.")
-    ts = datetime.now().strftime("%H:%M:%S")
-    state.current_agent = "A7"
+def prepare_a7_tekla(state: WorkflowState) -> WorkflowState:
     from agentic.state import fail_workflow
+    from agentic.nodes.a6_tekla.build import build_tekla_payload
+    state.current_agent = workflow_stage(state, "tekla")
+    state.tekla_request.clear()
+    state.tekla_publication_passed = None
+    state.tekla_prepublication_error = None
+    state.tekla_grader_result = None
+    state.tekla_publication_passed = None
+    if state.change_scope:
+        return fail_workflow(state, workflow_stage(state, "tekla"), "Selected changes must use the scoped Tekla adapter; full-model cleanup is blocked.")
     if not state.validation_report.get("passed"):
-        return fail_workflow(state, "A7", "A passing package validation is required before Tekla publication.")
+        return fail_workflow(state, workflow_stage(state, "tekla"), "A passing package validation is required before Tekla publication.")
+    if state.tekla_retry_count:
+        from agentic.agents.a6_package_validator_agent import run_a6_package_validator
+        state = run_a6_package_validator(state, agent_id="A5c")
+        if (state.status == "FAILED" or not state.validation_report.get("passed")
+                or state.agent_statuses.get("A5c", {}).get("status") != "PASSED"):
+            return fail_workflow(state, workflow_stage(state, "tekla"), "Calculation evidence failed revalidation before Tekla retry.")
+        state.current_agent = workflow_stage(state, "tekla")
+    state.tekla_request = deepcopy(build_tekla_payload(state))
+    return state
 
-    members = state.frame_candidate.get("members", [])
-    grid = state.grid_config
-    joint_groups = state.validation_report.get("validated_joint_groups_payload", {})
 
-    payload = {
-        "members": members,
-        "grid": grid,
-        "joint_groups": joint_groups,
-        "expected_tekla_model_path": state.readiness.get("tekla_model_path"),
-        "plate_material_policy": state.validation_report.get("plate_material_policy"),
-    }
+def _tekla_request_matches(state: WorkflowState) -> bool:
+    from agentic.nodes.a6_tekla.build import build_tekla_payload
+    return bool(state.tekla_request) and state.tekla_request == build_tekla_payload(state)
 
-    tekla_res = None
+
+def execute_a7_tekla(state: WorkflowState) -> WorkflowState:
+    from agentic.state import fail_workflow
+    try:
+        if not _tekla_request_matches(state):
+            return fail_workflow(state, workflow_stage(state, "tekla"), "Tekla request no longer matches the validated package; publication stopped.")
+    except ValueError as exc:
+        return fail_workflow(state, workflow_stage(state, "tekla"), f"Tekla request verification failed: {exc}")
+    payload = deepcopy(state.tekla_request)
+    state.tekla_results.clear()
     try:
         def update_progress(message):
             from agentic.audit import event
             event(state, 'progress', 'Tekla', message=message)
             from agentic.store import WORKFLOW_STORE
-            state.agent_statuses["A7"] = {"status": "RUNNING", "message": message}
+            state.agent_statuses[workflow_stage(state, "tekla")] = {"status": "RUNNING", "message": message}
             WORKFLOW_STORE.save_state(state)
         from agentic.audit import observe
         with observe(state, 'Tekla native publication', 'Tekla'):
             tekla_res = send_to_tekla({**payload, "progress_callback": update_progress})
+    except TeklaPrePublicationConnectionError as exc:
+        state.tekla_prepublication_error = str(exc)
+        return state
     except Exception as exc:
-        return fail_workflow(state, "A7", f"Tekla publication failed: {exc}")
-
+        return fail_workflow(state, workflow_stage(state, "tekla"), f"Tekla publication failed: {exc}. Inspect the model before retrying; publication may be partial.")
     state.tekla_results = tekla_res
+    try:
+        if not _tekla_request_matches(state):
+            return fail_workflow(state, workflow_stage(state, "tekla"), "Validated inputs changed during Tekla publication; inspect the model before retrying.")
+    except ValueError as exc:
+        return fail_workflow(state, workflow_stage(state, "tekla"), f"Tekla request verification failed after publication: {exc}; inspect the model.")
+    return state
+
+
+def evaluate_a7_tekla(state: WorkflowState) -> WorkflowState:
+    from agentic.state import fail_workflow
+    from agentic.nodes.a6_tekla.evaluate import grade_tekla_publication
+    try:
+        if not _tekla_request_matches(state):
+            return fail_workflow(state, workflow_stage(state, "tekla"), "Tekla request no longer matches the validated package; inspect the model.")
+    except ValueError as exc:
+        return fail_workflow(state, workflow_stage(state, "tekla"), f"Tekla request verification failed: {exc}; inspect the model.")
+    payload = state.tekla_request
+    if state.tekla_prepublication_error is not None:
+        state.tekla_grader_result = grade_tekla_publication(
+            {},
+            payload,
+            prepublication_error=state.tekla_prepublication_error,
+        )
+        state.tekla_publication_passed = False
+        return state
+    tekla_res = state.tekla_results
     from agentic.audit import evaluation
-    valid_publication = not (tekla_res.get('simulation') or tekla_res.get('failed') or tekla_res.get('errors') or
-        tekla_res.get('created') != len(members) or tekla_res.get('verified_members') != len(members) or
-        (payload['plate_material_policy'] and not tekla_res.get('plate_materials_verified')))
+    grader = grade_tekla_publication(tekla_res, payload)
+    state.tekla_grader_result = grader
+    valid_publication = grader.passed
+    state.tekla_publication_passed = valid_publication
     evaluation(state, 'Tekla', {'passed': valid_publication, 'created': tekla_res.get('created'),
         'verified_members': tekla_res.get('verified_members'),
-        'verified_connections': tekla_res.get('verified_connections'), 'errors': tekla_res.get('errors', [])})
-    if tekla_res.get("simulation") or tekla_res.get("failed") or tekla_res.get("errors") or tekla_res.get("created") != len(members) or tekla_res.get("verified_members") != len(members) or (payload["plate_material_policy"] and not tekla_res.get("plate_materials_verified")):
-        examples = "; ".join(str(error.get("error", error)) if isinstance(error, dict) else str(error)
-                             for error in tekla_res.get("errors", [])[:3])
-        return fail_workflow(state, "A7", f"Tekla publication incomplete: {tekla_res.get('verified_members', 0)}/{len(members)} members verified, "
-                             f"{tekla_res.get('verified_connections', 0)} connections verified, {tekla_res.get('failed', 0)} failures. {examples}")
+        'verified_connections': tekla_res.get('verified_connections'), 'errors': tekla_res.get('errors', []),
+        'failed_reasons': grader.details.get('failed_reasons', [])})
+    return state
+
+
+def decide_a7_tekla(state: WorkflowState) -> WorkflowState:
+    from agentic.advisor import choose_correction
+    from agentic.nodes.a6_tekla.correction import decide_tekla_outcome
+    state, ready = decide_tekla_outcome(
+        state,
+        request_matches=_tekla_request_matches,
+        choose_correction=choose_correction,
+    )
+    if not ready:
+        return state
+    tekla_res = state.tekla_results
+    members = state.tekla_request["members"]
     created_count = tekla_res.get("created", len(members))
 
     msg = f"Published {created_count} members to Tekla Structures with verified connection attributes (0 failed)."
-    state.agent_statuses["A7"] = {"status": "PASSED", "message": msg, "created": created_count}
+    state.agent_statuses[workflow_stage(state, "tekla")] = {"status": "PASSED", "message": msg, "created": created_count}
     state.logs.append(AgentLogEntry(
-        agent_id="A7",
+        agent_id=workflow_stage(state, "tekla"),
         agent_name="Tekla 3D Modeler",
         status="PASSED",
         message=msg,
         timestamp=datetime.now().astimezone().isoformat()
     ))
-
     return state
+
+
+def run_a7_tekla_modeler(state: WorkflowState) -> WorkflowState:
+    """Run the existing synchronous publication entry point."""
+    state.tekla_retry_count = 0
+    state.tekla_retry_history = []
+    try:
+        while True:
+            for operation in (prepare_a7_tekla, execute_a7_tekla, evaluate_a7_tekla, decide_a7_tekla):
+                state = operation(state)
+                if state.status == "FAILED":
+                    break
+            if state.status == "FAILED" or state.agent_statuses.get(workflow_stage(state, "tekla"), {}).get("status") != "REVISING":
+                break
+        return state
+    finally:
+        state.tekla_request.clear()
+
+
+async def run_a7_staged(state: WorkflowState) -> WorkflowState:
+    from agentic.nodes.a6_tekla.graph import run_tekla_graph
+    state.tekla_retry_count = 0
+    state.tekla_retry_history = []
+    try:
+        return await run_tekla_graph(state)
+    finally:
+        state.tekla_request.clear()

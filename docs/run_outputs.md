@@ -6,7 +6,7 @@ New runs create a directory under `store output run/` in the repository root:
 run_<id>_23_November_2026_17-20-44_IST/
   00_input/                 original_input.json, effective_input.json, run_policy.json
   01_agents/A1/attempt_001/ input.json, output.json, process.json
-  01_agents/A2/ ... A8/     one folder per agent and execution attempt
+  01_agents/A2/ ... A7/     one folder per agent and execution attempt (A8 in legacy runs)
   02_software/STAAD/        results, input and available native files per attempt
   02_software/IDEA_StatiCa/ exact group names, one folder per calculation or reused result
   02_software/Tekla/        publication JSON, verified components and model file copy
@@ -26,14 +26,14 @@ run_<id>_23_November_2026_17-20-44_IST/
   individual correction attempts, keep separate copies before a later solve can
   overwrite the native service's shared output paths. Reused results are marked.
 - Final JSON updates during execution and after manual engineer acceptance.
-  An A8 report alone does not indicate acceptance; read `engineer_approval.json`.
+  A report alone does not indicate acceptance; read `engineer_approval.json`.
 - Each native copy manifest lists copied files with SHA-256 hashes, missing or
   locked files, and unavailable outputs. Raw IDEA results or PDF reports are
   archived only when the solver generated them; archiving does not enable new
   calculations or report generation.
 - STAAD copies the saved `.std` and available same-model companion files after
   returned analysis evidence. Tekla copies the saved model folder after a
-  successful A7, including attributes, excluding locks and temporary files.
+  successful Tekla publication, including attributes, excluding locks and temporary files.
   The captured files are checked for changes during copying. This is an
   **open-model file copy, not an independently reopen-verified Tekla backup**.
   Read its `snapshot_status`; incomplete copies are explicitly marked. The

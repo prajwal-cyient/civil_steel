@@ -5,6 +5,7 @@ from io import BytesIO
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -122,6 +123,107 @@ class AdvisorAndPolicyTests(unittest.TestCase):
             self.assertEqual(first.get_state("shared").current_agent, "A5")
 
 
+class DesktopLockTests(unittest.TestCase):
+    def test_lock_excludes_other_processes_and_releases_after_failure(self):
+        from agentic import desktop_lock as locking
+        script = (
+            "import sys; from pathlib import Path; "
+            "from agentic import desktop_lock as lock; "
+            "lock.DESKTOP_LOCK_PATH=Path(sys.argv[1]); "
+            "guard=lock.desktop_lock(); "
+            "\ntry:\n guard.__enter__()\n"
+            "except lock.DesktopBusyError:\n sys.exit(23)\n"
+            "else:\n guard.__exit__(None,None,None)\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "desktop.lock"
+            with patch.object(locking, "DESKTOP_LOCK_PATH", path):
+                with self.assertRaisesRegex(RuntimeError, "test failure"):
+                    with locking.desktop_lock():
+                        child = subprocess.run([sys.executable, "-c", script, str(path)],
+                                               capture_output=True, timeout=15)
+                        self.assertEqual(child.returncode, 23, child.stderr.decode(errors="replace"))
+                        raise RuntimeError("test failure")
+                child = subprocess.run([sys.executable, "-c", script, str(path)],
+                                       capture_output=True, timeout=15)
+                self.assertEqual(child.returncode, 0, child.stderr.decode(errors="replace"))
+
+    def test_manual_endpoints_reject_busy_desktop(self):
+        from fastapi.testclient import TestClient
+        from agentic import desktop_lock as locking
+        from server import create_app
+
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(locking, "DESKTOP_LOCK_PATH", Path(directory) / "desktop.lock"):
+            app = create_app()
+            with TestClient(app) as client, locking.desktop_lock():
+                for path in ("/api/v1/radiator_support/generate", "/api/v1/radiator_support/to_staad",
+                             "/api/v1/radiator_support/to_tekla", "/api/v1/to_ideastatica"):
+                    with self.subTest(path=path):
+                        response = client.post(path, json={})
+                        self.assertEqual(response.status_code, 409)
+                        self.assertIn("desktop tools", response.json()["detail"])
+
+    def test_busy_worker_fails_before_starting_any_stage(self):
+        from agentic import desktop_lock as locking, worker
+        from unittest.mock import MagicMock
+
+        store = MagicMock()
+        store.get_state.return_value = WorkflowState(run_id="locked_worker", status="RUNNING")
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(locking, "DESKTOP_LOCK_PATH", Path(directory) / "desktop.lock"), \
+             patch.object(worker, "load_environment"), \
+             patch.object(sys, "argv", ["worker", "--run-id", "locked_worker"]), \
+             patch("agentic.store.WORKFLOW_STORE", store), \
+             patch("agentic.orchestrator.run_agentic_workflow", new_callable=AsyncMock) as run:
+            with locking.desktop_lock():
+                worker.main()
+            run.assert_not_awaited()
+        result = store.save_state.call_args.args[0]
+        self.assertEqual(result.status, "FAILED")
+        self.assertIn("desktop tools", result.error)
+
+
+class ChatParameterRerunTests(unittest.IsolatedAsyncioTestCase):
+    async def test_validated_rerun_enters_graph_at_a2_with_confirmed_inputs(self):
+        from agentic import orchestrator
+        edges = orchestrator.build_workflow_graph("a2_readiness").compile().get_graph().edges
+        self.assertEqual([edge.target for edge in edges if edge.source == "__start__"], ["a2_readiness"])
+        calls = []
+
+        def readiness(state):
+            calls.append((state.grid_config["n_long_bays"], state.run_policy["max_member_ratio"]))
+            state.status = "FAILED"
+            state.error = "Controlled readiness stop"
+            return state
+
+        payload = {"grid": {"n_long_bays": 3}, "run_policy": {"max_member_ratio": 0.8}}
+        with patch.object(orchestrator, "_sync_state"), patch.object(orchestrator, "guarded"), \
+             patch.object(orchestrator, "deep_agents_enabled", return_value=False), \
+             patch.object(orchestrator, "run_a2_readiness", side_effect=readiness):
+            result = await orchestrator.run_agentic_workflow(payload, "chat_rerun", chat_parameter_rerun=True)
+        self.assertEqual(calls, [(3, 0.8)])
+        self.assertEqual(result.agent_statuses["A1"]["status"], "PASSED")
+        self.assertEqual(sum(log.agent_id == "A1" for log in result.logs), 1)
+
+    async def test_invalid_rerun_never_reaches_readiness(self):
+        from agentic import orchestrator
+        for payload in ({"grid": {"n_long_bays": 0}}, {"grid": {}, "run_policy": {"max_member_ratio": 1.5}}):
+            with self.subTest(payload=payload), \
+                 patch.object(orchestrator, "_sync_state"), patch.object(orchestrator, "guarded"), \
+                 patch.object(orchestrator, "deep_agents_enabled", return_value=False), \
+                 patch.object(orchestrator, "run_a2_readiness") as readiness:
+                result = await orchestrator.run_agentic_workflow(payload, "invalid_chat_rerun", chat_parameter_rerun=True)
+            self.assertEqual(result.status, "FAILED")
+            self.assertEqual(result.agent_statuses["A1"]["status"], "FAILED")
+            readiness.assert_not_called()
+
+    def test_dashboard_graph_starts_at_a1(self):
+        from agentic.orchestrator import build_workflow_graph
+        edges = build_workflow_graph().compile().get_graph().edges
+        self.assertEqual([edge.target for edge in edges if edge.source == "__start__"], ["a1_requirements"])
+
+
 class WorkerRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -138,6 +240,16 @@ class WorkerRuntimeTests(unittest.IsolatedAsyncioTestCase):
             state = await controller.execute({}, "worker_crash")
         self.assertEqual(state.status, "FAILED")
         self.assertIsNone(controller.run_id)
+
+    async def test_chat_parameter_rerun_dispatches_worker_with_explicit_entry(self):
+        controller = execution.RunController()
+        process = SimpleNamespace(returncode=1)
+        with patch.object(execution.asyncio, "create_subprocess_exec", new=AsyncMock(return_value=process)) as spawn:
+            await controller.execute({"grid": {}}, "worker_chat_rerun", chat_parameter_rerun=True)
+        self.assertIn("--chat-parameter-rerun", spawn.await_args.args)
+        with self.assertRaisesRegex(ValueError, "fresh full workflow"):
+            await controller.execute({}, "worker_chat_rerun", chat_action="preview_structure",
+                                     chat_parameter_rerun=True)
 
     async def test_cancel_stops_worker_and_persists_cancelled_state(self):
         controller = execution.RunController()

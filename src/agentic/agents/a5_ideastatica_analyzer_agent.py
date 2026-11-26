@@ -8,6 +8,7 @@ Triggers Loop B corrective action when connection checks fail.
 """
 
 from datetime import datetime
+from copy import deepcopy
 import json
 import hashlib
 from math import pi, isfinite
@@ -67,6 +68,10 @@ from agentic.ladders import (
     get_next_weld_size,
     step_parameter_expression,
 )
+from agentic.nodes.a5_idea.errors import IdeaStaticaJointError
+from agentic.nodes.a5_idea.build import connection_output_dir, _connection_payload
+from agentic.nodes.a5_idea.evaluate import grade_joint_check_summary
+from agentic.nodes.a5_idea.correction import _correct_connection_parameters, apply_failed_joint_grade
 
 
 BASE_URL = os.environ.get("IDEA_STATICA_BASE_URL", "http://localhost:5000")
@@ -79,10 +84,6 @@ SETUP_DIR = os.environ.get(
 
 class IdeaStaticaConnectionError(RuntimeError):
     """Raised when the Connection API service can't be reached."""
-
-
-class IdeaStaticaJointError(RuntimeError):
-    """Raised when a specific joint (connection/member/load) can't be resolved or updated."""
 
 
 # ── Internals ────────────────────────────────────────────────────────────
@@ -666,123 +667,6 @@ def design_joint(data: dict) -> dict:
 
 # ── Grader Logic ─────────────────────────────────────────────────────────
 
-def grade_joint_check_summary(check_summary: Dict[str, Any], run_policy=None) -> GraderResult:
-    """Grade valid checks; distinguish exceeded limits from SDK status failures."""
-    policy = RunPolicy.model_validate(run_policy or {})
-    items = check_summary if isinstance(check_summary, list) else check_summary.get("summary", [])
-    failures, fix_types, advisories = [], [], []
-    maxima = {"max_plate_utilization": 0.0, "max_deformation_utilization": 0.0, "max_bolt": 0.0, "max_weld": 0.0}
-    active_checks = 0
-    unresolved = False
-    for item in items:
-        if item.get("skipped") is True:
-            continue
-        name = str(item.get("name", "")).lower()
-        val, status = item.get("check_value"), item.get("check_status")
-        if not isinstance(status, bool) or isinstance(val, bool) or not isinstance(val, (int, float)) or not isfinite(val):
-            failures.append(f"Incomplete or nonfinite IDEA check: {name}")
-            unresolved = True
-            continue
-        if "deformation" in name or "local" in name or "loc." in name:
-            key, limit, fix = "max_deformation_utilization", policy.max_deformation_utilization_percent, "plate_thickness"
-        elif "plate" in name or "strain" in name:
-            key, limit, fix = "max_plate_utilization", policy.max_plate_utilization_percent, "plate_thickness"
-        elif "bolt" in name:
-            key, limit, fix = "max_bolt", policy.max_bolt_utilization_percent, "bolt_dia"
-        elif "weld" in name:
-            key, limit, fix = "max_weld", policy.max_weld_utilization_percent, "weld_size"
-        else:
-            if status is not True:
-                failures.append(f"IDEA {name} reports check_status=False (value={val}); inspect calculation details.")
-                unresolved = True
-            continue
-        active_checks += 1
-        if val < 0:
-            failures.append(f"Invalid negative result for {name}: {val}")
-            unresolved = True
-            continue
-        maxima[key] = max(maxima[key], val)
-        if val > limit:
-            failures.append(f"{item['name']} value {val}% exceeds {limit}% rubric limit")
-            fix_types.append(fix)
-        elif status is False:
-            failures.append(f"IDEA {name} reports check_status=False despite utilization {val}% within {limit}%; {item.get('message') or 'inspect calculation details before correction.'}")
-            unresolved = True
-    if not active_checks:
-        failures.append("No active connection component checks returned.")
-        unresolved = True
-    if 0 < maxima["max_bolt"] < 50 and maxima["max_plate_utilization"] < 20:
-        advisories.append("Joint underutilized; downsizing is not permitted by this rubric.")
-    fix_type = fix_types[0] if fix_types and not unresolved else None
-    return GraderResult(
-        passed=not failures, score=0.0 if failures else 1.0,
-        summary="; ".join(failures) if failures else "All returned connection checks passed the configured rubric.",
-        details={**maxima, "failures": failures, "fix_type": fix_type,
-                 "advisories": advisories, "downsizing_permitted": False},
-        corrective_action_needed=fix_type is not None,
-        corrective_action={"fix_type": fix_type} if fix_type else None,
-    )
-
-
-def connection_output_dir(state, joint_group, root):
-    if joint_group in state.change_scope.get('groups', []) and not state.change_scope.get('reuse_calculations'):
-        return os.path.join(root, 'output_exports', 'dynamic_changes', state.run_id, joint_group)
-    return state.change_scope.get('artifact_dirs', {}).get(joint_group, os.path.join(root, f'output_{joint_group}'))
-
-
-def _connection_payload(state: WorkflowState, joint_group: str) -> dict:
-    """Use the exact template and all required strength envelopes, never sample loads."""
-    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-    if state.staad_results.get("results_local_or_global", 0) != 0:
-        raise IdeaStaticaJointError("IDEA input requires local member forces; global forces need an explicit verified transformation.")
-    from agentic.reference_procedure import scope_for_state, template_for_group
-    scope = scope_for_state(state)
-    reference = scope["mode"] == "reference_procedure"
-    template = str(template_for_group(joint_group, reference))
-    if not os.path.isfile(template):
-        missing = sorted(group for group in state.staad_results.get("joint_groups", {joint_group: {}})
-                         if not (settings().templates / f"{group}.ideaCon").is_file())
-        raise IdeaStaticaJointError(
-            f"No matching connection template for {joint_group}. "
-            f"Missing template mappings ({len(missing)}): {', '.join(missing)}. "
-            "Provide compatible connection templates and verified member/end mappings; "
-            "unrelated templates cannot verify these joints."
-        )
-    envelopes = [e for e in state.staad_results.get("load_envelopes", []) if e.get("envelopeType") == "STRENGTH"]
-    if not envelopes:
-        raise IdeaStaticaJointError("STAAD returned no strength envelopes.")
-    by_envelope = state.staad_results.get("envelope_load_cases_by_joint_group", {})
-    loads, updates = [], None
-    for envelope in envelopes:
-        env_id = envelope["envelopeId"]
-        groups = by_envelope.get(env_id, by_envelope.get(str(env_id), {}))
-        data = groups.get(joint_group, {})
-        if not data.get("member_updates") or not data.get("load_effects"):
-            raise IdeaStaticaJointError(f"Missing member properties or loads for {joint_group}, strength envelope {env_id}.")
-        if updates is not None and updates != data["member_updates"]:
-            raise IdeaStaticaJointError(f"Inconsistent member properties across envelopes for {joint_group}.")
-        updates = data["member_updates"]
-        for effect in data["load_effects"]:
-            if not effect.get("member_loadings"):
-                raise IdeaStaticaJointError(f"Empty load effect in envelope {env_id}.")
-            loads.append({**effect, "name": f"Envelope {env_id}: {effect.get('name', 'ULS')}"})
-    material_map = scope.get("material_catalogue_mapping", {})
-    updates = [{**update, "material_mprl_name": material_map.get(update["material_mprl_name"], update["material_mprl_name"])}
-               if "material_mprl_name" in update else update for update in updates]
-    return {
-        **({"run_policy": state.run_policy} if state.run_policy and state.run_policy != RunPolicy().model_dump() else {}),
-        "joint_group_name": joint_group,
-        "template_project_path": template, "connection_selector": {"name": "CON1"},
-        "member_updates": updates, "load_effects": loads,
-        "replace_template_loads": True,
-        "enforce_member_coverage": True,
-        "operation_parameters": state.active_operation_params.get(joint_group, []),
-        "plate_material_policy": reference_plate_material_policy() if scope["mode"] == "reference_procedure" else None,
-        "output_dir": connection_output_dir(state, joint_group, root),
-        "extract_raw_results": False,
-    }
-
-
 def _connection_signature(payload: dict, generation: int) -> str:
     template = payload.get("template_project_path")
     template_hash = None
@@ -792,167 +676,190 @@ def _connection_signature(payload: dict, generation: int) -> str:
     return hashlib.sha256(json.dumps({"generation": generation, "payload": payload, "template_hash": template_hash}, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
 
-def _correct_connection_parameters(parameters: list, fix_type: str, parameter_keys=None) -> tuple:
-    """Change only localized exposed parameters; never upsize every weld/plate."""
-    updated, changes = [], []
-    for parameter in parameters:
-        key = parameter["key"]
-        lower = key.lower()
-        matches = (
-            fix_type == "weld_size" and "weld" in lower
-            or fix_type == "bolt_dia" and (lower.endswith("_d") or "diameter" in lower)
-            or fix_type == "plate_thickness" and (lower.endswith("_th") or "thickness" in lower)
-        )
-        if parameter_keys is not None:
-            matches = matches and key in parameter_keys
-        expression = str(parameter.get("expression", ""))
-        numeric = expression.strip("\"'")
-        new_expression = step_parameter_expression(key, numeric, fix_type) if matches else numeric
-        if matches and new_expression != numeric:
-            if expression[:1] in ("'", '\"'):
-                new_expression = expression[0] + new_expression + expression[0]
-            changes.append({"key": key, "old_value": expression, "new_value": new_expression})
-            expression = new_expression
-        updated.append({"key": key, "expression": expression})
-    if parameter_keys is None and len(changes) > 1:
-        # A category summary such as "Welds failed" does not identify which
-        # weld failed. Preserve already-correct details until the detailed
-        # result is mapped to an exact exposed parameter.
-        return [{"key": p["key"], "expression": str(p.get("expression", ""))} for p in parameters], []
-    return updated, changes
-
-
-def run_a5_ideastatica_analyzer(state: WorkflowState) -> WorkflowState:
-    """Solve affected joints only, with bounded corrections and terminal failures."""
+def begin_a5(state: WorkflowState) -> dict:
+    """Prepare a per-visit context without keeping native clients in graph state."""
     state.current_agent = "A5"
-    ts = datetime.now().strftime("%H:%M:%S")
+    context = {"index": 0, "groups": [], "selected": set(), "scope": {}, "complete": False}
     if not state.frame_grader_result or not state.frame_grader_result.passed or state.staad_results.get("analysis_failed"):
-        return fail_workflow(state, "A5", "A verified passing STAAD analysis is required before connection design.")
+        fail_workflow(state, "A5", "A verified passing STAAD analysis is required before connection design.")
+        return context
     joint_groups = state.staad_results.get("joint_groups", {})
     if not joint_groups:
-        return fail_workflow(state, "A5", "STAAD returned no connection groups.")
+        fail_workflow(state, "A5", "STAAD returned no connection groups.")
+        return context
     from agentic.reference_procedure import scope_for_state
     try:
         scope = scope_for_state(state)
     except ValueError as exc:
-        return fail_workflow(state, "A5", str(exc))
+        fail_workflow(state, "A5", str(exc))
+        return context
     selected = set(state.change_scope.get("groups", []))
-    groups = sorted(scope["idea_required_groups"], key=lambda name: name in selected) if selected else scope["idea_required_groups"]
-    for joint_group in groups:
-        try:
-            payload = _connection_payload(state, joint_group)
-            signature = _connection_signature(payload, state.design_generation)
-            previous = state.ideastatica_results.get(joint_group, {})
-            grader = state.joint_grader_results.get(joint_group)
-            if grader and grader.passed and previous.get("input_signature") == signature:
-                # A cached PASS is only a shortcut when its source checks are
-                # still complete and valid. Loop C must be able to repair a
-                # damaged/missing result, not repeatedly reuse that stale flag.
-                try:
-                    validate_calculation_check_coverage(previous.get("check_summary", {}).get("summary", []))
-                    verify_plate_material_evidence(previous.get("plate_material_evidence"),
-                        payload.get("plate_material_policy"), previous.get("iom_connection_data_file"))
-                    reusable = (previous.get("passed") is True and not previous.get("simulation")
-                                and not previous.get("output_messages")
-                                and grade_joint_check_summary(previous.get("check_summary", {}), state.run_policy).passed)
-                except (IdeaStaticaJointError, ValueError):
-                    reusable = False
-                if reusable:
-                    from agentic.run_archive import guarded, record_idea
-                    guarded(state, record_idea, joint_group, payload, {**previous, 'archive_evidence_reused':True})
-                    continue
-            if selected and joint_group not in selected:
-                return fail_workflow(state, "A5", f"Unselected group {joint_group} lacks reusable verified evidence. Broader analysis requires a new approved plan.")
-            from agentic.store import WORKFLOW_STORE
-            state.agent_statuses["A5"] = {"status": "RUNNING", "message": f"Calculating {joint_group} (corrections used: {state.loop_b_count.get(joint_group, 0)}/{state.max_loop_b})."}
-            WORKFLOW_STORE.save_state(state)
-            def update_progress(message):
-                from agentic.audit import event
-                event(state, 'progress', 'IDEA_StatiCa', joint_group=joint_group, message=message)
-                timeout = settings().agent_timeout
-                if message.startswith("Running IDEA finite-element calculation"):
-                    timeout = calculation_budget(len(payload["load_effects"]))
-                elif message.startswith(("IDEA job", "IDEA legacy", "IDEA service lacks")):
-                    timeout = calculation_budget(len(payload["load_effects"]))
-                state.agent_statuses["A5"] = {"status": "RUNNING", "message": f"{joint_group}: {message}",
-                                               "operation_timeout_seconds": timeout}
-                WORKFLOW_STORE.save_state(state)
-            from agentic.run_archive import guarded, start_idea, record_idea
-            archive_calculation = guarded(state, start_idea, joint_group, payload)
+    context.update(scope=scope, selected=selected,
+                   groups=sorted(scope["idea_required_groups"], key=lambda name: name in selected)
+                   if selected else scope["idea_required_groups"])
+    return context
+
+
+def _fail_a5_step(state, context, exc):
+    from agentic.audit import exception_record
+    exception_record(state, 'IDEA connection execution', exc)
+    return fail_workflow(state, "A5", f"{context.get('joint_group', 'IDEA')}: connection execution failed: {exc}")
+
+
+def prepare_a5(state: WorkflowState, context: dict) -> WorkflowState:
+    """Choose one group and construct the exact IDEA request."""
+    context["skip"] = False
+    if context["index"] >= len(context["groups"]):
+        context["complete"] = True
+        scope = context["scope"]
+        message = (f"All {len(scope['idea_required_groups'])} required IDEA connection groups passed the configured rubric; "
+                   f"{len(scope['standard_detail_groups'])} families use the senior workflow's standard Tekla details.")
+        state.agent_statuses["A5"] = {"status": "PASSED", "message": message}
+        state.logs.append(AgentLogEntry(agent_id="A5", agent_name="Connection Designer", status="PASSED", message=message, timestamp=datetime.now().astimezone().isoformat()))
+        return state
+    joint_group = context["groups"][context["index"]]
+    context["joint_group"] = joint_group
+    try:
+        payload = _connection_payload(state, joint_group)
+        signature = _connection_signature(payload, state.design_generation)
+        context.update(payload=payload, signature=signature, generation=state.design_generation)
+        previous = state.ideastatica_results.get(joint_group, {})
+        grader = state.joint_grader_results.get(joint_group)
+        if grader and grader.passed and previous.get("input_signature") == signature:
             try:
-                from agentic.audit import observe
-                with observe(state, 'IDEA native connection calculation', 'IDEA_StatiCa',
-                             joint_group=joint_group, load_effects=len(payload.get('load_effects', []))):
-                    result = design_joint({**payload, "progress_callback": update_progress})
-            except Exception as exc:
-                guarded(state, record_idea, joint_group, payload, {'error':str(exc)}, archive_calculation)
-                raise
-            guarded(state, record_idea, joint_group, payload, result, archive_calculation)
-            if result.get("simulation"):
-                raise IdeaStaticaJointError("Simulated results cannot verify a live connection.")
-            if result.get("output_messages"):
-                raise IdeaStaticaJointError(f"Unresolved integration warnings: {result['output_messages']}")
-            # Use the parameters actually exposed by this template, not a fabricated default.
-            parameters = result.get("check_summary", {}).get("operation_parameters", [])
-            result["input_signature"] = _connection_signature(payload, state.design_generation)
-            if payload.get('output_dir'):
-                result['artifact_dir'] = payload['output_dir']
-            state.ideastatica_results[joint_group] = result
-            grader = grade_joint_check_summary(result.get("check_summary", {}), state.run_policy)
-            if result.get("passed") is not True and grader.passed:
-                grader = GraderResult(passed=False, score=0, summary="IDEA did not report overall calculation success; inspect calculation details.")
-            state.joint_grader_results[joint_group] = grader
-            from agentic.audit import evaluation
-            evaluation(state, 'IDEA_StatiCa', grader, joint_group=joint_group)
-            if grader.passed:
-                continue
-            if selected:
-                return fail_workflow(state, "A5", f"{joint_group}: approved values failed engineering checks. Further corrections require a new change preview and approval. {grader.summary}")
-            if not grader.corrective_action_needed:
-                return fail_workflow(state, "A5", f"{joint_group}: {grader.summary}")
-            count = state.loop_b_count.get(joint_group, 0)
-            if count >= state.max_loop_b:
-                return fail_workflow(state, "A5", f"{joint_group}: retry limit reached. {grader.summary}")
-            fix_type = grader.corrective_action["fix_type"]
-            localized = result.get("check_summary", {}).get("failed_parameter_keys")
-            updated, changes = _correct_connection_parameters(parameters, fix_type, localized)
-            if not changes:
-                localization_error = result.get("check_summary", {}).get("localization_error")
-                return fail_workflow(state, "A5", f"{joint_group}: no uniquely localized exposed numeric {fix_type} correction is available. "
-                                     "Detailed failed-operation-to-parameter mapping is required when several parameters match; "
-                                     f"already-correct details were preserved. {grader.summary}"
-                                     + (f" Localization: {localization_error}" if localization_error else ""))
-            metric_signature = hashlib.sha256(json.dumps(result["check_summary"]["summary"], sort_keys=True, allow_nan=False).encode()).hexdigest()
-            history = [entry for entry in state.loop_b_history if entry["joint_group"] == joint_group]
-            if history and history[-1].get("result_signature") == metric_signature:
-                return fail_workflow(state, "A5", f"{joint_group}: checks did not change after the confirmed parameter update; inspect calculation details instead of repeating the same correction.")
-            options = [{"id": "all", "changes": changes}]
-            if len(changes) > 1:
-                options += [{"id": change["key"], "changes": [change]} for change in changes]
-            selected = options[0]
-            if count and len(options) > 1:
-                selected = choose_correction(state, "connection", grader.model_dump(), options, "all")
-            changes = selected["changes"]
-            overrides = {p["key"]: p for p in state.active_operation_params.get(joint_group, [])}
-            changed_keys = {p["key"] for p in changes}
-            overrides.update({p["key"]: p for p in updated if p["key"] in changed_keys})
-            state.active_operation_params[joint_group] = list(overrides.values())
-            state.loop_b_count[joint_group] = count + 1
-            state.loop_b_history.append({"joint_group": joint_group, "iteration": count + 1,
-                "fix_type": fix_type, "changes": changes, "reason": grader.summary, "result_signature": metric_signature,
-                "localization": {key: result["check_summary"][key] for key in
-                    ("failed_weld_ids", "failed_parameter_keys", "parameter_to_weld_ids", "unrelated_geometry_unchanged", "probe_expressions_restored")
-                    if key in result["check_summary"]}})
-            message = f"Loop B ({count + 1}/{state.max_loop_b}): {joint_group}: {changes}"
-            state.agent_statuses["A5"] = {"status": "REVISING", "message": message}
-            state.logs.append(AgentLogEntry(agent_id="A5", agent_name="Connection Designer", status="REVISING", message=message, timestamp=datetime.now().astimezone().isoformat()))
-            return state
+                validate_calculation_check_coverage(previous.get("check_summary", {}).get("summary", []))
+                verify_plate_material_evidence(previous.get("plate_material_evidence"),
+                    payload.get("plate_material_policy"), previous.get("iom_connection_data_file"))
+                reusable = (previous.get("passed") is True and not previous.get("simulation")
+                            and not previous.get("output_messages")
+                            and grade_joint_check_summary(previous.get("check_summary", {}), state.run_policy).passed)
+            except (IdeaStaticaJointError, ValueError):
+                reusable = False
+            if reusable:
+                from agentic.run_archive import guarded, record_idea
+                guarded(state, record_idea, joint_group, payload, {**previous, 'archive_evidence_reused':True})
+                context["index"] += 1
+                context["skip"] = True
+                return state
+        if context["selected"] and joint_group not in context["selected"]:
+            return fail_workflow(state, "A5", f"Unselected group {joint_group} lacks reusable verified evidence. Broader analysis requires a new approved plan.")
+        return state
+    except Exception as exc:
+        return _fail_a5_step(state, context, exc)
+
+
+def _check_a5_request(state, context):
+    if (context["generation"] != state.design_generation
+            or context["signature"] != _connection_signature(
+                _connection_payload(state, context["joint_group"]), state.design_generation)):
+        raise IdeaStaticaJointError("IDEA inputs or template changed during connection design; the results cannot be used.")
+
+
+def execute_a5(state: WorkflowState, context: dict) -> WorkflowState:
+    """Call IDEA while retaining its native client lifecycle within design_joint."""
+    joint_group, payload = context["joint_group"], context["payload"]
+    try:
+        _check_a5_request(state, context)
+        from agentic.store import WORKFLOW_STORE
+        state.agent_statuses["A5"] = {"status": "RUNNING", "message": f"Calculating {joint_group} (corrections used: {state.loop_b_count.get(joint_group, 0)}/{state.max_loop_b})."}
+        WORKFLOW_STORE.save_state(state)
+        def update_progress(message):
+            from agentic.audit import event
+            event(state, 'progress', 'IDEA_StatiCa', joint_group=joint_group, message=message)
+            timeout = settings().agent_timeout
+            if message.startswith(("Running IDEA finite-element calculation", "IDEA job", "IDEA legacy", "IDEA service lacks")):
+                timeout = calculation_budget(len(payload["load_effects"]))
+            state.agent_statuses["A5"] = {"status": "RUNNING", "message": f"{joint_group}: {message}",
+                                           "operation_timeout_seconds": timeout}
+            WORKFLOW_STORE.save_state(state)
+        from agentic.run_archive import guarded, start_idea, record_idea
+        archive_calculation = guarded(state, start_idea, joint_group, payload)
+        try:
+            from agentic.audit import observe
+            with observe(state, 'IDEA native connection calculation', 'IDEA_StatiCa',
+                         joint_group=joint_group, load_effects=len(payload.get('load_effects', []))):
+                result = design_joint({**payload, "progress_callback": update_progress})
         except Exception as exc:
-            from agentic.audit import exception_record
-            exception_record(state, 'IDEA connection execution', exc)
-            return fail_workflow(state, "A5", f"{joint_group}: connection execution failed: {exc}")
-    message = (f"All {len(scope['idea_required_groups'])} required IDEA connection groups passed the configured rubric; "
-               f"{len(scope['standard_detail_groups'])} families use the senior workflow's standard Tekla details.")
-    state.agent_statuses["A5"] = {"status": "PASSED", "message": message}
-    state.logs.append(AgentLogEntry(agent_id="A5", agent_name="Connection Designer", status="PASSED", message=message, timestamp=datetime.now().astimezone().isoformat()))
+            guarded(state, record_idea, joint_group, payload, {'error':str(exc)}, archive_calculation)
+            raise
+        guarded(state, record_idea, joint_group, payload, result, archive_calculation)
+        _check_a5_request(state, context)
+        if result.get("simulation"):
+            raise IdeaStaticaJointError("Simulated results cannot verify a live connection.")
+        if result.get("output_messages"):
+            raise IdeaStaticaJointError(f"Unresolved integration warnings: {result['output_messages']}")
+        result["input_signature"] = context["signature"]
+        if payload.get('output_dir'):
+            result['artifact_dir'] = payload['output_dir']
+        state.ideastatica_results[joint_group] = result
+        context["result"] = result
+        return state
+    except Exception as exc:
+        return _fail_a5_step(state, context, exc)
+
+
+def _grade_a5_result(state: WorkflowState, result: dict) -> GraderResult:
+    grader = grade_joint_check_summary(result.get("check_summary", {}), state.run_policy)
+    if result.get("passed") is not True and grader.passed:
+        return GraderResult(passed=False, score=0, summary="IDEA did not report overall calculation success; inspect calculation details.")
+    return grader
+
+
+def evaluate_a5(state: WorkflowState, context: dict) -> WorkflowState:
+    try:
+        _check_a5_request(state, context)
+        joint_group, result = context["joint_group"], context["result"]
+        grader = _grade_a5_result(state, result)
+        state.joint_grader_results[joint_group] = grader
+        context["grader"] = grader
+        context["evaluated_result"] = deepcopy(result)
+        context["evaluated_grader"] = grader.model_copy(deep=True)
+        from agentic.audit import evaluation
+        evaluation(state, 'IDEA_StatiCa', grader, joint_group=joint_group)
+        return state
+    except Exception as exc:
+        return _fail_a5_step(state, context, exc)
+
+
+def decide_a5(state: WorkflowState, context: dict) -> WorkflowState:
+    try:
+        _check_a5_request(state, context)
+        joint_group, result, grader = context["joint_group"], context["result"], context["grader"]
+        if (state.ideastatica_results.get(joint_group) != context["evaluated_result"]
+                or result != context["evaluated_result"]
+                or result.get("input_signature") != context["signature"]
+                or state.joint_grader_results.get(joint_group) != context["evaluated_grader"]
+                or grader != context["evaluated_grader"]
+                or _grade_a5_result(state, result) != grader):
+            raise IdeaStaticaJointError("IDEA grade or evidence changed before correction routing.")
+        if grader.passed:
+            context["index"] += 1
+            return state
+        parameters = result.get("check_summary", {}).get("operation_parameters", [])
+        return apply_failed_joint_grade(
+            state, joint_group, result, grader, parameters, bool(context["selected"]),
+            _correct_connection_parameters, choose_correction,
+        )
+    except Exception as exc:
+        return _fail_a5_step(state, context, exc)
+
+
+def run_a5_ideastatica_analyzer(state: WorkflowState) -> WorkflowState:
+    """Retain the synchronous IDEA entry point for callers outside the graph."""
+    context = begin_a5(state)
+    while state.status != "FAILED":
+        prepare_a5(state, context)
+        if state.status == "FAILED" or context["complete"]:
+            break
+        if context["skip"]:
+            continue
+        for operation in (execute_a5, evaluate_a5, decide_a5):
+            operation(state, context)
+            if state.status == "FAILED" or state.agent_statuses.get("A5", {}).get("status") == "REVISING":
+                return state
     return state
+
+
+async def run_a5_staged(state: WorkflowState) -> WorkflowState:
+    from agentic.nodes.a5_idea.graph import run_idea_graph
+    return await run_idea_graph(state)

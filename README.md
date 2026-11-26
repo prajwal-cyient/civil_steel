@@ -1,6 +1,6 @@
 # Civil Steel Standard - Agentic Workflow
 
-A Windows application for radiator-support steel-frame design using **STAAD.Pro**, **IDEA StatiCa Connection**, and **Tekla Structures**. A browser dashboard and engineering chat feed a controlled A1-A8 pipeline that generates geometry, runs calculations, validates evidence, publishes a model and prepares a package for **manual engineer sign-off**.
+A Windows application for radiator-support steel-frame design using **STAAD.Pro**, **IDEA StatiCa Connection**, and **Tekla Structures**. A browser dashboard and engineering chat feed a controlled A1-A7 pipeline that generates geometry, runs calculations, validates evidence, publishes a model and prepares a package for **manual engineer sign-off**.
 
 LangGraph controls execution. Optional Deep Agents add LLM planning and review around the same engineering tools; they do not replace native calculations or graders.
 
@@ -12,7 +12,7 @@ LangGraph controls execution. Optional Deep Agents add LLM planning and review a
 - [Installation](#installation)
 - [Start and stop services](#start-and-stop-services)
 - [Configuration](#configuration)
-- [A1-A8 workflow](#a1-a8-workflow)
+- [A1-A7 workflow](#a1-a7-workflow)
 - [Dashboard and chat](#dashboard-and-chat)
 - [Rules for one run](#rules-for-one-run)
 - [API reference](#api-reference)
@@ -28,7 +28,7 @@ flowchart LR
     U[Dashboard or chat] --> API[FastAPI server]
     API --> C[One desktop job at a time]
     C --> W[Separate Windows STA worker]
-    W --> G[LangGraph A1-A8 and correction loops]
+    W --> G[LangGraph A1-A7 and correction loops]
     G --> N[STAAD / IDEA / Tekla]
     N --> G
     G --> S[SQLite and per-run archive]
@@ -166,7 +166,7 @@ Forced server termination is not the normal way to cancel native calculations.
 | `PLANT_LIVE_ENGINEERING_ENABLED` | Blocks live readiness/dispatch; saved results and explicit unverified preview remain available. | Allows native operations subject to checks. |
 | `LANGSMITH_TRACING` | Tracing disabled when explicitly set in `.env`. | SDK tracing to the configured LangSmith project/key. |
 
-**Deterministic A1-A8, with optional LLM-powered chat:**
+**Deterministic A1-A7, with optional LLM-powered chat:**
 
 ```env
 PLANT_WORKFLOW_MODE=poc2_automation
@@ -225,7 +225,7 @@ LangSmith traces can include prompts, responses and tool data. Use an authorized
 
 | `PLANT_WORKFLOW_MODE` | Implemented behaviour |
 |---|---|
-| `poc1_automation` | Reference procedure and standard connection details, still within the A1-A8 graph. |
+| `poc1_automation` | Reference procedure and standard connection details, still within the A1-A7 graph. |
 | `poc2_automation` | Default reference basis with existing graders and supported correction/validation loops. |
 | `reviewed_engineering` | Explicit load combinations and IDEA template coverage for every required joint family. Standard details do not substitute for individual IDEA verification. |
 
@@ -233,39 +233,41 @@ Both reference modes share the existing graph and checks; mode names do not sele
 
 Reference modes use **8 combinations and 3 envelopes** when custom combinations are absent. Request combinations take precedence over the optional file. Reference defaults reproduce the existing procedure; they do not independently establish project-code compliance.
 
-## A1-A8 workflow
+## A1-A7 workflow
 
 | Agent | Responsibility | Output / decision |
 |---|---|---|
 | **A1 - Requirements Validator** | Validate grid and run policy; resolve loads/combinations. | Normalized brief, active profiles and thresholds. |
 | **A2 - Readiness Checker** | Check saved STAAD/Tekla models, IDEA service/SDK and templates. | Readiness evidence or early failure. |
-| **A3 - Frame Generator** | Generate physical and split analytical geometry; check native profile dimensions and templates. | Frame candidate and joint-family scope. |
-| **A4 - STAAD Analyzer** | Run structural analysis and grade ratios/displacements. | Results, frame grade or Loop A correction. |
-| **A5 - IDEA Analyzer** | Calculate required connection families and grade supported corrections. | Connection evidence, joint grades or Loop B correction. |
-| **A6 - Package Validator** | Independently recheck grades, signatures, materials and coverage. | Verified package/hash or Loop C recovery. |
-| **A7 - Tekla Modeler** | Publish members/connections, read back attributes and save. | Publication results and member/component manifests. |
-| **A8 - Reporting and Acceptance** | Assemble the package and pause for review. | `PAUSED_AT_GATE3`; manual acceptance sets `COMPLETED`. |
+| **A3a/b - Frame** | Evaluate inputs, then generate physical and split analytical geometry. | Frame candidate and joint-family scope. |
+| **A4a–d - STAAD** | Build request, analyze, grade, decide correction. | Results, frame grade or Loop A correction. |
+| **A5a–d - IDEA and package audit** | Build and calculate connections, grade and independently audit evidence, decide correction. | Verified package/hash or bounded connection recovery. |
+| **A6a–d - Tekla** | Build request, publish, check read-back, decide safe recovery. | Publication results and member/component manifests. |
+| **A7 - Report** | Assemble the package and pause for review. | `PAUSED_AT_GATE3`; manual acceptance sets `COMPLETED`. |
 
 ```mermaid
 flowchart LR
-    A1 --> A2 --> A3 --> A4 --> A5 --> A6 --> A7 --> A8
-    A4 -- Loop A: frame correction --> A3
-    A5 -- Loop B: connection correction --> A5
-    A6 -- Loop C: frame recovery --> A3
-    A6 -- Loop C: connection recovery --> A5
-    A8 --> Review[Manual Accept & Sign Off]
+    A1 --> A2 --> A3a --> A3b --> A4a --> A4b --> A4c --> A4d --> A5a --> A5b --> A5c --> A5d --> A6a --> A6b --> A6c --> A6d --> A7 --> Review[Manual Accept & Sign Off]
+    A4d -- frame correction --> A3a
+    A5d -- connection recovery --> A5a
+    A5c -- stale frame / STAAD evidence --> Stop[Stop; start a new run]
+    A6d -- verified safe retry --> A6a
 ```
 
-- Execution is sequential. A controller/lock permits one agentic desktop job at a time.
+- Server workers and the manual generation/STAAD/IDEA/Tekla endpoints share a nonblocking, cross-process desktop lock in the current user's temporary directory. A conflicting manual request returns HTTP 409; a conflicting worker is recorded as failed before starting the workflow.
+- The lock is cooperative: independently launched CLI commands, other applications, and older server processes that have not reloaded this code do not participate. Do not run them against the same desktop models concurrently.
+- A3 runs geometry evaluation and generation in an A3a/A3b LangGraph subgraph. A4, IDEA and Tekla use a–d subgraphs; A5c also runs the complete package audit after the required connection groups. New runs use layout version 2 (A6 Tekla, A7 report); unversioned historical A1–A8 runs retain their original meanings.
+- Tekla retries at most five times only for a verified connection failure before model changes, re-auditing evidence before each retry. A partial or uncertain publication stops for inspection; it is not automatically retried.
 - Corrections need verified mappings and exposed parameters. Unsupported localization stops the run instead of guessing changes to several details.
 - Failed native checks are never replaced with simulated passes. Unchanged signature-matched IDEA evidence may be reused and is rechecked.
-- Full A7 publication cleans/rebuilds the working model. Selected connection edits use a separate guarded adapter and cannot silently call that rebuild.
+- An approved chat parameter-change full run performs A1 validation in the worker, then enters the graph at A2. A dashboard run still enters the graph at A1.
+- Full A6 publication cleans/rebuilds the working model. Selected connection edits use a separate guarded adapter and cannot silently call that rebuild.
 
 ### LangGraph versus Deep Agents
 
 With Deep Agents disabled, LangGraph directly executes the Python stages. With it enabled, each stage visit runs a bounded **plan -> execute-stage tool once -> review** cycle using `create_deep_agent`. The engineering function, graders and correction routing stay authoritative.
 
-The stage model has its stage tool and `write_todos`; it cannot invoke another stage, edit arbitrary files, bypass checks or approve A8. A model failure, skipped execution or duplicate tool request fails the run without a silent deterministic fallback. The separate correction advisor selects supported candidates and has its own deterministic fallback behaviour.
+The stage model has its stage tool and `write_todos`; it cannot invoke another stage, edit arbitrary files, bypass checks or approve Gate 3. A model failure, skipped execution or duplicate tool request fails the run without a silent deterministic fallback. The separate correction advisor selects supported candidates and has its own deterministic fallback behaviour.
 
 ### What is actually verified
 
@@ -284,36 +286,36 @@ Checks cover grid dimensions, load combinations, finite results, native profiles
 
 1. Prepare the three native applications and their working models.
 2. Review grid, profiles, materials, bracing and loads. Initial form defaults do not automatically read every value from `frame_specs.json` on page load.
-3. Select **Run Agentic Design (A1-A8)**. Geometry, results and status update from saved progress.
-4. Review failures or the A8 package. An engineer uses **Accept & Sign Off** for final acceptance.
+3. Select **Run Agentic Design (A1-A7)**. Geometry, results and status update from saved progress.
+4. Review failures or the A7 package. An engineer uses **Accept & Sign Off** for final acceptance.
 
-Manual **Generate Structure**, **Send to STAAD**, **Send to IDEA StatiCa** and **Update Tekla** are separate operations. They do not alone create a complete A1-A8 archive. **New Run / Reset View** clears the presentation while retaining inputs and saved runs; it is not a master-input reset.
+Manual **Generate Structure**, **Send to STAAD**, **Send to IDEA StatiCa** and **Update Tekla** are separate operations. They do not alone create a complete A1-A7 archive. **New Run / Reset View** clears the presentation while retaining inputs and saved runs; it is not a master-input reset.
 
 ### Engineering chat
 
 Chat includes current form inputs automatically. For exact file inputs, attach JSON through **+**. To use the master, attach `src/radiator_support/frame_specs.json`, then send:
 
 ```text
-Run the complete A1-A8 workflow using the attached JSON exactly.
+Run the complete A1-A7 workflow using the attached JSON exactly.
 Use default engineering rules. Show the input preview for approval first.
-Continue through Tekla and A8, then wait for my manual sign-off.
+Continue through Tekla and reporting, then wait for my manual sign-off.
 Stop and explain any required check failure.
 ```
 
 Example customization:
 
 ```text
-Run A1-A8 for an 8x5 frame. Longitudinal brace bays: 4 and 6,
+Run A1-A7 for an 8x5 frame. Longitudinal brace bays: 4 and 6,
 mirror unchecked. Transverse brace bays: 2 and 4, mirror unchecked.
 Use maximum bolt utilization 90% for this run only; keep other inputs
 and rules unchanged. Show the approval preview first, then run through
-Tekla and A8. Wait for my manual final sign-off.
+Tekla and reporting. Wait for my manual final sign-off.
 ```
 
 ```text
 Message + inputs -> scope check -> tool selection -> validated policy/inputs
 -> change preview -> manual Approve & Apply -> existing worker pipeline
--> live results -> A8 manual sign-off -> same conversation remains available
+-> live results -> manual sign-off -> same conversation remains available
 ```
 
 | Capability | Behaviour |
@@ -324,14 +326,14 @@ Message + inputs -> scope check -> tool selection -> validated policy/inputs
 | Selected Tekla changes | Require verified manifests and supported attribute mappings. Legacy, shared or derived-layout changes can be blocked. |
 | Attachments | Bounded text/preview readers; no macros or arbitrary instructions. Original binary documents are not retained as executable files. |
 | Live progress | Chat and buttons use saved workflow progress. Old solver evidence is not rebound to modified inputs. |
-| General versus narrow requests | "Run workflow" includes A7/A8; "STAAD only" retains narrower scope. |
+| General versus narrow requests | "Run workflow" includes Tekla and reporting; "STAAD only" retains narrower scope. |
 | Saved conversations | History, rename/share/copy, refresh restoration and continued chat after sign-off. |
 
-After a **chat-dispatched** run completes, fails or is cancelled, next-run geometry and loads reload the read-only master `frame_specs.json`. Active calculations, stage continuations and pending A8 approval keep their current inputs. Saved results retain the actual custom inputs; chat never rewrites the master. A historical browser view can still show the inspected run rather than a fresh master view.
+After a **chat-dispatched** run completes, fails or is cancelled, next-run geometry and loads reload the read-only master `frame_specs.json`. Active calculations, stage continuations and pending approval keep their current inputs. Saved results retain the actual custom inputs; chat never rewrites the master. A historical browser view can still show the inspected run rather than a fresh master view.
 
 ### Live timers
 
-Each A1-A8 box displays **`MM:SS`** beneath its label. Timers use saved backend timestamps, update live and survive refresh. Repeated stage visits add execution time, including LLM/Deep Agents overhead. Time between stages and manual A8 approval waiting are excluded. New stages show `00:00`; older stages without recorded timing show `--:--`. These are elapsed times, not completion estimates.
+Each stage box displays **`MM:SS`** beneath its label. Timers use saved backend timestamps, update live and survive refresh. Repeated stage visits add execution time, including LLM/Deep Agents overhead. Time between stages and manual approval waiting are excluded. New stages show `00:00`; older stages without recorded timing show `--:--`. These are elapsed times, not completion estimates.
 
 ## Rules for one run
 
@@ -346,24 +348,24 @@ Supply supported thresholds through chat or top-level `run_policy` JSON. When ru
 | `max_plate_utilization_percent` | `100` | `0 < value <= 100` |
 | `max_deformation_utilization_percent` | `100` | `0 < value <= 100` |
 
-A4, A5, correction decisions and A6 use the validated policy; A8 and the archive record it. An 85% bolt result can satisfy a 90% rubric, but still fails when IDEA reports a native failure. Disabling checks, nonfinite values, arbitrary formulas and unknown fields are unsupported. Manual acceptance remains mandatory.
+A4, A5 and the package audit use the validated policy; the report and archive record it. An 85% bolt result can satisfy a 90% rubric, but still fails when IDEA reports a native failure. Disabling checks, nonfinite values, arbitrary formulas and unknown fields are unsupported. Manual acceptance remains mandatory.
 
 Chat consumes queued rules when a new live run is dispatched, including a failed run. Busy/disabled dispatch and geometry-only preview do not consume them. Later new runs use defaults unless another override is supplied. Direct API resubmission of custom JSON explicitly requests that policy again; continuations retain their source policy.
 
 ## API reference
 
-Request schemas: `/docs`. Generated contract: `/openapi.json`. Agents are internal graph nodes; individual `/A1` through `/A8` HTTP endpoints are not implemented.
+Request schemas: `/docs`. Generated contract: `/openapi.json`. Agents are internal graph nodes; individual stage HTTP endpoints are not implemented.
 
 ### Workflow - prefix `/api/v2/agentic`
 
 | Method | Path | Purpose / side effect |
 |---|---|---|
-| POST | `/run` | Start A1-A8 with `{grid, load_configuration?, run_policy?}`. Uses native tools; response waits for worker outcome. |
+| POST | `/run` | Start A1-A7 with `{grid, load_configuration?, run_policy?}`. Uses native tools; response waits for worker outcome. |
 | GET | `/active` | Read current state or `null`. |
 | GET | `/runs?limit=50` | List saved runs. |
 | GET | `/runs/{run_id}` | Read complete workflow JSON, progress, results, timings and logs. |
 | POST | `/cancel/{run_id}` | Cancel the owned worker. |
-| POST | `/retry-publication/{source_run_id}` | Fork an eligible failed publication, re-audit evidence and retry A7/A8. |
+| POST | `/retry-publication/{source_run_id}` | Fork an eligible failed publication, re-audit evidence and retry Tekla and reporting. |
 | POST | `/accept/{run_id}` | Manual Gate 3 acceptance; optional `{"engineer_name":"Your name"}`. Rejects failed/unverified packages. |
 
 Read-only examples:
@@ -410,7 +412,7 @@ Internal tools cover context/status reads, input/policy proposals, joint paramet
 | POST | `/api/v1/to_ideastatica` | Run a native connection-design request. |
 | POST | `/api/v1/radiator_support/to_tekla` | Send physical members, grid and joint groups to Tekla. |
 
-The server blocks conflicting integration calls while its agentic worker owns the desktop tools. Manual integration requests do not replace full package validation or engineer acceptance.
+The server blocks cooperating manual and worker operations from using the desktop simultaneously, including across server processes using the same temporary directory. Manual integration requests do not replace full package validation or engineer acceptance.
 
 ## Outputs and storage
 
@@ -425,7 +427,7 @@ store output run/
     |   +-- run_policy.json
     +-- 01_agents/
     |   +-- A1/attempt_001/{input.json, output.json, process.json}
-    |   +-- A2/ ... A8/
+    |   +-- A2/ ... A7/ (legacy runs may contain A8/)
     |   +-- A5/attempt_002/             # when retried
     +-- 02_software/
     |   +-- STAAD/attempt_001/
@@ -537,7 +539,17 @@ Optional approval-preview browser check, using an installed Edge browser and fix
 
 Inspect other scripts before executing them: some perform live operations. `validate_dynamic_chat.py --live-model` sends test prompts to the configured LLM and may incur charges.
 
-Latest archive verification: **297 backend tests and 31 frontend checks passed**. These are controlled tests with native operations mocked or synthetic files. They do not guarantee future native calculations or independent Tekla model reopening.
+These are controlled tests with native operations mocked or synthetic files. They do not guarantee native calculations or independent Tekla model reopening.
+
+### RDP live verification
+
+1. Use designated isolated, saved STAAD and Tekla working models; full publication clears and rebuilds the Tekla model. Start the compatible IDEA service and confirm templates, SDK versions and licenses.
+2. Run a small approved input through the dashboard. Verify the A3–A6 substeps, analysis results, IDEA checks, package audit, Tekla member/connection read-back and saved archive.
+3. If safe test inputs are available, exercise frame and connection corrections and inspect their histories. Confirm stale evidence blocks publication.
+4. Verify a pre-publication Tekla connection failure retries only within the five-retry ceiling. Do not induce a partial write in a shared model; any partial or uncertain publication must stop and be inspected before manual recovery.
+5. Confirm the report pauses at Gate 3 and only a responsible engineer can accept it. Check archived evidence and model contents independently.
+
+This live verification must be performed on the licensed RDP desktop; mocked tests do not establish native integration success.
 
 ## Troubleshooting
 
@@ -554,6 +566,6 @@ Latest archive verification: **297 backend tests and 31 frontend checks passed**
 | Timer shows `--:--` | Historical run lacks timing data. New workers record timing; refresh cannot create missing past records. |
 | Customized fields remain visible | Distinguish the inspected historical run from next-run inputs. Pending approval keeps current inputs; attach the master in a fresh request to explicitly select its exact values. |
 | Native archive incomplete | Read `copy_manifest.json` and `output_archive.warnings`; locked/missing files do not become successful exports. |
-| Approval rejected | Inputs, source evidence, policy or templates may be stale. Create a fresh preview. A8 acceptance requires passing validation and A7. |
+| Approval rejected | Inputs, source evidence, policy or templates may be stale. Create a fresh preview. Acceptance requires passing validation and Tekla publication. |
 
 Shared STAAD/Tekla cleanup utilities in `src/common` are destructive and save changes; they are not a normal startup step. Inspect their implementation and use designated working models before invoking them.

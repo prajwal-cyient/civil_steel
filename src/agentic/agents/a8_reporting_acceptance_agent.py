@@ -8,7 +8,7 @@ Pauses at Gate 3 for the responsible human engineer to review and sign off.
 
 from datetime import datetime
 from typing import Optional
-from agentic.state import WorkflowState, AgentLogEntry
+from agentic.state import WorkflowState, AgentLogEntry, workflow_stage
 
 
 def run_a8_reporting(state: WorkflowState) -> WorkflowState:
@@ -16,7 +16,7 @@ def run_a8_reporting(state: WorkflowState) -> WorkflowState:
     Executes Agent A8: Prepares calculation package and pauses for Final Engineer Acceptance.
     """
     ts = datetime.now().strftime("%H:%M:%S")
-    state.current_agent = "A8"
+    state.current_agent = workflow_stage(state, "report")
 
     # Assemble calculation package summary
     col_prof = state.active_column_profile
@@ -64,9 +64,9 @@ def run_a8_reporting(state: WorkflowState) -> WorkflowState:
     state.status = "PAUSED_AT_GATE3"  # Gate 3 Pause
 
     msg = f"Calculation package ready for review (STAAD Max Ratio: {staad_ratio:.2f}, Hash: {pkg_hash}). Waiting for engineer sign-off."
-    state.agent_statuses["A8"] = {"status": "AWAITING_APPROVAL", "message": msg}
+    state.agent_statuses[workflow_stage(state, "report")] = {"status": "AWAITING_APPROVAL", "message": msg}
     state.logs.append(AgentLogEntry(
-        agent_id="A8",
+        agent_id=workflow_stage(state, "report"),
         agent_name="Reporting & Human Gate",
         status="AWAITING_APPROVAL",
         message=msg,
@@ -80,7 +80,7 @@ def accept_gate3(state: WorkflowState, engineer_name: str = "Lead Structural Eng
     """
     Called when the human engineer clicks 'Accept & Sign Off' on the UI.
     """
-    if state.status != "PAUSED_AT_GATE3" or not state.validation_report.get("passed") or state.agent_statuses.get("A7", {}).get("status") != "PASSED":
+    if state.status != "PAUSED_AT_GATE3" or not state.validation_report.get("passed") or state.agent_statuses.get(workflow_stage(state, "tekla"), {}).get("status") != "PASSED":
         raise ValueError("Only a verified package awaiting Gate 3 review can be accepted.")
     ts = datetime.now().strftime("%H:%M:%S")
     state.gate3_approved = True
@@ -92,9 +92,9 @@ def accept_gate3(state: WorkflowState, engineer_name: str = "Lead Structural Eng
                                   acceptance_timestamp=state.acceptance_timestamp)
 
     msg = f"Design accepted and signed off by {engineer_name}."
-    state.agent_statuses["A8"] = {"status": "PASSED", "message": msg}
+    state.agent_statuses[workflow_stage(state, "report")] = {"status": "PASSED", "message": msg}
     state.logs.append(AgentLogEntry(
-        agent_id="A8",
+        agent_id=workflow_stage(state, "report"),
         agent_name="Reporting & Human Gate",
         status="PASSED",
         message=msg,

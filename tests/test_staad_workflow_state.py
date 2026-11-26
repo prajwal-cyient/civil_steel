@@ -1,10 +1,12 @@
 """Regression coverage for native integer load-case IDs in workflow state."""
 
 import asyncio
+from copy import deepcopy
 import json
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -12,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from langgraph.graph import END, StateGraph
 
-from agentic.agents.a4_staad_analyzer_agent import run_a4_staad_analyzer
+from agentic.agents.a4_staad_analyzer_agent import build_staad_payload, run_a4_staad_analyzer
 from agentic.state import WorkflowState
 from agentic.store import SqliteWorkflowStore
 
@@ -42,6 +44,84 @@ class StaadWorkflowStateTests(unittest.TestCase):
         restored = WorkflowState.model_validate(serialized)
         self.assertEqual(restored.staad_results["100"]["load_case_title"], "Case 100")
 
+    def test_payload_builder_preserves_request_and_evidence_invalidation_order(self):
+        state = WorkflowState(
+            run_id="payload",
+            grid_config={"col_height_mm": 5000},
+            load_config={"country": "EUROPE"},
+            frame_candidate={"members_split_beams": [{"name": "column", "p1": [0, 0, 0]}]},
+            readiness={"staad_model_path": "example.std"},
+            ideastatica_results={"old": {}},
+            tekla_results={"old": {}},
+        )
+        expected = {
+            "grid": {"col_height_mm": 5000},
+            "members_split_beams": [{"name": "column", "p1": [0, 0, 0]}],
+            "load_configuration": {"country": "EUROPE"},
+            "expected_staad_model_path": "example.std",
+        }
+        self.assertEqual(build_staad_payload(state), expected)
+        self.assertIn("old", state.ideastatica_results)
+        captured = []
+
+        async def send(payload):
+            captured.append(deepcopy(payload))
+            self.assertFalse(state.ideastatica_results)
+            self.assertFalse(state.tekla_results)
+            payload["members_split_beams"][0]["p1"][0] = 123
+            return deepcopy(self.results)
+
+        with patch("agentic.agents.a4_staad_analyzer_agent.send_to_staad", side_effect=send):
+            asyncio.run(run_a4_staad_analyzer(state))
+        self.assertEqual(captured, [expected])
+        self.assertEqual(state.frame_candidate["members_split_beams"][0]["p1"], [0, 0, 0])
+        self.assertEqual(state.agent_statuses["A4"]["status"], "PASSED")
+
+    def test_staged_a4_matches_existing_entry_and_rejects_stale_request(self):
+        from agentic.agents import a4_staad_analyzer_agent as a4
+
+        base = WorkflowState(
+            run_id="staged_a4", status="RUNNING",
+            grid_config={"col_height_mm": 5000},
+            load_config={"country": "EUROPE"},
+            frame_candidate={"members_split_beams": [{"name": "column", "p1": [0, 0, 0]}]},
+            ideastatica_results={"old": {}},
+        )
+        legacy = base.model_copy(deep=True)
+        staged = base.model_copy(deep=True)
+        with patch.object(a4, "send_to_staad", side_effect=lambda _: deepcopy(self.results)) as solver:
+            asyncio.run(a4.run_a4_staad_analyzer(legacy))
+            a4.prepare_a4_staad(staged)
+            staged = WorkflowState.model_validate_json(staged.model_dump_json())
+            asyncio.run(a4.execute_a4_staad(staged))
+            a4.evaluate_a4_staad(staged)
+            a4.decide_a4_staad(staged)
+            self.assertEqual(staged.staad_results, legacy.staad_results)
+            self.assertEqual(staged.frame_grader_result, legacy.frame_grader_result)
+            self.assertEqual(staged.agent_statuses["A4"], legacy.agent_statuses["A4"])
+            self.assertEqual(staged.ideastatica_results, legacy.ideastatica_results)
+            self.assertFalse(staged.staad_request)
+            self.assertEqual(solver.call_count, 2)
+
+            stale = base.model_copy(deep=True)
+            a4.prepare_a4_staad(stale)
+            stale.load_config["country"] = "UK"
+            asyncio.run(a4.execute_a4_staad(stale))
+            self.assertEqual(stale.status, "FAILED")
+            self.assertIn("no longer matches", stale.error)
+            self.assertFalse(stale.staad_request)
+            self.assertEqual(solver.call_count, 2)
+
+            changed_results = base.model_copy(deep=True)
+            a4.prepare_a4_staad(changed_results)
+            asyncio.run(a4.execute_a4_staad(changed_results))
+            a4.evaluate_a4_staad(changed_results)
+            changed_results.staad_results["member_type_max_ratios"]["column"] = 1.2
+            a4.decide_a4_staad(changed_results)
+            self.assertEqual(changed_results.status, "FAILED")
+            self.assertIn("grade no longer matches", changed_results.error)
+            self.assertEqual(changed_results.loop_a_count, 0)
+
     def test_a4_results_survive_next_graph_node_validation(self):
         graph = StateGraph(WorkflowState)
         graph.add_node("analyze", run_a4_staad_analyzer)
@@ -62,6 +142,61 @@ class StaadWorkflowStateTests(unittest.TestCase):
             output = asyncio.run(graph.compile().ainvoke(WorkflowState(run_id="graph_keys")))
         final = WorkflowState.model_validate(output)
         self.assertEqual(final.current_agent, "A5")
+
+    def test_inflight_frame_change_cannot_claim_staad_evidence(self):
+        from agentic.agents import a4_staad_analyzer_agent as a4
+        state = WorkflowState(
+            run_id="changed_during_staad", status="RUNNING",
+            grid_config={"col_height_mm": 5000},
+            load_config={"country": "EUROPE"},
+            frame_candidate={"members_split_beams": [{"name": "column", "p1": [0, 0, 0]}]},
+        )
+
+        async def send(payload):
+            state.load_config["country"] = "UK"
+            return deepcopy(self.results)
+
+        with patch.object(a4, "send_to_staad", side_effect=send):
+            asyncio.run(a4.run_a4_staged(state))
+        self.assertEqual(state.status, "FAILED")
+        self.assertIn("changed during STAAD analysis", state.error)
+        self.assertFalse(state.staad_results)
+        self.assertIsNone(state.frame_grader_result)
+
+    def test_subgraphs_run_on_worker_thread_and_stop_on_failure(self):
+        from agentic.agents import a3_frame_generator_agent as a3, a4_staad_analyzer_agent as a4
+        from agentic.nodes.a3_frame.graph import build_frame_graph
+        from agentic.nodes.a4_staad.graph import build_staad_graph
+        from agentic.state import fail_workflow
+
+        calls = []
+        owner_thread = threading.get_ident()
+        state = WorkflowState(run_id="subgraph_thread", status="RUNNING")
+
+        def step(name, fail=False):
+            def execute(candidate):
+                self.assertIs(candidate, state)
+                self.assertEqual(threading.get_ident(), owner_thread)
+                calls.append(name)
+                return fail_workflow(candidate, "A4", "controlled API failure") if fail else candidate
+            return execute
+
+        async def api(candidate):
+            return step("a4b", fail=True)(candidate)
+
+        with patch.object(a3, "evaluate_a3_frame", side_effect=step("a3a")), \
+             patch.object(a3, "generate_a3_frame", side_effect=step("a3b")), \
+             patch.object(a4, "prepare_a4_staad", side_effect=step("a4a")), \
+             patch.object(a4, "execute_a4_staad", side_effect=api), \
+             patch.object(a4, "evaluate_a4_staad") as evaluate, \
+             patch.object(a4, "decide_a4_staad") as decide:
+            frame = asyncio.run(build_frame_graph().ainvoke({"workflow": state}))["workflow"]
+            result = asyncio.run(build_staad_graph().ainvoke({"workflow": frame}))["workflow"]
+        self.assertIs(result, state)
+        self.assertEqual(calls, ["a3a", "a3b", "a4a", "a4b"])
+        self.assertEqual(result.status, "FAILED")
+        evaluate.assert_not_called()
+        decide.assert_not_called()
 
     def test_results_reload_from_sqlite(self):
         with tempfile.TemporaryDirectory() as directory:

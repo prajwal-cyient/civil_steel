@@ -3,7 +3,7 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 import math
-from agentic.state import AgentLogEntry, fail_workflow
+from agentic.state import AgentLogEntry, fail_workflow, workflow_stage
 
 
 def component_patch(manifest, changes, groups):
@@ -152,9 +152,9 @@ def run_selected_tekla(state):
                                "verified_members":len(baseline['member_manifest']),
                                "publication_scope": "selected_connections", "failed": 0, "errors": []}
         message = f"Updated {len(patches)} existing Tekla connections; recorded unselected attributes verified unchanged. No model rebuild."
-        state.agent_statuses["A7"] = {"status": "PASSED", "message": message}
-        state.logs.append(AgentLogEntry(agent_id="A7", agent_name="Selected Tekla updater", status="PASSED",
+        state.agent_statuses[workflow_stage(state, "tekla")] = {"status": "PASSED", "message": message}
+        state.logs.append(AgentLogEntry(agent_id=workflow_stage(state, "tekla"), agent_name="Selected Tekla updater", status="PASSED",
                          message=message, timestamp=datetime.now().strftime("%H:%M:%S")))
         return state
     except Exception as exc:
-        return fail_workflow(state, "A7", str(exc))
+        return fail_workflow(state, workflow_stage(state, "tekla"), str(exc))

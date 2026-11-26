@@ -190,6 +190,27 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "PAUSED_AT_GATE3")
         self.assertFalse(result.gate3_approved)
 
+    async def test_invalid_package_recovery_stops_without_rerunning_frame(self):
+        from agentic.evidence import frame_signature
+        state = WorkflowState(run_id="invalid_recovery", status="RUNNING",
+                              agent_statuses={"A3": {"status": "PASSED"}},
+                              frame_grader_result=GraderResult(passed=True, summary="Passing"))
+        state.staad_results["candidate_signature"] = frame_signature(state)
+
+        async def a6(candidate):
+            candidate.agent_statuses["A6"] = {"status": "REVISING"}
+            candidate.validation_report = {"recovery_target": "a3_frame_generator"}
+            return candidate
+
+        with patch("agentic.orchestrator.node_a6", side_effect=a6), \
+             patch("agentic.orchestrator.node_a3", new_callable=AsyncMock) as a3, \
+             patch("agentic.orchestrator.node_a7", new_callable=AsyncMock) as a7:
+            result = await run_chat_action(state, "publish_to_tekla")
+        self.assertEqual(result.status, "FAILED")
+        self.assertIn("recovery is invalid", result.error)
+        a3.assert_not_awaited()
+        a7.assert_not_awaited()
+
 
 class ChatApiTests(unittest.TestCase):
     def setUp(self):

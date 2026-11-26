@@ -1,5 +1,5 @@
 """Selected chat actions on the existing STA worker; engineering rules stay in A1-A8."""
-from agentic.state import fail_workflow
+from agentic.state import fail_workflow, workflow_stage
 
 
 async def run_chat_action(state, action):
@@ -29,17 +29,16 @@ async def run_chat_action(state, action):
         return state.agent_statuses.get("A5", {}).get("status") == "PASSED"
 
     async def audit():
+        nonlocal state
         if not await checked("a6"):
             return False
-        while state.agent_statuses.get("A6", {}).get("status") == "REVISING":
+        while state.agent_statuses.get(workflow_stage(state, "package"), {}).get("status") == "REVISING":
             target = flow.route_after_a6(state)
-            if target == "a3_frame_generator":
-                if not await checked("a3") or not await frame() or not await joints():
-                    return False
-            elif target == "a5_ideastatica_analyzer":
+            if target == "a5_ideastatica_analyzer":
                 if not await joints():
                     return False
             else:
+                state = fail_workflow(state, workflow_stage(state, "package"), "Package recovery is invalid or exhausted; start a new workflow.")
                 return False
             if not await checked("a6"):
                 return False
@@ -57,11 +56,11 @@ async def run_chat_action(state, action):
             return state
         verify_selected_values(state)
         if not await checked("a6") or not state.validation_report.get("passed"):
-            return fail_workflow(state, "A6", "Selected change needs broader recovery or failed package validation; no additional groups were changed.")
+            return fail_workflow(state, workflow_stage(state, "package"), "Selected change needs broader recovery or failed package validation; no additional groups were changed.")
         verify_selected_values(state)
         if action == "publish_selected_connections":
             from agentic.tekla_selected_updates import run_selected_tekla
-            state = await flow._run_stage(state, "A7", run_selected_tekla)
+            state = await flow._run_stage(state, workflow_stage(state, "tekla"), run_selected_tekla)
             if state.status == "FAILED" or not await checked("a8"):
                 return state
         else:
@@ -86,7 +85,7 @@ async def run_chat_action(state, action):
         if state.readiness.get("preview_only") or state.agent_statuses.get("A3", {}).get("status") != "PASSED":
             return fail_workflow(state, "CHAT", "Generate a live validated structure before engineering analysis; a preview is not verified evidence.")
         if action == "analyze_frame":
-            for agent in ("A4", "A5", "A6", "A7", "A8"):
+            for agent in ("A4", "A5", workflow_stage(state, "package"), workflow_stage(state, "tekla"), workflow_stage(state, "report")):
                 state.agent_statuses.pop(agent, None)
             if not await frame():
                 return state
@@ -95,7 +94,7 @@ async def run_chat_action(state, action):
                     state.staad_results.get("candidate_signature") != frame_signature(state)):
                 return fail_workflow(state, "CHAT", "Current passing STAAD evidence is required.")
             if action == "design_connections":
-                for agent in ("A5", "A6", "A7", "A8"):
+                for agent in ("A5", workflow_stage(state, "package"), workflow_stage(state, "tekla"), workflow_stage(state, "report")):
                     state.agent_statuses.pop(agent, None)
                 state.validation_report.clear()
                 state.tekla_results.clear()
@@ -103,7 +102,7 @@ async def run_chat_action(state, action):
                 if not await joints():
                     return state
             elif action in ("validate_package", "publish_to_tekla"):
-                for agent in ("A6", "A7", "A8"):
+                for agent in (workflow_stage(state, "package"), workflow_stage(state, "tekla"), workflow_stage(state, "report")):
                     state.agent_statuses.pop(agent, None)
                 state.tekla_results.clear()
                 state.final_report.clear()

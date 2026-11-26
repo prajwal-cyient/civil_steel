@@ -5,7 +5,7 @@ The existing page now has an **Engineering chat** button at the bottom right:
 
 The repository currently serves a static HTML/JavaScript frontend, not React.
 Chat is an isolated enhancement to that frontend. Existing engineering endpoints,
-the A1–A8 implementations, calculations, graders and correction rules are retained.
+the engineering implementations, calculations, graders and correction rules are retained.
 
 ## Start and stop
 
@@ -46,7 +46,7 @@ in chat. Existing A2 readiness checks still verify the configured STAAD, IDEA an
 services before a live candidate is generated. No software location or service URL
 was changed for chat. First try a preview, then a live validated structure, STAAD,
 IDEA, package validation and Tekla publishing. General requests to run the inputs
-or agentic workflow select the complete A1-A8 path, including publication;
+or agentic workflow select the complete A1-A7 path, including publication;
 explicit stage-only requests remain limited to those actions. Gate 3 acceptance
 still uses the existing approval control.
 
@@ -93,7 +93,7 @@ still uses the existing approval control.
 
 Example conversations:
 
-A full run request stays `AWAITING_APPROVAL` after A8 prepares the report.
+A full run request stays `AWAITING_APPROVAL` after A7 prepares the report.
 Click **Accept & Sign Off** on the dashboard. Actual persisted workflow acceptance
 then marks that chat request `COMPLETED`, adds one approval confirmation and
 enables another message in the same conversation. Chat cannot approve itself.
@@ -106,9 +106,9 @@ The waiting request survives refresh/restart and is not replayed against native 
 | “Generate a live validated structure.” | A1, A2 readiness, A3; native tools/catalogues/templates required. |
 | “Run STAAD analysis only.” | Selected live candidate; A4 and bounded existing Loop A. |
 | “Design the connections in IDEA.” | Current passing STAAD evidence; A5 and existing Loop B. |
-| “Check the complete engineering package.” | A6 audit and existing Loop C recovery. |
-| “Publish the verified package to Tekla.” | A6 evidence gate, A7 publishing, A8 reporting; final human Gate 3 retained. |
-| “Run the full engineering workflow including Tekla publishing.” | Original A1–A8 LangGraph, with its existing loops and stops. |
+| “Check the complete engineering package.” | A5c audit and bounded connection-evidence recovery. |
+| “Publish the verified package to Tekla.” | A5c evidence gate, A6 publishing, A7 reporting; final human Gate 3 retained. |
+| “Run the full engineering workflow including Tekla publishing.” | A1–A7 LangGraph, with its correction loops and safety stops. |
 | “Explain the selected run’s failures.” | Read saved grader results; no engineering execution. |
 
 The model selects tools from descriptions. There is no keyword-to-tool routing table.
@@ -152,7 +152,7 @@ Existing form / JSON + chat message
 
 Engineering tools
   -> existing shared run lock / RunController / isolated STA worker
-  -> existing A1–A8 stage functions, graders and routing decisions
+  -> A1–A7 stage functions, graders and routing decisions
   -> existing workflow SQLite evidence and human Gate 3
 ```
 
@@ -301,14 +301,14 @@ Example (use a group/key actually present in your selected run):
    inputs and models unchanged. The LLM cannot approve its own proposal.
 4. Changed source data invalidates approval. Repeated approval cannot replay it.
 5. Connection-only changes fork a candidate, reuse eligible unchanged evidence,
-   solve selected families and run the existing A6 package checks.
+   solve selected families and run the existing A5c package checks.
 6. Failed checks do not trigger unapproved parameter changes or a broader redesign.
 7. Selected results are saved under `output_exports/dynamic_changes/<run_id>/`.
 
 `update_project_inputs` now prepares a preview rather than immediately editing the
 chat project. Approval can save inputs only or run the explicitly requested stage
 with its prerequisites. A normal request to run unchanged inputs still uses the
-existing A1–A8 path and pauses for manual final sign-off.
+A1–A7 path and pauses for manual final sign-off.
 
 The selected-edit adapter supports exposed numeric length parameters with an
 existing IDEA-to-Tekla map. Its `mm`/`m` conversion follows the existing factor of
@@ -318,7 +318,7 @@ supported. Frame spacing remains a frame-level input.
 
 ### Selected Tekla publication
 
-The full A7 publisher retains its existing behavior and additionally records a
+The full A6 publisher retains its existing behavior and additionally records a
 versioned component manifest. Selected publication requires that verified manifest
 and matching model path, component IDs, names, numbers and source attributes.
 Ownership is bound to members at the same physical joint, not simply a shared
@@ -328,8 +328,8 @@ It modifies existing supported attributes, reads them back and checks recorded
 unselected attributes. It never calls full-model cleanup.
 
 After validating selected edits, a later explicit publication request creates a
-new approval preview. It reuses the saved IDEA calculations, repeats A6 package
-validation, updates supported selected Tekla attributes and prepares A8 reporting.
+new approval preview. It reuses the saved IDEA calculations, repeats the A5c package
+validation, updates supported selected Tekla attributes and prepares A7 reporting.
 Final engineer sign-off remains manual. After a chat run completes, fails or is
 cancelled, the next-run inputs reload the read-only
 `src/radiator_support/frame_specs.json` master. Pending sign-off and stage

@@ -91,7 +91,8 @@ class InputLifetimeTests(unittest.IsolatedAsyncioTestCase):
         self.store.save_plan(plan)
         plan=self.store.transition_plan(plan['id'],self.session['id'],'PENDING','EXECUTING')
         turn=self.store.new_turn(self.session['id'],'Apply approved changes')
-        async def execute(payload,run_id):
+        async def execute(payload,run_id,*,chat_parameter_rerun=False):
+            self.assertTrue(chat_parameter_rerun)
             state=WorkflowState(run_id=run_id,status='COMPLETED',raw_input=payload)
             self.workflows.save_state(state)
             return state

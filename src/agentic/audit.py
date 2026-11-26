@@ -124,7 +124,8 @@ def evaluation(state, tool, result, **metadata):
 
 def stage_outcome(state, history_sizes):
     """Uniform corrections audit, retaining the original detailed loop records."""
-    if state.current_agent == 'A6' and state.validation_report:
+    from agentic.state import workflow_stage
+    if state.current_agent == workflow_stage(state, 'package') and state.validation_report:
         evaluation(state, 'Package', state.validation_report)
     for key, tool in [('loop_a_history', 'STAAD'), ('loop_b_history', 'IDEA_StatiCa'),
                       ('loop_c_history', 'Package')]:

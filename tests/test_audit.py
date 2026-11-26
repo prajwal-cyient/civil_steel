@@ -1,6 +1,6 @@
 """Audit guarantees with isolated storage and no live models or network calls."""
 import asyncio
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import json
 import os
 from pathlib import Path
@@ -173,6 +173,7 @@ class AuditTests(unittest.TestCase):
         store.get_state.return_value = self.state
         with patch.object(worker,'load_environment'), \
              patch.object(sys,'argv',['worker','--run-id',self.state.run_id,'--chat-action','preview_structure']), \
+             patch('agentic.desktop_lock.desktop_lock', return_value=nullcontext()), \
              patch('agentic.store.WORKFLOW_STORE',store), \
              patch('agentic.chat_actions.run_chat_action',new=AsyncMock(side_effect=run)):
             worker.main()

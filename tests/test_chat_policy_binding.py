@@ -99,7 +99,8 @@ class ChatPolicyBindingTests(unittest.IsolatedAsyncioTestCase):
         from agentic.state import WorkflowState
         from agentic.agents.a1_requirements_agent import run_a1_requirements
         from agentic.agents.a8_reporting_acceptance_agent import run_a8_reporting
-        async def execute(data, run_id):
+        async def execute(data, run_id, *, chat_parameter_rerun=False):
+            self.assertTrue(chat_parameter_rerun)
             state = run_a8_reporting(run_a1_requirements(WorkflowState(run_id=run_id, raw_input=data)))
             self.workflows.save_state(state)
             return state

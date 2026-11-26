@@ -1,23 +1,26 @@
 """
 a3_frame_generator_agent.py
 
-Agent A3: Create a Frame (3D Parametric Geometry Generator).
-Consolidated & Self-Contained. Computes 3D geometry coordinates for continuous (Tekla)
-and bay-split (STAAD FEA) structural members, incorporating Loop A profile upgrades.
+Agent A3: Create a frame using the profile evaluation and geometry modules.
+Computes continuous (Tekla) and bay-split (STAAD FEA) structural members,
+incorporating Loop A profile upgrades.
 """
 
 from datetime import datetime
+from copy import deepcopy
 import json
 import math
 from math import sqrt
 import os
 import re
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from agentic.state import WorkflowState, AgentLogEntry
 from agentic.checks import template_coverage
 from agentic.config import workflow_mode
+from agentic.nodes.a3_frame.evaluate import FrameParameters, evaluate_frame_parameters as _evaluate_frame_parameters
+from agentic.nodes.a3_frame.generate import generate_frame
 
 # Standard catalog profile dimensions (height mm, width mm) fallback when Tekla is offline:
 STANDARD_PROFILE_DIMENSIONS: Dict[str, Tuple[float, float]] = {
@@ -94,6 +97,11 @@ def _lookup_profile_width(profile_name: str) -> float:
     return val
 
 
+def evaluate_frame_parameters(cfg: Dict[str, Any]) -> FrameParameters:
+    """Evaluate profile dimensions and the existing column-height constraint."""
+    return _evaluate_frame_parameters(cfg, _lookup_profile_height, _lookup_profile_width)
+
+
 def generate_members(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """
     Parametric 3D Steel Frame Generator.
@@ -102,251 +110,14 @@ def generate_members(cfg: Dict[str, Any]) -> Dict[str, Any]:
       - 'members_split_beams': Discretized bay-split member segments (for STAAD.Pro FEA).
       - 'summary': Component breakdowns and effective height adjustments.
     """
-    n_long = cfg["n_long_bays"]
-    n_trans = cfg["n_trans_bays"]
-    bay_long = cfg["bay_long_mm"]
-    bay_trans = cfg["bay_trans_mm"]
-    col_height = cfg["col_height_mm"]
-    total_structure_height = cfg["total_structure_height"]
-    longitudinal_beam_extra_mm = cfg.get("longitudinal_beam_extra_mm", 140.0)
-    x0, y0, z0 = cfg.get("starting_point", [0.0, 0.0, 0.0])
+    return generate_frame(cfg, None, evaluate_frame_parameters)
 
-    long_brace_bays = cfg.get("longitudinal_brace_bays", [])
-    trans_brace_bays = cfg.get("transverse_brace_bays", [])
-    vertical_base_eccentricity = cfg.get("vertical_base_eccentricity_mm", 0.0)
-    gusset_t = cfg.get("gusset_plate_thickness_mm", 0.0)
-    embedded_t = cfg.get("embedded_plate_thickness_mm", 0.0)
-    bracing_distance_from_column_mm = cfg.get("bracing_distance_from_column_mm", 0.0)
 
-    beam_material = cfg.get("beam_material", "S355JR")
-    column_material = cfg.get("column_material", "S355JR")
-    long_brace_material = cfg.get("longitudinal_brace_material", "S355JR")
-    trans_brace_material = cfg.get("transverse_brace_material", "S355JR")
-
-    beam_profile = cfg.get("beam_profile", "HEA140")
-    column_profile = cfg.get("column_profile", "CFRHS120X120X5")
-    long_brace_profile = cfg.get("longitudinal_brace_profile", "CFRHS100X100X4")
-    trans_brace_profile = cfg.get("transverse_brace_profile", "CFRHS100X100X4")
-
-    beam_class = cfg.get("beamClass", "3")
-    column_class = cfg.get("columnClass", "11")
-    long_brace_class = cfg.get("longitudinalClass", "2")
-    trans_brace_class = cfg.get("transverseClass", "7")
-
-    beam_height = _lookup_profile_height(beam_profile)
-    column_width = _lookup_profile_width(column_profile)
-    beam_width = _lookup_profile_width(beam_profile)
-    column_section_height = _lookup_profile_height(column_profile)
-
-    max_col_height = total_structure_height - 2 * beam_height
-    if max_col_height <= 0:
-        raise ValueError(
-            f"total_structure_height ({total_structure_height} mm) is too small to fit "
-            f"two beam depths ({2 * beam_height} mm) plus any positive column height."
-        )
-    col_height_eff = min(col_height, max_col_height)    
-
-    col_bottom_z = z0
-    col_top_z = col_bottom_z + col_height_eff
-
-    long_beam_z = col_top_z + beam_height
-    trans_beam_z = col_top_z + 2 * beam_height
-
-    brace_bottom_z = col_bottom_z + vertical_base_eccentricity
-    brace_top_z = col_top_z
-    brace_bottom_z_staad = col_bottom_z
-
-    def point(i: int, j: int, z: float) -> List[float]:
-        return [x0 + i * bay_long, y0 + j * bay_trans, z]
-
-    def transform_to_staad_co_ordinates(p_in: List[float]) -> List[float]:
-        p = list(p_in)
-        # Swap Y and Z
-        p[1], p[2] = p[2], p[1]
-        # Swap X and Z
-        p[0], p[2] = p[2], p[0]
-        return p
-
-    columns = []
-    staad_columns = []
-    beams_tekla = []
-    beams_staad = []
-    braces = []
-    staad_braces = []
-
-    # 1. Columns
-    for j in range(n_trans + 1):
-        for i in range(n_long + 1):
-            columns.append({
-                "p1": point(i, j, col_bottom_z),
-                "p2": point(i, j, col_top_z),
-                "profile": column_profile,
-                "material": column_material,
-                "class": column_class,
-                "type": "column",
-                "name": f"column-{j}-{i}",
-            })
-            p1 = transform_to_staad_co_ordinates(point(i, j, col_bottom_z))
-            p2 = transform_to_staad_co_ordinates(point(i, j, trans_beam_z))
-            staad_columns.append({
-                "p1": p1,
-                "p2": p2,
-                "profile": column_profile,
-                "material": column_material,
-                "class": column_class,
-                "type": "column",
-                "name": f"column-{j}-{i}",
-                "tekla_name": f"column-{j}-{i}",
-            })
-
-    # 2. Longitudinal Beams (X-direction)
-    for j in range(n_trans + 1):
-        p1 = point(0, j, col_top_z)
-        p2 = point(n_long, j, col_top_z)
-        p1[0] -= longitudinal_beam_extra_mm
-        p2[0] += longitudinal_beam_extra_mm
-        beams_tekla.append({
-            "p1": p1,
-            "p2": p2,
-            "profile": beam_profile,
-            "material": beam_material,
-            "class": beam_class,
-            "type": "beam",
-            "name": f"beam-x-{j}",
-        })
-    for j in range(n_trans + 1):
-        for i in range(n_long):
-            p1 = transform_to_staad_co_ordinates(point(i, j, trans_beam_z))
-            p2 = transform_to_staad_co_ordinates(point(i + 1, j, trans_beam_z))
-            beams_staad.append({
-                "p1": p1,
-                "p2": p2,
-                "profile": beam_profile,
-                "material": beam_material,
-                "class": beam_class,
-                "type": "beam",
-                "name": f"beam-x-{j}-{i}",
-                "tekla_name": f"beam-x-{j}",
-            })
-
-    # 3. Transverse Beams (Y-direction)
-    for i in range(n_long + 1):
-        p1 = point(i, 0, col_top_z)
-        p2 = point(i, n_trans, col_top_z)
-        beams_tekla.append({
-            "p1": p1,
-            "p2": p2,
-            "profile": beam_profile,
-            "material": beam_material,
-            "class": beam_class,
-            "type": "beam",
-            "name": f"beam-y-{i}",
-        })
-    for j in range(n_trans):
-        for i in range(n_long + 1):
-            p1 = transform_to_staad_co_ordinates(point(i, j, trans_beam_z))
-            p2 = transform_to_staad_co_ordinates(point(i, j + 1, trans_beam_z))
-            beams_staad.append({
-                "p1": p1,
-                "p2": p2,
-                "profile": beam_profile,
-                "material": beam_material,
-                "class": beam_class,
-                "type": "beam",
-                "name": f"beam-y-{j}-{i}",
-                "tekla_name": f"beam-y-{i}",
-            })
-
-    # 4. Longitudinal Bracing
-    for entry in long_brace_bays:
-        bay_1based = entry["bay"]
-        mirror = entry.get("mirror", False)
-        if bay_1based < 1 or bay_1based > n_long:
-            continue
-        b = bay_1based - 1
-        bottom_i, top_i = (b + 1, b) if mirror else (b, b + 1)
-        for j in range(n_trans + 1):
-            p1 = point(bottom_i, j, brace_bottom_z)
-            p2 = point(top_i, j, brace_top_z)
-            braces.append({
-                "p1": p1,
-                "p2": p2,
-                "profile": long_brace_profile,
-                "material": long_brace_material,
-                "class": long_brace_class,
-                "type": "longitudinal_brace",
-                "name": f"bracing-long-{j}-{bay_1based}",
-                "is_mirrored": mirror,
-            })
-            p1_staad = transform_to_staad_co_ordinates(point(bottom_i, j, brace_bottom_z_staad))
-            p2_staad = transform_to_staad_co_ordinates(point(top_i, j, trans_beam_z))
-            staad_braces.append({
-                "p1": p1_staad,
-                "p2": p2_staad,
-                "profile": long_brace_profile,
-                "material": long_brace_material,
-                "class": long_brace_class,
-                "type": "longitudinal_brace",
-                "name": f"bracing-long-{j}-{bay_1based}",
-                "is_mirrored": mirror,
-                "tekla_name": f"bracing-long-{j}-{bay_1based}",
-            })
-
-    # 5. Transverse Bracing
-    for entry in trans_brace_bays:
-        bay_1based = entry["bay"]
-        mirror = entry.get("mirror", False)
-        if bay_1based < 1 or bay_1based > n_trans:
-            continue
-        b = bay_1based - 1
-        bottom_j, top_j = (b + 1, b) if mirror else (b, b + 1)
-        for i in range(n_long + 1):
-            p1 = point(i, bottom_j, brace_bottom_z)
-            p2 = point(i, top_j, brace_top_z)
-            braces.append({
-                "p1": p1,
-                "p2": p2,
-                "profile": trans_brace_profile,
-                "material": trans_brace_material,
-                "class": trans_brace_class,
-                "type": "transverse_brace",
-                "name": f"bracing-trans-{i}-{bay_1based}",
-                "is_mirrored": mirror,
-            })
-            p1_staad = transform_to_staad_co_ordinates(point(i, bottom_j, brace_bottom_z_staad))
-            p2_staad = transform_to_staad_co_ordinates(point(i, top_j, trans_beam_z))
-            staad_braces.append({
-                "p1": p1_staad,
-                "p2": p2_staad,
-                "profile": trans_brace_profile,
-                "material": trans_brace_material,
-                "class": trans_brace_class,
-                "type": "transverse_brace",
-                "name": f"bracing-trans-{i}-{bay_1based}",
-                "is_mirrored": mirror,
-                "tekla_name": f"bracing-trans-{i}-{bay_1based}",
-            })
-
-    members_tekla = columns + beams_tekla + braces
-    members_staad = staad_columns + beams_staad + staad_braces
-
-    members_by_type = {}
-    for m in members_tekla:
-        members_by_type[m["type"]] = members_by_type.get(m["type"], 0) + 1
-
-    summary = {
-        "total_members": len(members_tekla),
-        "members_by_type": members_by_type,
-        "effective_col_height_mm": col_height_eff,
-        "beam_height_mm": beam_height,
-    }
-
-    return {
-        "grid": cfg,
-        "members": members_tekla,
-        "members_split_beams": members_staad,
-        "summary": summary,
-    }
+def generate_members_from_parameters(
+    cfg: Dict[str, Any], parameters: FrameParameters
+) -> Dict[str, Any]:
+    """Generate the frame using profile and height evaluation from the same configuration."""
+    return generate_frame(cfg, parameters, evaluate_frame_parameters)
 
 
 def check_geometry(candidate: Dict[str, Any]):
@@ -401,13 +172,7 @@ def check_geometry(candidate: Dict[str, Any]):
             )
 
 
-def run_a3_frame_generator(state: WorkflowState) -> WorkflowState:
-    """
-    Executes Agent A3: Computes 3D geometry coordinates for continuous and bay-split members.
-    """
-    ts = datetime.now().strftime("%H:%M:%S")
-    state.current_agent = "A3"
-
+def _frame_config(state: WorkflowState) -> Dict[str, Any]:
     cfg = dict(state.grid_config)
     if state.active_column_profile:
         cfg["column_profile"] = state.active_column_profile
@@ -417,64 +182,105 @@ def run_a3_frame_generator(state: WorkflowState) -> WorkflowState:
         cfg["longitudinal_brace_profile"] = state.active_long_brace_profile
     if state.active_trans_brace_profile:
         cfg["transverse_brace_profile"] = state.active_trans_brace_profile
+    return cfg
 
+
+def _finish_frame(state: WorkflowState, cfg: Dict[str, Any], candidate: Dict[str, Any]) -> WorkflowState:
+    check_geometry(candidate)
+    state.frame_candidate = candidate
+    coverage = template_coverage(candidate)
+    state.readiness["template_coverage"] = {k: v for k, v in coverage.items() if k != "joint_groups"}
+    if "joint_groups" in coverage:
+        from agentic.reference_procedure import build_connection_scope, template_for_group
+        scope = build_connection_scope(coverage["joint_groups"])
+        state.readiness["connection_scope"] = scope
+        required_missing = [name for name in scope["idea_required_groups"]
+                            if not template_for_group(name, scope["mode"] == "reference_procedure").is_file()]
+        if required_missing:
+            raise ValueError("Missing IDEA templates for calculated scope: " + ", ".join(required_missing))
+    if coverage["missing"] and workflow_mode() == "reviewed_engineering":
+        raise ValueError("Missing approved IDEA templates for: " + ", ".join(coverage["missing"]) + ". No live models were modified.")
+    state.grid_config = cfg
+    state.design_generation += 1
+
+    summary = candidate.get("summary", {})
+    total_m = summary.get("total_members", len(candidate.get("members", [])))
+    col_prof = state.active_column_profile
+    beam_prof = state.active_beam_profile
+    loop_note = f" (Loop A revision #{state.loop_a_count})" if state.loop_a_count > 0 else ""
+    msg = f"Generated {total_m} members with Column={col_prof}, Beam={beam_prof}{loop_note}."
+    state.agent_statuses["A3"] = {
+        "status": "PASSED", "message": msg, "profile": col_prof, "total_members": total_m
+    }
+    state.logs.append(AgentLogEntry(
+        agent_id="A3", agent_name="Frame Geometry Generator", status="PASSED",
+        message=msg, timestamp=datetime.now().astimezone().isoformat(), loop_info=loop_note or None
+    ))
+    return state
+
+
+def _fail_frame(state: WorkflowState, exc: Exception) -> WorkflowState:
+    err_msg = f"A3 Frame Generation Failed: {exc}"
+    state.status = "FAILED"
+    state.error = err_msg
+    state.agent_statuses["A3"] = {"status": "FAILED", "message": err_msg}
+    state.logs.append(AgentLogEntry(
+        agent_id="A3", agent_name="Frame Geometry Generator", status="FAILED",
+        message=err_msg, timestamp=datetime.now().astimezone().isoformat()
+    ))
+    return state
+
+
+def run_a3_frame_generator(state: WorkflowState) -> WorkflowState:
+    """Run the existing A3 entry point with its original validation order."""
+    state.current_agent = "A3"
+    cfg = _frame_config(state)
     try:
         validate_profile_catalogue(cfg)
-        candidate = generate_members(cfg)
-        check_geometry(candidate)
-        state.frame_candidate = candidate
-        coverage = template_coverage(candidate)
-        state.readiness["template_coverage"] = {k: v for k, v in coverage.items() if k != "joint_groups"}
-        if "joint_groups" in coverage:
-            from agentic.reference_procedure import build_connection_scope, template_for_group
-            scope = build_connection_scope(coverage["joint_groups"])
-            state.readiness["connection_scope"] = scope
-            required_missing = [name for name in scope["idea_required_groups"]
-                                if not template_for_group(name, scope["mode"] == "reference_procedure").is_file()]
-            if required_missing:
-                raise ValueError("Missing IDEA templates for calculated scope: " + ", ".join(required_missing))
-        if coverage["missing"] and workflow_mode() == "reviewed_engineering":
-            raise ValueError("Missing approved IDEA templates for: " + ", ".join(coverage["missing"]) + ". No live models were modified.")
-        state.grid_config = cfg
-        state.design_generation += 1
-
-        summary = candidate.get("summary", {})
-        total_m = summary.get("total_members", len(candidate.get("members", [])))
-        col_prof = state.active_column_profile
-        beam_prof = state.active_beam_profile
-
-        loop_note = f" (Loop A revision #{state.loop_a_count})" if state.loop_a_count > 0 else ""
-        msg = f"Generated {total_m} members with Column={col_prof}, Beam={beam_prof}{loop_note}."
-
-        state.agent_statuses["A3"] = {
-            "status": "PASSED",
-            "message": msg,
-            "profile": col_prof,
-            "total_members": total_m
-        }
-        state.logs.append(AgentLogEntry(
-            agent_id="A3",
-            agent_name="Frame Geometry Generator",
-            status="PASSED",
-            message=msg,
-            timestamp=datetime.now().astimezone().isoformat(),
-            loop_info=loop_note or None
-        ))
-
+        return _finish_frame(state, cfg, generate_members(cfg))
     except Exception as exc:
-        err_msg = f"A3 Frame Generation Failed: {exc}"
-        state.status = "FAILED"
-        state.error = err_msg
-        state.agent_statuses["A3"] = {"status": "FAILED", "message": err_msg}
-        state.logs.append(AgentLogEntry(
-            agent_id="A3",
-            agent_name="Frame Geometry Generator",
-            status="FAILED",
-            message=err_msg,
-            timestamp=datetime.now().astimezone().isoformat()
-        ))
+        return _fail_frame(state, exc)
 
+
+def evaluate_a3_frame(state: WorkflowState) -> WorkflowState:
+    """Prepare a serializable frame plan for the A3b generation stage."""
+    state.current_agent = "A3"
+    state.frame_plan.clear()
+    cfg = _frame_config(state)
+    try:
+        validate_profile_catalogue(cfg)
+        parameters = evaluate_frame_parameters(cfg)
+        state.frame_plan = {
+            "grid": deepcopy(cfg),
+            "parameters": parameters._asdict(),
+            "design_generation": state.design_generation,
+        }
+    except Exception as exc:
+        return _fail_frame(state, exc)
     return state
+
+
+def generate_a3_frame(state: WorkflowState) -> WorkflowState:
+    """Generate and validate the frame from the current A3a plan."""
+    state.current_agent = "A3"
+    try:
+        plan = state.frame_plan
+        if (not plan or plan.get("grid") != _frame_config(state)
+                or plan.get("design_generation") != state.design_generation):
+            raise ValueError("Frame evaluation is missing or no longer matches the current inputs.")
+        parameters = FrameParameters(**plan["parameters"])
+        cfg = plan["grid"]
+        return _finish_frame(state, cfg, generate_members_from_parameters(cfg, parameters))
+    except Exception as exc:
+        return _fail_frame(state, exc)
+    finally:
+        state.frame_plan.clear()
+
+
+async def run_a3_staged(state: WorkflowState) -> WorkflowState:
+    """Run frame evaluation and generation in the active subgraph."""
+    from agentic.nodes.a3_frame.graph import run_frame_graph
+    return await run_frame_graph(state)
 
 
 def validate_profile_catalogue(cfg: dict) -> None:

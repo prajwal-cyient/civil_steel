@@ -52,11 +52,13 @@ class RunController:
         await self._terminate()
 
     async def execute(self, payload: dict, run_id: str, resume_state: WorkflowState | None = None,
-                      chat_action: str | None = None) -> WorkflowState:
+                      chat_action: str | None = None, chat_parameter_rerun: bool = False) -> WorkflowState:
         if self.run_id is not None:
             raise ValueError("An engineering worker is already active.")
+        if chat_parameter_rerun and (resume_state is not None or chat_action is not None):
+            raise ValueError("A chat parameter rerun must start as a fresh full workflow.")
         cfg = settings()
-        state = resume_state or WorkflowState(run_id=run_id, status="RUNNING", raw_input=payload)
+        state = resume_state or WorkflowState(run_id=run_id, layout_version=2, status="RUNNING", raw_input=payload)
         if state.run_id != run_id or state.status != "RUNNING":
             raise ValueError("Worker input does not match the requested active run.")
         WORKFLOW_STORE.save_state(state)
@@ -73,7 +75,8 @@ class RunController:
                 self.process = await asyncio.create_subprocess_exec(
                     sys.executable, "-u", "-m", "agentic.worker", "--run-id", run_id,
                     *(["--chat-action", chat_action] if chat_action else
-                      ["--resume-publication"] if resume_state else []),
+                      ["--resume-publication"] if resume_state else
+                      ["--chat-parameter-rerun"] if chat_parameter_rerun else []),
                     cwd=str(ROOT), env=environment, stdout=log, stderr=log, **options,
                 )
                 if self._cancelled:

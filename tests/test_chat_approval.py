@@ -22,7 +22,7 @@ class FullRequestScopeTests(unittest.TestCase):
     def test_general_runs_include_the_complete_workflow(self):
         for text in ['21X5 current input run', 'Run agentic workflow', 'Run the current inputs',
                      'Please run this 21 × 5 bay frame', 'Just run the workflow including Tekla',
-                     'Execute the pipeline', 'Run A1-A8', 'Run A1–A8', 'run this']:
+                     'Execute the pipeline', 'Run A1-A7', 'Run A1–A7', 'Run A1-A8', 'Run A1–A8', 'run this']:
             with self.subTest(text=text):
                 self.assertTrue(requests_complete_workflow(text))
 
@@ -68,14 +68,15 @@ class ChatApprovalTests(unittest.IsolatedAsyncioTestCase):
             return real_a8(state)
         self.stack.enter_context(patch.object(orchestrator, 'run_a1_requirements', a1))
         self.stack.enter_context(patch.object(orchestrator, 'run_a8_reporting', a8))
-        names = {'A2':'run_a2_readiness', 'A3':'run_a3_frame_generator', 'A4':'run_a4_staad_analyzer',
-                 'A5':'run_a5_ideastatica_analyzer', 'A6':'run_a6_package_validator', 'A7':'run_a7_tekla_modeler'}
+        names = {'A2':'run_a2_readiness', 'A3':'run_a3_staged', 'A4':'run_a4_staged',
+                 'A5':'run_a5_staged', 'A6':'run_a6_package_validator', 'A7':'run_a7_staged'}
         for stage, name in names.items():
             def operation(state, stage=stage):
                 self.calls.append(stage)
                 if self.fail_stage == stage:
                     return fail_workflow(state, stage, 'Controlled failed engineering evidence')
-                state.agent_statuses[stage] = {'status':'PASSED'}
+                status_stage = 'A6' if stage == 'A7' and state.layout_version == 2 else stage
+                state.agent_statuses[status_stage] = {'status':'PASSED'}
                 if stage == 'A4':
                     state.frame_grader_result = GraderResult(passed=True, summary='Controlled frame evidence')
                 if stage == 'A6':
@@ -84,6 +85,16 @@ class ChatApprovalTests(unittest.IsolatedAsyncioTestCase):
                     state.tekla_results = {'created':194}
                 return state
             self.stack.enter_context(patch.object(orchestrator, name, operation))
+        async def idea_graph(state, *, audit_package):
+            self.assertTrue(audit_package)
+            state = orchestrator.run_a5_staged(state)
+            if state.status == "FAILED":
+                return state
+            state = orchestrator.run_a6_package_validator(state)
+            if state.status != "FAILED":
+                state.agent_statuses["A5c"] = state.agent_statuses.pop("A6")
+            return state
+        self.stack.enter_context(patch.object(orchestrator, 'run_idea_graph', idea_graph))
         async def execute(payload, run_id, **kwargs):
             self.assertNotIn('chat_action', kwargs, 'A general run must invoke the existing full graph')
             return await orchestrator.run_agentic_workflow(payload, run_id)

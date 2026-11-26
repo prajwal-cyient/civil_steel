@@ -17,47 +17,48 @@ from agentic.evidence import frame_signature
 from agentic.connection_materials import reference_plate_material_policy, verify_plate_material_evidence
 
 
-def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
+def run_a6_package_validator(state: WorkflowState, *, agent_id: str = "A6") -> WorkflowState:
     """
     Executes Agent A6: Audits all calculation evidence and prepares the verified package.
     """
     ts = datetime.now().strftime("%H:%M:%S")
-    state.current_agent = "A6"
+    state.current_agent = agent_id
 
     from agentic.agents.a7_tekla_modeler_agent import unmapped_connection_corrections
     unsupported = unmapped_connection_corrections(state)
     if unsupported:
         from agentic.state import fail_workflow
-        return fail_workflow(state, "A6", "Connection corrections lack a validated Tekla attribute mapping; "
+        return fail_workflow(state, agent_id, "Connection corrections lack a validated Tekla attribute mapping; "
                              f"publication stopped before changing the physical model: {unsupported}")
 
     failures = []
+    frame_failures = []
     if state.staad_results.get("candidate_signature") != frame_signature(state):
-        failures.append("STAAD evidence does not belong to the current frame and loads.")
+        frame_failures.append("STAAD evidence does not belong to the current frame and loads.")
 
     # Recheck source evidence instead of trusting previously cached PASS flags.
     raw_frame_grade = grade_staad_results(state.staad_results, state.grid_config.get("col_height_mm", 5000), state.run_policy)
     if not raw_frame_grade.passed:
-        failures.append(f"STAAD source evidence is invalid or failed: {raw_frame_grade.summary}")
+        frame_failures.append(f"STAAD source evidence is invalid or failed: {raw_frame_grade.summary}")
 
     # 1. Check frame candidate
     if not state.frame_candidate.get("members"):
-        failures.append("No members found in Frame Candidate.")
+        frame_failures.append("No members found in Frame Candidate.")
 
     # 2. Check STAAD compliance
     if not state.frame_grader_result or not state.frame_grader_result.passed:
-        failures.append("STAAD structural analysis did not receive a PASS from Frame Grader.")
-
+        frame_failures.append("STAAD structural analysis did not receive a PASS from Frame Grader.")
     # 3. Check Connection design coverage
     joint_groups = state.staad_results.get("joint_groups", {})
     if not joint_groups:
-        failures.append("No connection groups returned by STAAD.")
+        frame_failures.append("No connection groups returned by STAAD.")
+    failures.extend(frame_failures)
     from agentic.reference_procedure import scope_for_state
     try:
         scope = scope_for_state(state)
     except ValueError as exc:
         from agentic.state import fail_workflow
-        return fail_workflow(state, "A6", str(exc))
+        return fail_workflow(state, agent_id, str(exc))
     plate_policy = reference_plate_material_policy() if scope["mode"] == "reference_procedure" else None
     for jg_id in scope["idea_required_groups"]:
         grader = state.joint_grader_results.get(jg_id)
@@ -80,11 +81,18 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
             failures.append(f"Connection inputs for '{jg_id}' cannot be verified: {exc}")
 
     if failures:
+        if frame_failures:
+            from agentic.state import fail_workflow
+            state.validation_report = {"passed": False, "failures": failures}
+            return fail_workflow(
+                state, agent_id,
+                "Package Validation Failed: " + "; ".join(failures)
+                + " Run the complete workflow again for current frame and STAAD evidence.",
+            )
         # Loop C: Validation Recovery
         if state.loop_c_count < state.max_loop_c:
             state.loop_c_count += 1
-            # Determine recovery target based on primary failure
-            target = "a5_ideastatica_analyzer" if any("connection" in f.lower() for f in failures) else "a3_frame_generator"
+            target = "a5_ideastatica_analyzer"
             state.validation_report = {
                 "passed": False,
                 "recovery_target": target,
@@ -97,9 +105,9 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
                 "failures": failures,
             })
             msg = f"Loop C ({state.loop_c_count}/{state.max_loop_c}): Missing/failed package evidence -> Routing recovery to {target}"
-            state.agent_statuses["A6"] = {"status": "REVISING", "message": msg, "target": target}
+            state.agent_statuses[agent_id] = {"status": "REVISING", "message": msg, "target": target}
             state.logs.append(AgentLogEntry(
-                agent_id="A6",
+                agent_id=agent_id,
                 agent_name="Package Validator",
                 status="REVISING",
                 message=msg,
@@ -111,9 +119,9 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
         err_msg = "Package Validation Failed: " + "; ".join(failures)
         state.status = "FAILED"
         state.error = err_msg
-        state.agent_statuses["A6"] = {"status": "FAILED", "message": err_msg}
+        state.agent_statuses[agent_id] = {"status": "FAILED", "message": err_msg}
         state.logs.append(AgentLogEntry(
-            agent_id="A6",
+            agent_id=agent_id,
             agent_name="Package Validator",
             status="FAILED",
             message=err_msg,
@@ -160,9 +168,9 @@ def run_a6_package_validator(state: WorkflowState) -> WorkflowState:
 
     msg = (f"Package validated (Hash: {pkg_hash}): frame checks and {len(validated_joint_groups)} IDEA families verified; "
            f"{len(scope['standard_detail_groups'])} families use declared standard Tekla details.")
-    state.agent_statuses["A6"] = {"status": "PASSED", "message": msg, "hash": pkg_hash}
+    state.agent_statuses[agent_id] = {"status": "PASSED", "message": msg, "hash": pkg_hash}
     state.logs.append(AgentLogEntry(
-        agent_id="A6",
+        agent_id=agent_id,
         agent_name="Package Validator",
         status="PASSED",
         message=msg,

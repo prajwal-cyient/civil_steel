@@ -328,6 +328,13 @@
   .agent-step .step-num { font-size: 11px; font-weight: 700; color: #94a3b8; font-family: var(--font-head); }
   .agent-step .step-label { font-size: 10px; color: #64748b; margin-top: 2px; }
   .agent-step .step-time { font: 500 11px var(--font-mono, monospace); font-variant-numeric: tabular-nums; color: var(--paper-ink-dim); margin-top: 4px; }
+  .agent-step .substeps { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 4px; font-size: 9px; }
+  .agent-step .substeps span { color: #94a3b8; }
+  .agent-step .substeps .running { color: #60a5fa; }
+  .agent-step .substeps .passed { color: #34d399; }
+  .agent-step .substeps .revising { color: #fbbf24; }
+  .agent-step .substeps .failed { color: #f87171; }
+  .agent-step[hidden] { display: none; }
   .agent-step.running .step-time { color: #93c5fd; }
   .agent-step.passed .step-time { color: #6ee7b7; }
   .agent-step .step-badge {
@@ -802,7 +809,7 @@
         <div class="load-config-hint">Sent to IDEA StatiCa when you click "Send to IdeaStatica" below. Parameters depend on the selected joint group. Member updates and load effects come from the STAAD results for the selected envelope and joint group.</div>
       </details>
 
-      <button id="agentic-run-btn" class="agentic-run-btn" type="button">⚡ Run Agentic Design (A1–A8)</button>
+      <button id="agentic-run-btn" class="agentic-run-btn" type="button">⚡ Run Agentic Design (A1–A7)</button>
       <button id="agentic-cancel-btn" class="agentic-run-btn" type="button" hidden>Stop current run</button>
       <div id="agentic-status-msg" class="agentic-status-pill" style="display:none;"></div>
       <div id="active-run-id" class="load-config-hint" aria-live="polite" hidden></div>
@@ -824,12 +831,12 @@
     <div id="agent-tracker-bar">
       <div class="agent-step" id="step-A1"><span class="step-num">A1</span><span class="step-label">Brief</span><span class="step-time" id="timer-A1">00:00</span></div>
       <div class="agent-step" id="step-A2"><span class="step-num">A2</span><span class="step-label">Ready</span><span class="step-time" id="timer-A2">00:00</span></div>
-      <div class="agent-step" id="step-A3"><span class="step-num">A3</span><span class="step-label">Frame</span><span class="step-time" id="timer-A3">00:00</span></div>
-      <div class="agent-step" id="step-A4"><span class="step-num">A4</span><span class="step-label">STAAD</span><span class="step-badge" id="badge-A4"></span><span class="step-time" id="timer-A4">00:00</span></div>
-      <div class="agent-step" id="step-A5"><span class="step-num">A5</span><span class="step-label">IDEA</span><span class="step-badge" id="badge-A5"></span><span class="step-time" id="timer-A5">00:00</span></div>
-      <div class="agent-step" id="step-A6"><span class="step-num">A6</span><span class="step-label">Validate</span><span class="step-time" id="timer-A6">00:00</span></div>
-      <div class="agent-step" id="step-A7"><span class="step-num">A7</span><span class="step-label">Tekla</span><span class="step-time" id="timer-A7">00:00</span></div>
-      <div class="agent-step" id="step-A8"><span class="step-num">A8</span><span class="step-label">Accept</span><span class="step-time" id="timer-A8">00:00</span></div>
+      <div class="agent-step" id="step-A3"><span class="step-num">A3</span><span class="step-label">Frame</span><span class="step-time" id="timer-A3">00:00</span><span class="substeps" id="substeps-A3"></span></div>
+      <div class="agent-step" id="step-A4"><span class="step-num">A4</span><span class="step-label">STAAD</span><span class="step-badge" id="badge-A4"></span><span class="step-time" id="timer-A4">00:00</span><span class="substeps" id="substeps-A4"></span></div>
+      <div class="agent-step" id="step-A5"><span class="step-num">A5</span><span class="step-label" id="label-A5">IDEA + audit</span><span class="step-badge" id="badge-A5"></span><span class="step-time" id="timer-A5">00:00</span><span class="substeps" id="substeps-A5"></span></div>
+      <div class="agent-step" id="step-A6"><span class="step-num">A6</span><span class="step-label" id="label-A6">Tekla</span><span class="step-time" id="timer-A6">00:00</span><span class="substeps" id="substeps-A6"></span></div>
+      <div class="agent-step" id="step-A7"><span class="step-num">A7</span><span class="step-label" id="label-A7">Report</span><span class="step-time" id="timer-A7">00:00</span></div>
+      <div class="agent-step" id="step-A8" hidden><span class="step-num">A8</span><span class="step-label">Accept</span><span class="step-time" id="timer-A8">00:00</span></div>
     </div>
 
     <!-- Gate 3 Final Acceptance Banner -->
@@ -1918,8 +1925,26 @@ async function loadSavedRunChoices() {
   updateActionControls();
 }
 
-function updateAgentSteps(agentStatuses, loopA, loopB, timings = {}, workflowStatus = '') {
+function updateAgentSteps(agentStatuses, loopA, loopB, timings = {}, workflowStatus = '', layoutVersion = 2, substages = {}) {
   window.AgentTimers?.update(timings, agentStatuses, workflowStatus);
+  const legacy = layoutVersion !== 2;
+  document.getElementById('label-A5').textContent = legacy ? 'IDEA' : 'IDEA + audit';
+  document.getElementById('label-A6').textContent = legacy ? 'Validate' : 'Tekla';
+  document.getElementById('label-A7').textContent = legacy ? 'Tekla' : 'Report';
+  document.getElementById('step-A8').hidden = !legacy;
+  for (const [stage, letters] of Object.entries({A3: 'ab', A4: 'abcd', A5: 'abcd', A6: 'abcd'})) {
+    const container = document.getElementById(`substeps-${stage}`);
+    container.replaceChildren();
+    if (legacy) continue;
+    for (const letter of letters) {
+      const label = `${stage}${letter}`;
+      const item = document.createElement('span');
+      item.textContent = label;
+      item.className = (substages[label]?.status || 'pending').toLowerCase();
+      item.title = `${label}: ${substages[label]?.status || 'NOT RUN'}`;
+      container.append(item);
+    }
+  }
   const steps = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8'];
   for (const step of steps) {
     const el = document.getElementById(`step-${step}`);
@@ -1984,7 +2009,7 @@ function renderUnverifiedPreview(data, runId = null) {
 function renderAgenticRunState(state, { active = ['RUNNING', 'INITIALIZED'].includes(state.status) } = {}) {
   if (state.readiness?.preview_only) {
     renderUnverifiedPreview(state.frame_candidate, state.run_id);
-    updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {}, state.agent_timings || {}, state.status);
+    updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {}, state.agent_timings || {}, state.status, state.layout_version || 1, state.substage_statuses || {});
     setAgenticBusy(active);
     return;
   }
@@ -1995,7 +2020,7 @@ function renderAgenticRunState(state, { active = ['RUNNING', 'INITIALIZED'].incl
   if (gate3Banner) gate3Banner.style.display = 'none';
 
   // Update tracker UI with final state
-  updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {}, state.agent_timings || {}, state.status);
+  updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {}, state.agent_timings || {}, state.status, state.layout_version || 1, state.substage_statuses || {});
 
   // 1. Update 3D Viewer & Members
   const frameKey = `${state.run_id}:${state.design_generation || 0}`;
@@ -2229,7 +2254,7 @@ if (agenticRunBtn) {
       finished = true;
       clearInterval(progressTimer);
       if (viewVersion === agenticViewVersion) setAgenticBusy(false);
-      agenticRunBtn.innerHTML = '⚡ Run Agentic Design (A1–A8)';
+      agenticRunBtn.innerHTML = '⚡ Run Agentic Design (A1–A7)';
       loadSavedRunChoices().catch(() => {});
     }
   });
@@ -2307,9 +2332,9 @@ if (gate3AcceptBtn) {
         agenticStatusMsg.className = 'agentic-status-pill ok';
         agenticStatusMsg.textContent = `✅ Design Accepted & Signed Off by ${acceptedState.accepted_by || 'Lead Structural Engineer'}`;
       }
-      const stepA8 = document.getElementById('step-A8');
-      if (stepA8) {
-        stepA8.className = 'agent-step passed';
+      const reportStep = document.getElementById(acceptedState.layout_version === 2 ? 'step-A7' : 'step-A8');
+      if (reportStep) {
+        reportStep.className = 'agent-step passed';
       }
     } catch (err) {
       alert('Error accepting design: ' + err.message);

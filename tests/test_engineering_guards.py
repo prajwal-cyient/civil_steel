@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from types import SimpleNamespace
@@ -101,6 +102,29 @@ class EngineeringGuardTests(unittest.TestCase):
             asyncio.run(a4.run_a4_staad_analyzer(state))
         self.assertEqual(route_after_a4(state), "__end__")
         self.assertEqual(state.loop_a_count, 0)
+
+    def test_frame_grade_correction_and_retry_limit(self):
+        from agentic.orchestrator import route_after_a4
+        result = valid_staad()
+        result["member_type_max_ratios"]["column"] = 1.2
+        result["member_ratios"][1]["ratio"] = 1.2
+        grader = a4.grade_staad_results(result, 5000)
+        state = self.state()
+        state.active_column_profile = "CFRHS120X120X5"
+        state.max_loop_a = 1
+        option = {"id": "CFRHS120X120X6", "profile": "CFRHS120X120X6"}
+
+        with patch.object(a4, "frame_options", return_value=[option]):
+            a4.apply_staad_grade(state, result, grader)
+        self.assertEqual(state.active_column_profile, option["profile"])
+        self.assertEqual(state.loop_a_count, 1)
+        self.assertEqual(route_after_a4(state), "a3_frame_generator")
+        self.assertEqual(state.loop_a_history[0]["affected_members"][0]["id"], 1)
+
+        a4.apply_staad_grade(state, result, grader)
+        self.assertEqual(state.status, "FAILED")
+        self.assertIn("retry limit reached", state.error)
+        self.assertEqual(route_after_a4(state), "__end__")
 
     def test_dominant_bracing_failure_targets_brace(self):
         result = valid_staad()
@@ -233,6 +257,7 @@ class EngineeringGuardTests(unittest.TestCase):
             result = a5._connection_payload(state, "first")
             self.assertEqual(len(result["load_effects"]), 2)
             self.assertEqual(result["operation_parameters"], [])
+            self.assertEqual(result["output_dir"], str(Path(a5.__file__).parents[3] / "output_first"))
             state.staad_results["results_local_or_global"] = 1
             with self.assertRaisesRegex(a5.IdeaStaticaJointError, "local member forces"):
                 a5._connection_payload(state, "first")
@@ -290,6 +315,321 @@ class EngineeringGuardTests(unittest.TestCase):
             a7.run_a7_tekla_modeler(state)
         self.assertEqual(state.status, "FAILED")
 
+    def test_idea_subgraph_reuses_verified_groups_and_runs_on_worker_thread(self):
+        state = self.state()
+        owner_thread = threading.get_ident()
+        calls = []
+
+        def solve(request):
+            self.assertEqual(threading.get_ident(), owner_thread)
+            calls.append(request["group"])
+            return joint_result()
+
+        with patch.object(a5, "_connection_payload", side_effect=payload), \
+             patch.object(a5, "design_joint", side_effect=solve):
+            asyncio.run(a5.run_a5_staged(state))
+            self.assertEqual(state.agent_statuses["A5"]["status"], "PASSED")
+            state.ideastatica_results["second"]["check_summary"]["summary"] = []
+            asyncio.run(a5.run_a5_staged(state))
+        self.assertEqual(calls, ["first", "second", "second"])
+        self.assertEqual(state.agent_statuses["A5"]["status"], "PASSED")
+
+    def test_idea_graph_audits_after_required_groups_and_routes_recovery(self):
+        from agentic.agents import a6_package_validator_agent as package
+        from agentic.nodes.a5_idea.graph import run_idea_graph
+        from agentic.orchestrator import route_after_a5
+        state = self.state()
+        state.layout_version = 2
+        calls = []
+
+        def solve(request):
+            calls.append(request["group"])
+            return joint_result()
+
+        def audit(candidate, *, agent_id):
+            self.assertEqual(agent_id, "A5c")
+            self.assertEqual(calls, ["first", "second"])
+            candidate.validation_report = {
+                "passed": False, "recovery_target": "a5_ideastatica_analyzer"
+            }
+            candidate.loop_c_count = 1
+            candidate.agent_statuses[agent_id] = {"status": "REVISING", "message": "Connection evidence invalid."}
+            return candidate
+
+        with patch.object(a5, "_connection_payload", side_effect=payload), \
+             patch.object(a5, "design_joint", side_effect=solve), \
+             patch.object(package, "run_a6_package_validator", side_effect=audit):
+            result = asyncio.run(run_idea_graph(state, audit_package=True))
+        self.assertEqual(result.agent_statuses["A5"]["status"], "REVISING")
+        self.assertEqual(result.substage_statuses["A5c"]["status"], "REVISING")
+        self.assertEqual(result.substage_statuses["A5d"]["status"], "REVISING")
+        self.assertEqual(route_after_a5(result), "a5_ideastatica_analyzer")
+
+    def test_idea_input_change_during_solve_cannot_be_graded(self):
+        state = self.state()
+
+        def solve(request):
+            state.active_operation_params[request["group"]] = [{"key": "EP_d", "expression": "0.02"}]
+            return joint_result()
+
+        with patch.object(a5, "_connection_payload", side_effect=payload), \
+             patch.object(a5, "design_joint", side_effect=solve):
+            asyncio.run(a5.run_a5_staged(state))
+        self.assertEqual(state.status, "FAILED")
+        self.assertIn("inputs or template changed", state.error)
+        self.assertFalse(state.ideastatica_results)
+        self.assertFalse(state.joint_grader_results)
+
+    def test_idea_evidence_change_after_grade_cannot_drive_correction(self):
+        state = self.state()
+        with patch.object(a5, "_connection_payload", side_effect=payload), \
+             patch.object(a5, "design_joint", return_value=joint_result()):
+            context = a5.begin_a5(state)
+            a5.prepare_a5(state, context)
+            a5.execute_a5(state, context)
+            a5.evaluate_a5(state, context)
+            state.ideastatica_results["first"]["check_summary"]["operation_parameters"][0]["expression"] = "0.010"
+            a5.decide_a5(state, context)
+        self.assertEqual(state.status, "FAILED")
+        self.assertIn("grade or evidence changed", state.error)
+        self.assertFalse(state.loop_b_history)
+
+    def test_tekla_subgraph_checks_request_and_keeps_native_call_on_worker_thread(self):
+        from agentic.agents import a7_tekla_modeler_agent as a7
+        state = self.state()
+        state.frame_candidate = {"members": [{"name": "column"}]}
+        state.validation_report = {"passed": True}
+        owner_thread = threading.get_ident()
+
+        def publish(payload):
+            self.assertEqual(threading.get_ident(), owner_thread)
+            return {"created": 1, "verified_members": 1, "failed": 0}
+
+        with patch.object(a7, "send_to_tekla", side_effect=publish):
+            result = asyncio.run(a7.run_a7_staged(state))
+        self.assertEqual(result.agent_statuses["A7"]["status"], "PASSED")
+        self.assertFalse(result.tekla_request)
+
+        stale = self.state()
+        stale.frame_candidate = {"members": [{"name": "column"}]}
+        stale.validation_report = {"passed": True}
+        a7.prepare_a7_tekla(stale)
+        stale.frame_candidate["members"].append({"name": "beam"})
+        with patch.object(a7, "send_to_tekla") as send:
+            a7.execute_a7_tekla(stale)
+        self.assertEqual(stale.status, "FAILED")
+        send.assert_not_called()
+
+    def test_tekla_simulation_output_never_retries(self):
+        from agentic.agents import a7_tekla_modeler_agent as a7
+        state = self.state()
+        state.frame_candidate = {"members": [{"name": "column"}]}
+        state.validation_report = {"passed": True}
+        with patch.object(a7, "send_to_tekla",
+                          return_value={"created": 1, "verified_members": 1, "failed": 0, "simulation": True}) as send, \
+             patch("agentic.advisor.choose_correction") as advisor:
+            result = asyncio.run(a7.run_a7_staged(state))
+        self.assertEqual(result.status, "FAILED")
+        self.assertIn("simulation output", result.error)
+        self.assertEqual(send.call_count, 1)
+        advisor.assert_not_called()
+        self.assertEqual(result.tekla_retry_count, 0)
+        self.assertIsNotNone(result.tekla_grader_result)
+        self.assertFalse(result.tekla_grader_result.passed)
+        self.assertFalse(result.tekla_grader_result.corrective_action_needed)
+
+    def test_tekla_failed_publication_retries_the_same_payload(self):
+        from agentic.agents import a6_package_validator_agent as package
+        from agentic.agents import a7_tekla_modeler_agent as a7
+        for native_result in (
+            {"created": 1, "verified_members": 0, "failed": 1},
+            {"created": 0, "verified_members": 0, "failed": 0},
+            {"created": 1, "verified_members": 1, "errors": ["read-back failed"]},
+        ):
+            with self.subTest(native_result=native_result):
+                state = self.state()
+                state.layout_version = 2
+                state.max_tekla_retries = 1
+                state.frame_candidate = {"members": [{"name": "column"}]}
+                state.validation_report = {"passed": True}
+
+                def revalidate(candidate, *, agent_id):
+                    candidate.agent_statuses[agent_id] = {"status": "PASSED"}
+                    return candidate
+
+                with patch.object(package, "run_a6_package_validator", side_effect=revalidate), \
+                     patch("agentic.advisor.choose_correction", return_value={"id": "retry_publish"}) as advisor, \
+                     patch.object(a7, "send_to_tekla", return_value=native_result) as send:
+                    result = asyncio.run(a7.run_a7_staged(state))
+                self.assertEqual(result.status, "FAILED")
+                self.assertIn("retry limit reached", result.error)
+                self.assertTrue(result.tekla_grader_result.corrective_action_needed)
+                self.assertEqual(result.tekla_grader_result.details["phase"], "fabrication_readback")
+                self.assertEqual(result.substage_statuses["A6c"]["status"], "FAILED")
+                self.assertEqual(result.tekla_retry_count, 1)
+                self.assertEqual(result.tekla_retry_history[0]["phase"], "fabrication_readback")
+                self.assertEqual(result.tekla_retry_history[0]["action"], "retry_publish")
+                self.assertEqual(send.call_count, 2)
+                self.assertEqual(send.call_args_list[0].args[0]["members"], send.call_args_list[1].args[0]["members"])
+                advisor.assert_called_once()
+
+    def test_tekla_stale_grade_does_not_choose_the_retry_phase(self):
+        from agentic.nodes.a6_tekla.correction import decide_tekla_outcome
+        state = self.state()
+        state.tekla_request = {"members": [{"name": "column"}]}
+        state.tekla_results = {"created": 1, "verified_members": 0, "failed": 1}
+        state.tekla_publication_passed = False
+        state.tekla_grader_result = GraderResult(
+            passed=False, summary="stale grade", corrective_action_needed=True,
+            details={"phase": "before_model_write"},
+        )
+        advisor = MagicMock(return_value={"id": "retry_publish"})
+        result, ready = decide_tekla_outcome(
+            state, request_matches=lambda _: True, choose_correction=advisor,
+        )
+        self.assertFalse(ready)
+        self.assertNotEqual(result.status, "FAILED")
+        self.assertEqual(result.agent_statuses["A7"]["status"], "REVISING")
+        self.assertEqual(result.tekla_retry_history[0]["phase"], "fabrication_readback")
+        advisor.assert_called_once()
+
+    def test_tekla_unclassified_exception_never_retries(self):
+        from agentic.agents import a7_tekla_modeler_agent as a7
+        state = self.state()
+        state.frame_candidate = {"members": [{"name": "column"}]}
+        state.validation_report = {"passed": True}
+        with patch("agentic.advisor.choose_correction") as advisor, \
+             patch.object(a7, "send_to_tekla", side_effect=RuntimeError("write interrupted")) as send:
+            result = asyncio.run(a7.run_a7_staged(state))
+        self.assertEqual(result.status, "FAILED")
+        self.assertIn("publication may be partial", result.error)
+        self.assertEqual(send.call_count, 1)
+        self.assertEqual(result.tekla_retry_count, 0)
+        advisor.assert_not_called()
+
+    def test_tekla_retries_only_prepublication_connection_failure(self):
+        from agentic.agents import a6_package_validator_agent as package
+        from agentic.agents import a7_tekla_modeler_agent as a7
+        state = self.state()
+        state.layout_version = 2
+        state.frame_candidate = {"members": [{"name": "column"}]}
+        state.validation_report = {"passed": True}
+
+        def revalidate(candidate, *, agent_id):
+            candidate.agent_statuses[agent_id] = {"status": "PASSED"}
+            return candidate
+
+        with patch.object(package, "run_a6_package_validator", side_effect=revalidate) as audit, \
+             patch("agentic.advisor.choose_correction", return_value={"id": "retry_publish"}), \
+             patch.object(a7, "send_to_tekla", side_effect=[
+                 a7.TeklaPrePublicationConnectionError("connection unavailable"),
+                 {"created": 1, "verified_members": 1, "failed": 0},
+             ]) as send:
+            result = asyncio.run(a7.run_a7_staged(state))
+        self.assertEqual(result.agent_statuses["A6"]["status"], "PASSED")
+        self.assertEqual(result.substage_statuses["A6a"]["status"], "PASSED")
+        self.assertEqual(result.substage_statuses["A6d"]["status"], "PASSED")
+        self.assertEqual(result.tekla_retry_count, 1)
+        self.assertEqual(result.tekla_retry_history[0]["phase"], "before_model_write")
+        self.assertEqual(send.call_count, 2)
+        self.assertEqual(audit.call_count, 1)
+
+    def test_tekla_connection_error_is_classified_before_cleanup(self):
+        from agentic.agents import a7_tekla_modeler_agent as a7
+        class ConnectionErrorFromTekla(RuntimeError):
+            pass
+        common = SimpleNamespace(
+            TeklaConnectionError=ConnectionErrorFromTekla,
+            _get_connected_model=MagicMock(side_effect=ConnectionErrorFromTekla("not connected")),
+        )
+        with patch.object(a7, "tekla_common", common), patch.object(a7, "clean_tekla") as clean:
+            with self.assertRaises(a7.TeklaPrePublicationConnectionError):
+                a7.send_to_tekla({"expected_tekla_model_path": "working-model"})
+        clean.assert_not_called()
+
+    def test_tekla_prepublication_retry_is_bounded(self):
+        from agentic.agents import a6_package_validator_agent as package
+        from agentic.agents import a7_tekla_modeler_agent as a7
+        state = self.state()
+        state.frame_candidate = {"members": [{"name": "column"}]}
+        state.validation_report = {"passed": True}
+
+        def revalidate(candidate, *, agent_id):
+            candidate.agent_statuses[agent_id] = {"status": "PASSED"}
+            return candidate
+
+        with patch.object(package, "run_a6_package_validator", side_effect=revalidate), \
+             patch("agentic.advisor.choose_correction", return_value={"id": "retry_publish"}), \
+             patch.object(a7, "send_to_tekla",
+                          side_effect=a7.TeklaPrePublicationConnectionError("connection unavailable")) as send:
+            result = asyncio.run(a7.run_a7_staged(state))
+        self.assertEqual(result.status, "FAILED")
+        self.assertEqual(result.tekla_retry_count, 5)
+        self.assertEqual(send.call_count, 6)
+        self.assertIn("retry limit reached", result.error)
+
+    def test_tekla_advisor_can_stop_a_safe_retry(self):
+        from agentic.agents import a7_tekla_modeler_agent as a7
+        state = self.state()
+        state.frame_candidate = {"members": [{"name": "column"}]}
+        state.validation_report = {"passed": True}
+        with patch("agentic.advisor.choose_correction", return_value={"id": "stop"}), \
+             patch.object(a7, "send_to_tekla",
+                          side_effect=a7.TeklaPrePublicationConnectionError("connection unavailable")) as send:
+            result = asyncio.run(a7.run_a7_staged(state))
+        self.assertEqual(result.status, "FAILED")
+        self.assertEqual(result.tekla_retry_count, 0)
+        self.assertEqual(send.call_count, 1)
+        self.assertIn("decision stopped", result.error)
+
+    def test_tekla_safe_retry_stops_if_revalidation_fails(self):
+        from agentic.agents import a6_package_validator_agent as package
+        from agentic.agents import a7_tekla_modeler_agent as a7
+        state = self.state()
+        state.layout_version = 2
+        state.frame_candidate = {"members": [{"name": "column"}]}
+        state.validation_report = {"passed": True}
+
+        def revalidate(candidate, *, agent_id):
+            candidate.validation_report = {"passed": False}
+            candidate.agent_statuses[agent_id] = {"status": "REVISING"}
+            return candidate
+
+        with patch.object(package, "run_a6_package_validator", side_effect=revalidate), \
+             patch("agentic.advisor.choose_correction", return_value={"id": "retry_publish"}), \
+             patch.object(a7, "send_to_tekla",
+                          side_effect=a7.TeklaPrePublicationConnectionError("connection unavailable")) as send:
+            result = asyncio.run(a7.run_a7_staged(state))
+        self.assertEqual(result.status, "FAILED")
+        self.assertEqual(send.call_count, 1)
+        self.assertIn("failed revalidation", result.error)
+
+    def test_tekla_payload_requires_audit_and_publication_requires_readback(self):
+        from agentic.nodes.a6_tekla.build import build_tekla_payload
+        from agentic.nodes.a6_tekla.evaluate import publication_passed
+
+        state = self.state()
+        state.frame_candidate = {"members": [{"name": "column"}]}
+        with self.assertRaisesRegex(ValueError, "passing package validation"):
+            build_tekla_payload(state)
+        state.validation_report = {
+            "passed": True, "validated_joint_groups_payload": {"joint": {"joints": []}},
+            "plate_material_policy": {"grade": "S355"},
+        }
+        state.readiness["tekla_model_path"] = "model.db1"
+        request = build_tekla_payload(state)
+        self.assertEqual(request["joint_groups"], {"joint": {"joints": []}})
+        self.assertEqual(request["expected_tekla_model_path"], "model.db1")
+        result = {"created": 1, "verified_members": 1, "plate_materials_verified": True}
+        self.assertTrue(publication_passed(result, request))
+        for change in ({"verified_members": 0}, {"plate_materials_verified": False},
+                       {"simulation": True}, {"errors": ["failed"]}):
+            with self.subTest(change=change):
+                self.assertFalse(publication_passed({**result, **change}, request))
+        state.change_scope = {"groups": ["joint"]}
+        with self.assertRaisesRegex(ValueError, "scoped Tekla adapter"):
+            build_tekla_payload(state)
+
     def test_component_readback_rejects_different_attribute(self):
         from agentic.agents import a7_tekla_modeler_agent as a7
         component = MagicMock()
@@ -319,7 +659,7 @@ class EngineeringGuardTests(unittest.TestCase):
             store = SqliteWorkflowStore(str(Path(directory) / "runs.db"))
             with patch("agentic.store.WORKFLOW_STORE", store), \
                  patch.object(orchestrator, "run_a2_readiness", side_effect=lambda state: state), \
-                 patch.object(a3, "generate_members", return_value=candidate), \
+                 patch.object(a3, "generate_members_from_parameters", return_value=candidate), \
                  patch.object(a3, "validate_profile_catalogue"), \
                  patch.object(a3, "template_coverage", return_value={"missing": []}), \
                  patch.object(a4, "frame_options", return_value=[{"id": "CFRHS120X120X6", "profile": "CFRHS120X120X6", "target": "column"}]), \
@@ -335,6 +675,135 @@ class EngineeringGuardTests(unittest.TestCase):
         self.assertEqual(solve.call_count, 3)
         publish.assert_not_called()
         self.assertEqual(final.tekla_results, {})
+
+    def test_new_full_graph_audits_real_evidence_before_tekla_and_gate(self):
+        from agentic import orchestrator
+        from agentic.agents import a3_frame_generator_agent as a3, a7_tekla_modeler_agent as a7
+        members = [{"name": "column", "p1": [0, 0, 0], "p2": [0, 0, 5000]}]
+        candidate = {"members": members, "members_split_beams": members}
+        calls = []
+
+        def solve(request):
+            calls.append(request["group"])
+            return joint_result()
+
+        def publish(request):
+            self.assertEqual(calls, ["first", "second"])
+            self.assertEqual(set(request["joint_groups"]), {"first", "second"})
+            return {"created": 1, "verified_members": 1, "failed": 0}
+
+        with patch.dict("os.environ", {"PLANT_DEEP_AGENTS_ENABLED": "false", "PLANT_LLM_ENABLED": "false"}), \
+             patch.object(orchestrator, "run_a2_readiness", side_effect=lambda state: state), \
+             patch.object(a3, "generate_members_from_parameters", return_value=candidate), \
+             patch.object(a3, "validate_profile_catalogue"), \
+             patch.object(a3, "template_coverage", return_value={"missing": []}), \
+             patch.object(a4, "send_to_staad", new=AsyncMock(return_value=valid_staad())), \
+             patch.object(a5, "_connection_payload", side_effect=payload), \
+             patch.object(a5, "design_joint", side_effect=solve), \
+             patch.object(a7, "send_to_tekla", side_effect=publish):
+            final = asyncio.run(orchestrator.run_agentic_workflow(
+                {"grid": {"n_long_bays": 1, "n_trans_bays": 1},
+                 "load_configuration": {"load_combinations": [
+                     {"name": "SLS", "envelope": "SERVICEABILITY", "factors": {"DL": 1}},
+                     {"name": "ULS", "envelope": "STRENGTH", "factors": {"DL": 1.35}}]}},
+                run_id="controlled_success"))
+        self.assertEqual(final.status, "PAUSED_AT_GATE3", final.error)
+        self.assertEqual(final.layout_version, 2)
+        self.assertTrue(final.validation_report["passed"])
+        self.assertEqual(final.agent_statuses["A5c"]["status"], "PASSED")
+        self.assertEqual(final.agent_statuses["A6"]["status"], "PASSED")
+        self.assertEqual(final.agent_statuses["A7"]["status"], "AWAITING_APPROVAL")
+        self.assertFalse(final.gate3_approved)
+
+    def test_a5d_llm_governs_a5c_package_audit_recovery(self):
+        from agentic.agents import a6_package_validator_agent as package
+        from agentic.nodes.a5_idea.graph import run_idea_graph
+        from agentic.orchestrator import route_after_a5
+
+        state = self.state()
+        state.layout_version = 2
+        state.active_operation_params = {"first": [{"key": "EP_d", "expression": "0.016"}]}
+        state.joint_grader_results = {"first": GraderResult(passed=True, summary="ok")}
+        state.ideastatica_results = {"first": {"status": "PASSED", "check_summary": {"passed": True}}}
+
+        def audit_revising(candidate, *, agent_id="A5c"):
+            candidate.validation_report = {"passed": False, "recovery_target": "a5_ideastatica_analyzer"}
+            candidate.loop_c_count = 1
+            candidate.agent_statuses[agent_id] = {"status": "REVISING", "message": "Refresh joint evidence."}
+            return candidate
+
+        with patch.object(a5, "_connection_payload", side_effect=payload), \
+             patch.object(a5, "design_joint", return_value=joint_result()), \
+             patch.object(package, "run_a6_package_validator", side_effect=audit_revising), \
+             patch("agentic.advisor.choose_correction", return_value={"id": "stop"}) as advisor:
+            stopped = asyncio.run(run_idea_graph(state, audit_package=True))
+        self.assertEqual(stopped.status, "FAILED")
+        self.assertEqual(stopped.substage_statuses["A5c"]["status"], "REVISING")
+        self.assertEqual(stopped.substage_statuses["A5d"]["status"], "FAILED")
+        self.assertEqual(route_after_a5(stopped), "__end__")
+        advisor.assert_called_once()
+        self.assertEqual(advisor.call_args.args[1], "package")
+
+    def test_a4d_and_a5d_invoke_llm_advisor_on_first_failure_when_multiple_options(self):
+        from agentic.nodes.a4_staad.correction import apply_staad_grade
+        from agentic.nodes.a5_idea.correction import _correct_connection_parameters, apply_failed_joint_grade
+
+        state = self.state()
+        state.active_column_profile = "HEA120"
+        state.frame_candidate = {"members": [{"name": "column", "profile": "HEA120"}]}
+        bad_staad = valid_staad()
+        bad_staad["member_type_max_ratios"]["column"] = 1.15
+        bad_staad["member_ratios"][1]["ratio"] = 1.15
+        frame_grader = GraderResult(
+            passed=False,
+            summary="ratio 1.15 > 1.0",
+            details={"overall_max_ratio": 1.15, "member_type_max_ratios": {"column": 1.15}},
+            corrective_action_needed=True,
+            corrective_action={"target_type": "column", "action": "upsize"},
+        )
+        choices = [
+            {"id": "HEA140", "target": "column", "profile": "HEA140"},
+            {"id": "HEA160", "target": "column", "profile": "HEA160"},
+        ]
+        chosen = []
+        apply_staad_grade(
+            state,
+            bad_staad,
+            frame_grader,
+            lambda _p, _t, _c: choices,
+            lambda s, stage, ev, opts, default_id: chosen.append((stage, opts[1]["id"])) or opts[1],
+        )
+        self.assertEqual(chosen, [("frame", "HEA160")])
+        self.assertEqual(state.active_column_profile, "HEA160")
+
+        params = [{"key": "BP1_d", "expression": "0.016"}, {"key": "BP2_d", "expression": "0.016"}]
+        joint_res = {
+            "check_summary": {
+                "summary": [{"name": "Bolts", "value": 115.0}],
+                "failed_parameter_keys": ["BP1_d", "BP2_d"],
+            }
+        }
+        joint_grader = GraderResult(
+            passed=False,
+            summary="bolt > 100%",
+            details={"metrics": {"bolt_util_pct": 115.0}},
+            corrective_action_needed=True,
+            corrective_action={"fix_type": "bolt_dia"},
+        )
+        joint_chosen = []
+        apply_failed_joint_grade(
+            state,
+            "first",
+            joint_res,
+            joint_grader,
+            params,
+            False,
+            _correct_connection_parameters,
+            lambda s, stage, ev, opts, default_id: joint_chosen.append((stage, len(opts))) or opts[1],
+        )
+        self.assertEqual(joint_chosen, [("connection", 3)])
+        self.assertEqual(len(state.active_operation_params["first"]), 1)
+        self.assertEqual(state.active_operation_params["first"][0]["key"], "BP1_d")
 
 
 if __name__ == "__main__":

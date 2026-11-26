@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from agentic.chat_store import now
 from agentic.chat_tool_registry import execution_plan
+from agentic.state import workflow_stage
 
 
 def fingerprint(value):
@@ -122,14 +123,14 @@ def build_joint_proposal(session, state, changes, action="validate_selected_conn
     if action == "publish_selected_connections" and (not state.tekla_results.get("connection_manifest")
             or state.tekla_results.get("component_manifest_version") != 1
             or not state.tekla_results.get("member_manifest")
-            or state.agent_statuses.get("A7", {}).get("status") != "PASSED"):
+            or state.agent_statuses.get(workflow_stage(state, "tekla"), {}).get("status") != "PASSED"):
         raise ValueError("Selected Tekla publication requires a verified component manifest from a full publication. The legacy full-model rebuild will not be substituted.")
     if action == "publish_selected_connections":
         from agentic.tekla_selected_updates import component_patch
         component_patch(state.tekla_results["connection_manifest"], patch, groups)
     proposal = {"kind": "joint_parameters", "source_run_id": state.run_id,
                 "source_fingerprint": source_fingerprint(state), "groups": groups,
-                "changes": patch, "action": action, "steps": execution_plan(action), "run_policy":state.run_policy,
+                "changes": patch, "action": action, "steps": execution_plan(action, state.layout_version), "run_policy":state.run_policy,
                 "unchanged_parameters":unchanged,
                 "physical_joint_counts":{group:metadata[group]['physical_joint_count'] for group in groups},
                 "template_fingerprints":template_fingerprints(state,groups),
@@ -157,9 +158,10 @@ def build_selected_publication(session, source):
     proposal = {'kind':'joint_parameters','source_run_id':source.run_id,'source_fingerprint':source_fingerprint(source),
         'groups':previous['groups'],'changes':previous['changes'],'run_policy':source.run_policy,
         'action':'publish_selected_connections','reuse_calculations':True,
-        'steps':['A6:package','A7:selected','A8:report'],
+        'steps':[workflow_stage(source, 'package') + ':package', workflow_stage(source, 'tekla') + ':selected',
+                 workflow_stage(source, 'report') + ':report'],
         'template_fingerprints':template_fingerprints(source,previous['groups']),
-        'notice':'Publish previously calculated selected changes. Old/new values describe the recorded Tekla baseline and the validated target. A6 rechecks saved evidence; IDEA is not recalculated. No model rebuild.'}
+        'notice':'Publish previously calculated selected changes. Old/new values describe the recorded Tekla baseline and the validated target. The package audit rechecks saved evidence; IDEA is not recalculated. No model rebuild.'}
     return seal_proposal(session,proposal)
 
 
@@ -244,7 +246,8 @@ def prepare_joint_candidate(plan, source):
             state.ideastatica_results.pop(group, None)
     if plan.get('reuse_calculations'):
         state.readiness['publication_resume_source']=source.run_id
-    for stage in (("A6", "A7", "A8") if plan.get('reuse_calculations') else ("A5", "A6", "A7", "A8")):
+    stages = (workflow_stage(state, "package"), workflow_stage(state, "tekla"), workflow_stage(state, "report"))
+    for stage in (stages if plan.get('reuse_calculations') else ("A5", *stages)):
         state.agent_statuses.pop(stage, None)
     return state
 

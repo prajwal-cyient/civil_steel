@@ -10,6 +10,7 @@ from agentic.store import WORKFLOW_STORE
 from agentic.chat_attachments import AttachmentStore, MAX_FILE
 from agentic.chat_guardrails import quick_scope, SCOPE_MESSAGE, CLARIFY_MESSAGE
 from agentic.chat_input_lifetime import reset_finished_inputs
+from agentic.state import workflow_stage
 
 router = APIRouter(prefix="/api/v2/chat", tags=["Structural Chat"])
 CHAT_STORE = ChatStore()
@@ -24,7 +25,7 @@ def sync_approval(turn):
         return turn
     state = WORKFLOW_STORE.get_state(turn['run_id'])
     if (state and state.status == 'COMPLETED' and state.gate3_approved
-            and state.agent_statuses.get('A8', {}).get('status') == 'PASSED'):
+            and state.agent_statuses.get(workflow_stage(state, 'report'), {}).get('status') == 'PASSED'):
         completed = CHAT_STORE.complete_approval(turn['id'], state.run_id, redact(state.accepted_by), state.acceptance_timestamp)
         session = CHAT_STORE.session(turn['session_id'])
         reset_finished_inputs(session, CHAT_STORE, WORKFLOW_STORE, state)

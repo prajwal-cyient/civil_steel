@@ -87,6 +87,28 @@ class DeepAgentTests(unittest.TestCase):
         result, _, _, _ = self._run(operation=stage)
         self.assertEqual(result.deep_agent_events[-1]["status"], "VERIFIED")
 
+    def test_layout_v2_package_audit_runs_once_under_deep_agent(self):
+        state = WorkflowState(run_id="deep-package", layout_version=2, status="RUNNING")
+        calls = []
+
+        def audit(candidate, *, agent_id):
+            calls.append(agent_id)
+            candidate.agent_statuses[agent_id] = {"status": "PASSED"}
+            candidate.validation_report = {"passed": True}
+            return candidate
+
+        with patch.dict(os.environ, {"PLANT_DEEP_AGENTS_ENABLED": "true"}), \
+             patch.object(orchestrator, "_sync_state"), \
+             patch.object(orchestrator, "guarded"), \
+             patch.object(orchestrator, "run_a6_package_validator", side_effect=audit), \
+             patch.object(deep_runtime, "_build_model", return_value=StageModel()):
+            result = asyncio.run(orchestrator.node_a6(state))
+
+        self.assertEqual(calls, ["A5c"])
+        self.assertEqual(result.agent_statuses["A5c"]["status"], "PASSED")
+        self.assertEqual(result.deep_agent_events[-1]["status"], "VERIFIED")
+        self.assertEqual(result.deep_agent_events[-1]["tool_calls"], 1)
+
     def test_model_cannot_skip_engineering_tool_and_invent_success(self):
         result, _, seen, _ = self._run("skip")
         self.assertEqual(result.status, "FAILED")
@@ -140,7 +162,8 @@ class DeepAgentTests(unittest.TestCase):
         def operation(agent):
             def run(state):
                 seen.append(agent);counts[agent] = counts.get(agent, 0) + 1
-                state.agent_statuses[agent] = {"status": "PASSED"}
+                status_agent = "A6" if agent == "A7" and state.layout_version == 2 else agent
+                state.agent_statuses[status_agent] = {"status": "PASSED"}
                 if agent == "A4" and counts[agent] == 1:
                     state.loop_a_count += 1;state.agent_statuses[agent]["status"] = "REVISING"
                 if agent == "A5" and counts[agent] == 1:
@@ -152,21 +175,34 @@ class DeepAgentTests(unittest.TestCase):
                     else:state.validation_report = {"passed": True}
                 return state
             return run
-        names = ["requirements", "readiness", "frame_generator", "staad_analyzer", "ideastatica_analyzer", "package_validator", "tekla_modeler"]
+        names = ["run_a1_requirements", "run_a2_readiness", "run_a3_staged", "run_a4_staged",
+                 "run_a5_staged", "run_a6_package_validator", "run_a7_staged"]
         with ExitStack() as stack:
             stack.enter_context(patch.dict(os.environ, {"PLANT_DEEP_AGENTS_ENABLED": "true", "PLANT_DEEP_AGENT_MODEL_CALL_LIMIT": "64"}))
             stack.enter_context(patch.object(orchestrator, "_sync_state"))
             stack.enter_context(patch.object(deep_runtime, "_build_model", side_effect=StageModel))
             for i, name in enumerate(names, 1):
-                stack.enter_context(patch.object(orchestrator, f"run_a{i}_{name}", side_effect=operation(f"A{i}")))
+                stack.enter_context(patch.object(orchestrator, name, side_effect=operation(f"A{i}")))
+            async def idea_graph(state, *, audit_package):
+                self.assertTrue(audit_package)
+                state = await orchestrator.run_a5_staged(state)
+                if state.agent_statuses["A5"]["status"] != "PASSED":
+                    return state
+                state = orchestrator.run_a6_package_validator(state)
+                audit = state.agent_statuses.pop("A6")
+                state.agent_statuses["A5c"] = audit
+                if audit["status"] == "REVISING":
+                    state.agent_statuses["A5"] = {"status": "REVISING"}
+                return state
+            stack.enter_context(patch.object(orchestrator, "run_idea_graph", idea_graph))
             result = asyncio.run(orchestrator.run_agentic_workflow({}, "deep-graph"))
         self.assertEqual(result.status, "PAUSED_AT_GATE3", result.error)
-        self.assertEqual({e["stage"] for e in result.deep_agent_events}, {f"A{i}" for i in range(1, 9)})
+        self.assertEqual({e["stage"] for e in result.deep_agent_events}, {f"A{i}" for i in range(1, 8)})
         self.assertTrue(all(e["status"] == "VERIFIED" and e["tool_calls"] == 1 for e in result.deep_agent_events))
         self.assertEqual(counts["A3"], 2)
         self.assertEqual(counts["A5"], 3)
         self.assertEqual(counts["A6"], 2)
-        self.assertEqual(result.agent_statuses["A8"]["status"], "AWAITING_APPROVAL")
+        self.assertEqual(result.agent_statuses["A7"]["status"], "AWAITING_APPROVAL")
         self.assertFalse(result.gate3_approved)
 
 

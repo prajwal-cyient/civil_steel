@@ -58,7 +58,7 @@ async def get_active_run():
 
 @router.post("/retry-publication/{source_run_id}")
 async def retry_publication(source_run_id: str):
-    """Reuse unchanged calculations, re-audit them, and retry a failed A7 handoff."""
+    """Reuse unchanged calculations, re-audit them, and retry a failed Tekla handoff."""
     global ACTIVE_RUN_ID
     if _RUN_LOCK.locked():
         raise HTTPException(status_code=409, detail="An engineering workflow is already using the desktop tools.")

@@ -52,7 +52,7 @@ def requested_dimensions(message):
     return next(iter(values),None)
 
 
-def execution_plan(action):
+def execution_plan(action, layout_version=2):
     """Known operation dependencies. These names refer to existing worker stages."""
     plans = {
         "configuration_only": [],
@@ -68,7 +68,14 @@ def execution_plan(action):
     }
     if action not in plans:
         raise ValueError("Unsupported execution plan.")
-    return plans[action][:]
+    if layout_version == 1:
+        return plans[action][:]
+    if layout_version != 2:
+        raise ValueError("Unsupported workflow layout version.")
+    mapping = {"A6": "A5c", "A7": "A6", "A8": "A7"}
+    return [mapping.get(step.partition(":")[0], step.partition(":")[0])
+            + (":" + step.partition(":")[2] if ":" in step else "")
+            for step in plans[action]]
 
 
 def configuration_action(message):

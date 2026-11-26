@@ -45,6 +45,17 @@ class RunArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.read(self.folder/'03_final_output/workflow_output.json')['status'],'COMPLETED')
         self.assertEqual(len(list((self.folder/'01_agents').iterdir())),8)
 
+    async def test_new_and_legacy_archives_preserve_distinct_stage_ids(self):
+        legacy = self.store.get_state(self.state.run_id)
+        modern = WorkflowState(run_id='run_newlayout', layout_version=2, status='RUNNING')
+        self.store.save_state(modern)
+        self.assertEqual(legacy.layout_version, 1)
+        self.assertEqual(len(list((archive_folder(legacy)/'01_agents').iterdir())), 8)
+        self.assertEqual(len(list((archive_folder(modern)/'01_agents').iterdir())), 7)
+        manifest = self.read(archive_folder(modern)/'manifest.json')
+        self.assertEqual(manifest['layout_version'], 2)
+        self.assertNotIn('A8', manifest['agents'])
+
     async def test_stage_inputs_outputs_and_retries_preserve_each_attempt(self):
         async def operation(state):
             state.agent_statuses['A5']={'status':'PASSED'}
@@ -146,7 +157,8 @@ class RunArchiveTests(unittest.IsolatedAsyncioTestCase):
         (model/'fixture_model.db1').write_bytes(b'synthetic fixture, not a real Tekla database')
         def stage(agent):
             def operation(state):
-                state.agent_statuses[agent]={'status':'PASSED'}
+                status_agent = 'A6' if agent == 'A7' and state.layout_version == 2 else agent
+                state.agent_statuses[status_agent]={'status':'PASSED'}
                 if agent=='A4':
                     state.frame_grader_result=GraderResult(passed=True,summary='fixture')
                 elif agent=='A6':
@@ -158,12 +170,19 @@ class RunArchiveTests(unittest.IsolatedAsyncioTestCase):
         with ExitStack() as stack:
             stack.enter_context(patch.dict(os.environ,{'PLANT_DEEP_AGENTS_ENABLED':'false'}))
             stack.enter_context(patch.object(flow,'_sync_state',self.store.save_state))
-            for n,name in [(2,'run_a2_readiness'),(3,'run_a3_frame_generator'),(4,'run_a4_staad_analyzer'),
-                           (5,'run_a5_ideastatica_analyzer'),(6,'run_a6_package_validator'),(7,'run_a7_tekla_modeler')]:
+            for n,name in [(2,'run_a2_readiness'),(3,'run_a3_staged'),(4,'run_a4_staged'),
+                           (5,'run_a5_staged'),(6,'run_a6_package_validator'),(7,'run_a7_staged')]:
                 stack.enter_context(patch.object(flow,name,stage(f'A{n}')))
+            async def idea_graph(state, *, audit_package):
+                self.assertTrue(audit_package)
+                state = flow.run_a5_staged(state)
+                state = flow.run_a6_package_validator(state)
+                state.agent_statuses['A5c'] = state.agent_statuses.pop('A6')
+                return state
+            stack.enter_context(patch.object(flow,'run_idea_graph',idea_graph))
             result=await flow.run_agentic_workflow({'grid':{'n_long_bays':8,'n_trans_bays':5}},'run_abcdef12')
         folder=archive_folder(result)
-        for n in range(1,9):
+        for n in range(1,8):
             for filename in ['input.json','output.json','process.json']:
                 self.assertTrue((folder/'01_agents'/f'A{n}'/'attempt_001'/filename).is_file())
         self.assertEqual(result.status,'PAUSED_AT_GATE3')

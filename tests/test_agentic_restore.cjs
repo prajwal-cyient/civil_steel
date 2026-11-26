@@ -46,6 +46,27 @@ function state(agent = 'A3', overrides = {}) {
 }
 const staadResult = () => ({ created: 1, candidate_signature: 'verified-frame', member_data_by_id: { 900001: { name: 'column', start: 1, end: 2 } } });
 
+test('new and historical workflows display distinct stage meanings and actual substage progress', () => {
+  const ui = setup();
+  ui.context.renderAgenticRunState(state('A6', {
+    layout_version: 2,
+    substage_statuses: { A6a: { status: 'PASSED' }, A6b: { status: 'RUNNING' } },
+  }));
+  assert.equal(ui.element('label-A6').textContent, 'Tekla');
+  assert.equal(ui.element('label-A5').textContent, 'IDEA + audit');
+  assert.equal(ui.element('label-A7').textContent, 'Report');
+  assert.equal(ui.element('step-A8').hidden, true);
+  assert.equal(ui.element('substeps-A6').children[0].className, 'passed');
+  assert.equal(ui.element('substeps-A6').children[1].className, 'running');
+  assert.equal(ui.element('substeps-A6').children[2].className, 'pending');
+  ui.context.renderAgenticRunState(state('A8', { run_id: 'run_old' }));
+  assert.equal(ui.element('label-A6').textContent, 'Validate');
+  assert.equal(ui.element('label-A5').textContent, 'IDEA');
+  assert.equal(ui.element('label-A7').textContent, 'Tekla');
+  assert.equal(ui.element('step-A8').hidden, false);
+  assert.equal(ui.element('substeps-A6').children.length, 0);
+});
+
 function chatBridge(ui) {
   const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'static', 'radiator_support', 'index.html'), 'utf8');
   const start = html.indexOf('// Small integration bridge:');

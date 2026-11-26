@@ -383,11 +383,16 @@ def create_app():
 
     @app.middleware("http")
     async def reserve_desktop_tools(request, call_next):
-        from agentic.execution import CONTROLLER
-        mutation = request.method == "POST" and request.url.path in (
-            "/api/v1/radiator_support/to_staad", "/api/v1/radiator_support/to_tekla", "/api/v1/to_ideastatica")
-        if mutation and CONTROLLER.run_id:
-            return JSONResponse(status_code=409, content={"detail": "An agentic run currently owns the desktop tools."})
+        from agentic.desktop_lock import DesktopBusyError, desktop_lock
+        native_request = request.method == "POST" and request.url.path in (
+            "/api/v1/radiator_support/generate", "/api/v1/radiator_support/to_staad",
+            "/api/v1/radiator_support/to_tekla", "/api/v1/to_ideastatica")
+        if native_request:
+            try:
+                with desktop_lock():
+                    return await call_next(request)
+            except DesktopBusyError as exc:
+                return JSONResponse(status_code=409, content={"detail": str(exc)})
         return await call_next(request)
 
     # Serves any assets referenced from the UI (e.g. /static/... paths)

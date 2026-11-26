@@ -34,10 +34,12 @@ class WorkflowState(BaseModel):
     The shared state dictionary passed across all 8 agents in LangGraph.
     """
     run_id: str
+    layout_version: int = 1
     status: str = "INITIALIZED"  # "RUNNING", "PAUSED_AT_GATE3", "COMPLETED", "FAILED"
     current_agent: str = "A1"
     logs: List[AgentLogEntry] = Field(default_factory=list)
     agent_statuses: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    substage_statuses: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     agent_timings: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     output_archive: Dict[str, Any] = Field(default_factory=dict)
     audit_events: List[Dict[str, Any]] = Field(default_factory=list)
@@ -60,6 +62,7 @@ class WorkflowState(BaseModel):
 
     # A3 Frame Generation
     frame_candidate: Dict[str, Any] = Field(default_factory=dict)
+    frame_plan: Dict[str, Any] = Field(default_factory=dict)
     active_column_profile: str = ""
     active_beam_profile: str = ""
     active_long_brace_profile: str = ""
@@ -68,6 +71,7 @@ class WorkflowState(BaseModel):
     candidate_history: List[str] = Field(default_factory=list)
 
     # A4 STAAD Structural Analysis
+    staad_request: Dict[str, Any] = Field(default_factory=dict)
     # OpenSTAAD returns integer load-case IDs alongside named result sections.
     staad_results: Dict[str | int, Any] = Field(default_factory=dict)
     frame_grader_result: Optional[GraderResult] = None
@@ -92,6 +96,13 @@ class WorkflowState(BaseModel):
 
     # A7 Tekla 3D Detailing Model
     tekla_results: Dict[str, Any] = Field(default_factory=dict)
+    tekla_request: Dict[str, Any] = Field(default_factory=dict)
+    tekla_publication_passed: Optional[bool] = None
+    tekla_grader_result: Optional[GraderResult] = None
+    tekla_prepublication_error: Optional[str] = None
+    tekla_retry_count: int = 0
+    max_tekla_retries: int = 5
+    tekla_retry_history: List[Dict[str, Any]] = Field(default_factory=list)
 
     # A8 Final Report & Gate 3 Human Acceptance
     final_report: Dict[str, Any] = Field(default_factory=dict)
@@ -118,4 +129,16 @@ def fail_workflow(state: WorkflowState, agent_id: str, message: str) -> Workflow
         message=message, timestamp=datetime.now().astimezone().isoformat(),
     ))
     return state
+
+
+def workflow_stage(state: WorkflowState, role: str) -> str:
+    """Resolve stage IDs without reinterpreting unversioned historical runs."""
+    stages = {
+        "package": ("A6", "A5c"),
+        "tekla": ("A7", "A6"),
+        "report": ("A8", "A7"),
+    }
+    if state.layout_version not in (1, 2):
+        raise ValueError(f"Unsupported workflow layout version: {state.layout_version}")
+    return stages[role][state.layout_version - 1]
 

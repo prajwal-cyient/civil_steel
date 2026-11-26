@@ -18,6 +18,10 @@ IST = timezone(timedelta(hours=5, minutes=30))
 TERMINAL = {'COMPLETED', 'FAILED', 'CANCELLED'}
 
 
+def archive_agents(state):
+    return [f'A{n}' for n in range(1, 8 if state.layout_version == 2 else 9)]
+
+
 def write_json(path, value):
     path = io_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -61,8 +65,8 @@ def prepare_archive(state, database_path, created_at):
     for item in ['00_input', '02_software/STAAD', '02_software/IDEA_StatiCa',
                  '02_software/Tekla', '03_final_output', '04_logs']:
         (folder / item).mkdir(parents=True, exist_ok=True)
-    for n in range(1, 9):
-        (folder / '01_agents' / f'A{n}').mkdir(parents=True, exist_ok=True)
+    for agent in archive_agents(state):
+        (folder / '01_agents' / agent).mkdir(parents=True, exist_ok=True)
     original = folder / '00_input' / 'original_input.json'
     if not original.exists():
         write_json(original, state.raw_input)
@@ -138,8 +142,7 @@ def _checkpoint(state):
         'run_status':state.status})
     write_json(folder / '04_logs' / 'events.json', [entry.model_dump() for entry in state.logs])
     write_json(folder / '04_logs' / 'audit_events.json', state.audit_events)
-    for n in range(1,9):
-        agent = f'A{n}'
+    for agent in archive_agents(state):
         attempt = attempt_folder(state, agent)
         if (attempt / 'input.json').exists() and (state.agent_timings.get(agent,{}).get('running') or
                                                  not (attempt / 'output.json').exists()):
@@ -149,12 +152,13 @@ def _checkpoint(state):
     write_json(folder / 'manifest.json', {
         'run_id':state.run_id, 'status':state.status, 'updated_at':datetime.now(timezone.utc).isoformat(),
         'archive_warnings':state.output_archive.get('warnings', []),
-        'agents':{f'A{n}':{'status':state.agent_statuses.get(f'A{n}',{}).get('status','NOT_RUN'),
-            'attempts':[p.name for p in sorted((folder/'01_agents'/f'A{n}').glob('attempt_*'))],
-            'execution_recorded':any((folder/'01_agents'/f'A{n}').glob('attempt_*/input.json'))} for n in range(1,9)},
+        'layout_version':state.layout_version,
+        'agents':{agent:{'status':state.agent_statuses.get(agent,{}).get('status','NOT_RUN'),
+            'attempts':[p.name for p in sorted((folder/'01_agents'/agent).glob('attempt_*'))],
+            'execution_recorded':any((folder/'01_agents'/agent).glob('attempt_*/input.json'))} for agent in archive_agents(state)},
         'software':{name:{'stage_status':state.agent_statuses.get(agent,{}).get('status','NOT_RUN'),
             'capture_manifests':[str(p.relative_to(folder)) for p in (folder/'02_software'/name).rglob('copy_manifest.json')]}
-            for name,agent in [('STAAD','A4'),('IDEA_StatiCa','A5'),('Tekla','A7')]},
+            for name,agent in [('STAAD','A4'),('IDEA_StatiCa','A5'),('Tekla','A6' if state.layout_version == 2 else 'A7')]},
         'native_files_notice':'See each software copy_manifest.json. Files are not claimed saved unless listed. Open Tekla model copies are not independently reopen-validated.',
     })
     # Copy a changing worker log on terminal/approval checkpoints, never the source itself.
@@ -220,6 +224,7 @@ def record_idea(state, group, payload, result, folder=None):
 
 
 def finish_stage(state, agent, exception=None):
+    from agentic.state import workflow_stage
     folder = attempt_folder(state,agent)
     if folder is None:
         return
@@ -246,7 +251,7 @@ def finish_stage(state, agent, exception=None):
             write_json(software/'native_files'/'copy_manifest.json',report)
     elif agent == 'A5':
         write_json(root/'02_software'/'IDEA_StatiCa'/'results.json',state.ideastatica_results)
-    elif agent == 'A7':
+    elif agent == workflow_stage(state, 'tekla'):
         software = root/'02_software'/'Tekla'/attempt
         write_json(software/'input.json',{'members':state.frame_candidate.get('members',[]),
             'grid':state.grid_config,'joint_groups':state.validation_report.get('validated_joint_groups_payload',{})})
@@ -254,7 +259,7 @@ def finish_stage(state, agent, exception=None):
         write_json(software/'verified_components.json',state.tekla_results.get('connection_manifest',[]))
         source = Path(state.tekla_results.get('model_path',''))
         report = {'saved_files':[], 'unavailable_reason':'No successful saved Tekla publication in this attempt.'}
-        if state.agent_statuses.get('A7',{}).get('status') == 'PASSED' and source.is_dir() and state.tekla_results.get('model_path'):
+        if state.agent_statuses.get(workflow_stage(state, 'tekla'),{}).get('status') == 'PASSED' and source.is_dir() and state.tekla_results.get('model_path'):
             files, excluded = [], []
             for path in source.rglob('*'):
                 if any(parent.is_symlink() for parent in [path,*path.parents]):

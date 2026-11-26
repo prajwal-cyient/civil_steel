@@ -12,6 +12,8 @@ Comprehensive unit and integration test for the Enhanced Autonomous Design Workf
 """
 
 import asyncio
+import hashlib
+import json
 import os
 from pathlib import Path
 import sys
@@ -31,7 +33,12 @@ from agentic.ladders import (
     COLUMN_PROFILE_LADDER,
     BEAM_PROFILE_LADDER
 )
-from agentic.agents.a3_frame_generator_agent import check_geometry
+from agentic.agents.a3_frame_generator_agent import (
+    check_geometry,
+    evaluate_frame_parameters,
+    generate_members,
+    generate_members_from_parameters,
+)
 from agentic.agents.a4_staad_analyzer_agent import grade_staad_results
 from agentic.agents.a5_ideastatica_analyzer_agent import grade_joint_check_summary
 from agentic.agents.a6_package_validator_agent import run_a6_package_validator
@@ -42,6 +49,88 @@ from agentic.state import WorkflowState, GraderResult
 
 
 class TestEnhancedAgenticWorkflow(unittest.TestCase):
+
+    def test_frame_parameter_extraction_preserves_generated_geometry(self):
+        base = {
+            "n_long_bays": 2, "n_trans_bays": 1,
+            "bay_long_mm": 4000, "bay_trans_mm": 3000,
+            "col_height_mm": 5000, "total_structure_height": 5000,
+            "beam_profile": "HEA140", "column_profile": "CFRHS120X120X5",
+            "longitudinal_brace_bays": [{"bay": 1, "mirror": True}],
+            "transverse_brace_bays": [{"bay": 1}],
+        }
+        cases = [
+            (base, "c4c376232fbed34e35c56fd3400b06945be6f91ec0264f7a0c4ba92e022a9f50"),
+            ({**base, "col_height_mm": 3000, "total_structure_height": 6000,
+              "starting_point": [100, 200, 300], "vertical_base_eccentricity_mm": 50},
+             "9fc07871a43ab16f5705c2eaba2d77c62ca34e9010f02f31797ddbacd9cd5d03"),
+        ]
+        dimensions = {"HEA140": 133, "CFRHS120X120X5": 120}
+        widths = {"HEA140": 140, "CFRHS120X120X5": 120}
+        for cfg, expected_hash in cases:
+            with self.subTest(cfg=cfg), \
+                 patch("agentic.agents.a3_frame_generator_agent._lookup_profile_height",
+                       side_effect=dimensions.__getitem__) as heights, \
+                 patch("agentic.agents.a3_frame_generator_agent._lookup_profile_width",
+                       side_effect=widths.__getitem__) as profile_widths:
+                original_entry_result = generate_members(cfg)
+                parameters = evaluate_frame_parameters(cfg)
+                split_result = generate_members_from_parameters(cfg, parameters)
+                self.assertEqual(split_result, original_entry_result)
+                encoded = json.dumps(split_result, sort_keys=True, separators=(",", ":")).encode()
+                self.assertEqual(hashlib.sha256(encoded).hexdigest(), expected_hash)
+                self.assertEqual(heights.call_count, 4)
+                self.assertEqual(profile_widths.call_count, 4)
+
+    def test_frame_parameters_reject_invalid_or_stale_heights(self):
+        cfg = {
+            "n_long_bays": 1, "n_trans_bays": 1,
+            "bay_long_mm": 4000, "bay_trans_mm": 3000,
+            "col_height_mm": 3000, "total_structure_height": 4000,
+        }
+        with patch("agentic.agents.a3_frame_generator_agent._lookup_profile_height", return_value=133), \
+             patch("agentic.agents.a3_frame_generator_agent._lookup_profile_width", return_value=120):
+            with self.assertRaisesRegex(ValueError, "too small"):
+                evaluate_frame_parameters({**cfg, "total_structure_height": 266})
+            parameters = evaluate_frame_parameters(cfg)
+            with self.assertRaisesRegex(ValueError, "do not match"):
+                generate_members_from_parameters({**cfg, "beam_profile": "HEA160"}, parameters)
+            with self.assertRaisesRegex(ValueError, "do not match"):
+                generate_members_from_parameters({**cfg, "total_structure_height": 5000}, parameters)
+
+    def test_a3_stages_match_existing_entry_and_reject_stale_plan(self):
+        from agentic.agents import a3_frame_generator_agent as a3
+        cfg = {
+            "n_long_bays": 2, "n_trans_bays": 1,
+            "bay_long_mm": 4000, "bay_trans_mm": 3000,
+            "col_height_mm": 5000, "total_structure_height": 5000,
+            "beam_profile": "HEA140", "column_profile": "CFRHS120X120X5",
+            "longitudinal_brace_bays": [{"bay": 1}],
+        }
+        original = WorkflowState(run_id="original", grid_config=cfg)
+        staged = WorkflowState(run_id="staged", grid_config=cfg)
+        with patch.object(a3, "validate_profile_catalogue"), \
+             patch.object(a3, "template_coverage", return_value={"missing": []}), \
+             patch.object(a3, "_lookup_profile_height", return_value=133), \
+             patch.object(a3, "_lookup_profile_width", return_value=120):
+            a3.run_a3_frame_generator(original)
+            a3.evaluate_a3_frame(staged)
+            staged = WorkflowState.model_validate_json(staged.model_dump_json())
+            a3.generate_a3_frame(staged)
+            self.assertEqual(staged.agent_statuses["A3"]["status"], "PASSED")
+            self.assertEqual(staged.frame_candidate, original.frame_candidate)
+            self.assertEqual(staged.grid_config, original.grid_config)
+            self.assertEqual(staged.design_generation, original.design_generation)
+            self.assertFalse(staged.frame_plan)
+
+            stale = WorkflowState(run_id="stale", grid_config=cfg)
+            a3.evaluate_a3_frame(stale)
+            stale.grid_config["longitudinal_brace_bays"][0]["bay"] = 2
+            a3.generate_a3_frame(stale)
+            self.assertEqual(stale.status, "FAILED")
+            self.assertIn("no longer matches", stale.error)
+            self.assertFalse(stale.frame_plan)
+            self.assertFalse(stale.frame_candidate)
 
     def test_ladders_and_expression_stepping(self):
         """Test profile and parameter ladders in both millimeter and meter units."""
@@ -186,11 +275,119 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
             staad_results={"joint_groups": {"con1": {}}},
             joint_grader_results={"con1": GraderResult(passed=False, summary="Missing solve")}
         )
-        # First attempt: triggers Loop C recovery
-        res = run_a6_package_validator(state)
+        with patch("agentic.agents.a6_package_validator_agent.frame_signature", return_value="current"), \
+             patch("agentic.agents.a6_package_validator_agent.grade_staad_results",
+                   return_value=GraderResult(passed=True, summary="OK")):
+            state.staad_results["candidate_signature"] = "current"
+            res = run_a6_package_validator(state)
         self.assertEqual(res.agent_statuses.get("A6", {}).get("status"), "REVISING")
         self.assertEqual(res.loop_c_count, 1)
         self.assertEqual(res.validation_report.get("recovery_target"), "a5_ideastatica_analyzer")
+
+    def test_strict_package_audit_stops_stale_frame_but_retries_joint_evidence(self):
+        from agentic.agents import a6_package_validator_agent as audit
+        state = WorkflowState(
+            run_id="strict_audit",
+            frame_candidate={"members": [{"name": "m1"}]},
+            frame_grader_result=GraderResult(passed=True, summary="OK"),
+            staad_results={"joint_groups": {"con1": {}}, "candidate_signature": "old"},
+            joint_grader_results={"con1": GraderResult(passed=False, summary="Missing solve")},
+        )
+        with patch.object(audit, "frame_signature", return_value="current"), \
+             patch.object(audit, "grade_staad_results", return_value=GraderResult(passed=True, summary="OK")):
+            audit.run_a6_package_validator(state)
+        self.assertEqual(state.status, "FAILED")
+        self.assertIn("does not belong to the current frame", state.error)
+        self.assertFalse(state.validation_report["passed"])
+        self.assertEqual(state.loop_c_count, 0)
+
+        joint_only = WorkflowState(
+            run_id="joint_audit",
+            frame_candidate={"members": [{"name": "m1"}]},
+            frame_grader_result=GraderResult(passed=True, summary="OK"),
+            staad_results={"joint_groups": {"con1": {}}, "candidate_signature": "current"},
+            joint_grader_results={"con1": GraderResult(passed=False, summary="Missing solve")},
+        )
+        with patch.object(audit, "frame_signature", return_value="current"), \
+             patch.object(audit, "grade_staad_results", return_value=GraderResult(passed=True, summary="OK")):
+            audit.run_a6_package_validator(joint_only)
+        self.assertEqual(joint_only.agent_statuses["A6"]["status"], "REVISING")
+        self.assertEqual(joint_only.validation_report["recovery_target"], "a5_ideastatica_analyzer")
+
+        no_groups = WorkflowState(
+            run_id="missing_staad_scope",
+            frame_candidate={"members": [{"name": "m1"}]},
+            frame_grader_result=GraderResult(passed=True, summary="OK"),
+            staad_results={"candidate_signature": "current"},
+        )
+        with patch.object(audit, "frame_signature", return_value="current"), \
+             patch.object(audit, "grade_staad_results", return_value=GraderResult(passed=True, summary="OK")):
+            audit.run_a6_package_validator(no_groups)
+        self.assertEqual(no_groups.status, "FAILED")
+        self.assertIn("No connection groups returned by STAAD", no_groups.error)
+        self.assertEqual(no_groups.loop_c_count, 0)
+
+    def test_package_graph_has_no_frame_recovery_edge_and_rejects_invalid_target(self):
+        from agentic import orchestrator
+        edges = orchestrator.build_workflow_graph().compile().get_graph().edges
+        self.assertNotIn(
+            ("a5c_package_audit", "a3_frame_generator"),
+            {(edge.source, edge.target) for edge in edges},
+        )
+        self.assertIn(
+            ("a5_ideastatica_analyzer", "a6_tekla_modeler"),
+            {(edge.source, edge.target) for edge in edges},
+        )
+        self.assertNotIn("a5c_package_audit", {edge.source for edge in edges})
+        state = WorkflowState(
+            run_id="invalid_recovery", status="RUNNING", loop_c_count=1,
+            validation_report={"recovery_target": "a3_frame_generator"},
+        )
+        def invalid_audit(candidate, *, agent_id):
+            candidate.agent_statuses["A6"] = {"status": "REVISING"}
+            return candidate
+
+        with patch.object(orchestrator, "run_a6_package_validator", side_effect=invalid_audit), \
+             patch.object(orchestrator, "_sync_state"), patch.object(orchestrator, "guarded"), \
+             patch.object(orchestrator, "deep_agents_enabled", return_value=False):
+            result = asyncio.run(orchestrator.node_a6(state))
+        self.assertEqual(result.status, "FAILED")
+        self.assertIn("recovery is invalid", result.error)
+        self.assertEqual(orchestrator.route_after_a6(result), "__end__")
+
+    def test_idea_routes_to_tekla_only_after_package_audit_passes(self):
+        from agentic.orchestrator import route_after_a5
+
+        state = WorkflowState(
+            run_id="idea_routing", layout_version=2, status="RUNNING",
+            agent_statuses={"A5": {"status": "PASSED"}, "A5c": {"status": "PASSED"}},
+            validation_report={"passed": True},
+        )
+        self.assertEqual(route_after_a5(state), "a6_tekla_modeler")
+        state.validation_report["passed"] = False
+        self.assertEqual(route_after_a5(state), "__end__")
+        state.validation_report["passed"] = True
+        state.agent_statuses["A5c"]["status"] = "REVISING"
+        self.assertEqual(route_after_a5(state), "__end__")
+        state.agent_statuses["A5"]["status"] = "REVISING"
+        self.assertEqual(route_after_a5(state), "a5_ideastatica_analyzer")
+
+    def test_graph_gate_requires_verified_publication_and_pending_human_review(self):
+        from agentic import orchestrator
+        state = WorkflowState(
+            run_id="gate", status="PAUSED_AT_GATE3",
+            validation_report={"passed": True},
+            agent_statuses={"A7": {"status": "PASSED"}, "A8": {"status": "AWAITING_APPROVAL"}},
+            final_report={"gate3_status": "PENDING_ENGINEER_ACCEPTANCE"},
+        )
+        with patch.object(orchestrator, "_sync_state"):
+            result = asyncio.run(orchestrator.node_gate3(state))
+            self.assertEqual(result.status, "PAUSED_AT_GATE3")
+            self.assertFalse(result.gate3_approved)
+            result.validation_report["passed"] = False
+            result = asyncio.run(orchestrator.node_gate3(result))
+        self.assertEqual(result.status, "FAILED")
+        self.assertIn("verified publication", result.error)
 
     def test_sqlite_persistence(self):
         """Test saving and retrieving WorkflowState from SQLite."""
@@ -227,11 +424,11 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
             store = SqliteWorkflowStore(os.path.join(directory, "runs.db"))
             with patch("agentic.store.WORKFLOW_STORE", store), \
                  patch.object(orchestrator, "run_a2_readiness", side_effect=lambda state: state), \
-                 patch.object(a3, "generate_members", return_value=candidate), \
+                 patch.object(a3, "generate_members_from_parameters", return_value=candidate), \
                  patch.object(a3, "validate_profile_catalogue"), \
                  patch.object(a3, "template_coverage", return_value={"missing": []}), \
                  patch.object(a4, "send_to_staad", new=AsyncMock(return_value={"analysis_failed": True})), \
-                 patch.object(orchestrator, "run_a5_ideastatica_analyzer") as idea:
+                 patch.object(orchestrator, "run_a5_staged") as idea:
                 state = asyncio.run(run_agentic_workflow({"grid": {}, "load_configuration": {"load_combinations": [{"name": "SLS", "envelope": "SERVICEABILITY", "factors": {"DL": 1}}, {"name": "ULS", "envelope": "STRENGTH", "factors": {"DL": 1.35}}]}}, run_id="controlled_failure"))
         self.assertEqual(state.status, "FAILED")
         self.assertEqual(state.current_agent, "A4")

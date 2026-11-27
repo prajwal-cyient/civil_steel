@@ -6,9 +6,9 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from agentic.state import WorkflowState
-from agentic import orchestrator as flow
-from agentic.agent_timing import stop_running_timings
+from orchestration.state import WorkflowState
+from orchestration import workflow as flow
+from utils.agent_timing import stop_running_timings
 
 
 class AgentTimingTests(unittest.IsolatedAsyncioTestCase):
@@ -20,7 +20,7 @@ class AgentTimingTests(unittest.IsolatedAsyncioTestCase):
             s.agent_statuses['A5'] = {'status':'PASSED'}
             return s
         with patch.object(flow,'deep_agents_enabled',return_value=False), patch.object(flow,'_sync_state',side_effect=persist), \
-             patch('agentic.agent_timing.time.monotonic',side_effect=[100.,135.,500.,505.]):
+             patch('utils.agent_timing.time.monotonic',side_effect=[100.,135.,500.,505.]):
             await flow._run_stage(state,'A5',operation)
             await flow._run_stage(state,'A5',operation)
         timing = state.agent_timings['A5']
@@ -39,8 +39,8 @@ class AgentTimingTests(unittest.IsolatedAsyncioTestCase):
             s.agent_statuses[agent]={'status':'AWAITING_APPROVAL'}
             return s
         with patch.object(flow,'deep_agents_enabled',return_value=True),patch.object(flow,'_sync_state'), \
-             patch('agentic.deep_runtime.run_deep_stage',new=AsyncMock(side_effect=engine)), \
-             patch('agentic.agent_timing.time.monotonic',side_effect=[10.,45.]):
+             patch('services.deep_agents_runtime.run_deep_stage',new=AsyncMock(side_effect=engine)), \
+             patch('utils.agent_timing.time.monotonic',side_effect=[10.,45.]):
             await flow._run_stage(state,'A8',lambda s:s)
         self.assertEqual(state.agent_timings['A8']['elapsed_seconds'],35.)
         self.assertFalse(state.agent_timings['A8']['running'])
@@ -53,7 +53,7 @@ class AgentTimingTests(unittest.IsolatedAsyncioTestCase):
         state=WorkflowState(run_id='failed')
         def operation(s): raise ValueError('native operation failed')
         with patch.object(flow,'deep_agents_enabled',return_value=False),patch.object(flow,'_sync_state'), \
-             patch('agentic.agent_timing.time.monotonic',side_effect=[0.,2.]):
+             patch('utils.agent_timing.time.monotonic',side_effect=[0.,2.]):
             with self.assertRaisesRegex(ValueError,'native operation failed'):
                 await flow._run_stage(state,'A3',operation)
         self.assertEqual(state.agent_timings['A3']['elapsed_seconds'],2.)
@@ -63,7 +63,7 @@ class AgentTimingTests(unittest.IsolatedAsyncioTestCase):
         state=WorkflowState(run_id='async-failed')
         async def operation(s): raise ValueError('async native operation failed')
         with patch.object(flow,'deep_agents_enabled',return_value=False),patch.object(flow,'_sync_state'), \
-             patch('agentic.agent_timing.time.monotonic',side_effect=[0.,3.]):
+             patch('utils.agent_timing.time.monotonic',side_effect=[0.,3.]):
             with self.assertRaisesRegex(ValueError,'async native operation failed'):
                 await flow._run_stage(state,'A5',operation)
         self.assertEqual(state.agent_timings['A5']['elapsed_seconds'],3.)
@@ -72,7 +72,7 @@ class AgentTimingTests(unittest.IsolatedAsyncioTestCase):
     async def test_terminated_worker_timer_freezes_once(self):
         state=WorkflowState(run_id='cancelled',agent_timings={'A5':{
             'running':True,'started_at':'2026-11-23T12:00:00+00:00','elapsed_seconds':5.,'attempts':2}})
-        with patch('agentic.agent_timing.datetime') as clock:
+        with patch('utils.agent_timing.datetime') as clock:
             clock.now.return_value=datetime(2026,11,23,12,0,35,tzinfo=timezone.utc)
             clock.fromisoformat.side_effect=datetime.fromisoformat
             stop_running_timings(state)

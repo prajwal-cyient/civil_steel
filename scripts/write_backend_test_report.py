@@ -235,7 +235,7 @@ def build_report():
     item("Artifact consistency checks: "+json.dumps(read(ART / "final-evidence-qa.json")))
     for path in sorted((ROOT / "src/agentic").rglob("*.py")):
         item(str(path.relative_to(ROOT))+" SHA256 "+hashlib.sha256(path.read_bytes()).hexdigest())
-    for relative in ("src/common/staad_common.py","src/common/staad_input.py","src/common/tekla_common.py","src/radiator_support/staad_integration.py"):
+    for relative in ("src/agents/A4_staad/staad_com_helpers.py","src/agents/A4_staad/A4A_build_json.py","src/agents/A6_tekla/tekla_open_api.py","src/agents/A4_staad/staad_openstaad.py"):
         item(relative+" SHA256 "+hashlib.sha256((ROOT / relative).read_bytes()).hexdigest())
     REPORT.write_text("\n".join(lines)+"\n",encoding="utf-8")
     print(REPORT)

@@ -17,12 +17,12 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.coinit_flags = 2
-from agentic.config import load_environment, deep_agents_enabled
+from config.settings import load_environment, deep_agents_enabled
 load_environment()
-from common import staad_common  # Initialize STA before pythonnet.
-from common import tekla_common
+from agents.A4_staad import staad_com_helpers as staad_common  # Initialize STA before pythonnet.
+from agents.A6_tekla import tekla_open_api as tekla_common
 from Tekla.Structures.Model import ModelHandler
-from agentic.execution import RunController
+from orchestration.execution import RunController
 
 
 def check_idle():

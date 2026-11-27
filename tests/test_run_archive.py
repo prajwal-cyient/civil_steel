@@ -8,10 +8,10 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
-from agentic.state import WorkflowState
-from agentic.store import SqliteWorkflowStore
-from agentic import orchestrator as flow
-from agentic.run_archive import archive_folder, checkpoint, start_idea, record_idea, finish_stage, guarded
+from orchestration.state import WorkflowState
+from services.workflow_store import SqliteWorkflowStore
+from orchestration import workflow as flow
+from utils.run_archive import archive_folder, checkpoint, start_idea, record_idea, finish_stage, guarded
 
 
 class RunArchiveTests(unittest.IsolatedAsyncioTestCase):
@@ -133,7 +133,7 @@ class RunArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((model/'model.lck').exists())
 
     async def test_archive_failure_does_not_change_run_decision(self):
-        with patch('agentic.run_archive.write_json',side_effect=OSError('disk unavailable')):
+        with patch('utils.run_archive.write_json',side_effect=OSError('disk unavailable')):
             guarded(self.state,checkpoint)
         self.assertEqual(self.state.status,'RUNNING')
         self.assertIsNone(self.state.error)
@@ -151,8 +151,8 @@ class RunArchiveTests(unittest.IsolatedAsyncioTestCase):
     async def test_full_eight_stage_fixture_archives_all_agents_and_waits_for_approval(self):
         from contextlib import ExitStack
         import os
-        from agentic.agents.a8_reporting_acceptance_agent import accept_gate3
-        from agentic.state import GraderResult
+        from agents.A7_reporting import accept_gate3
+        from orchestration.state import GraderResult
         model=self.root/'fixture_model';model.mkdir()
         (model/'fixture_model.db1').write_bytes(b'synthetic fixture, not a real Tekla database')
         def stage(agent):

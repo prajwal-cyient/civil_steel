@@ -8,14 +8,14 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT / "src"))
 sys.coinit_flags=2
-from common import staad_common
-from agentic.config import load_environment
+from agents.A4_staad import staad_com_helpers as staad_common
+from config.settings import load_environment
 load_environment()
-from agentic.state import WorkflowState
-from agentic.store import SqliteWorkflowStore
-import agentic.store as store_module
-from agentic.agents.a6_package_validator_agent import run_a6_package_validator
-from agentic.agents.a5_ideastatica_analyzer_agent import run_a5_ideastatica_analyzer, _connection_payload
+from orchestration.state import WorkflowState
+from services.workflow_store import SqliteWorkflowStore
+import services.workflow_store as store_module
+from agents.A5_idea_statica.package_validation import run_a6_package_validator
+from agents.A5_idea_statica import run_a5_ideastatica_analyzer, _connection_payload
 
 
 def main():

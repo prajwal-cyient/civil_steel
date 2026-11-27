@@ -12,15 +12,15 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.coinit_flags = 2
-from common import staad_common
-from agentic.config import load_environment
+from agents.A4_staad import staad_com_helpers as staad_common
+from config.settings import load_environment
 load_environment()
-from agentic.store import WORKFLOW_STORE
-from agentic.state import WorkflowState
-from agentic.agents.a1_requirements_agent import run_a1_requirements
-from agentic.agents.a2_readiness_agent import run_a2_readiness
-from agentic.agents.a3_frame_generator_agent import run_a3_frame_generator
-from agentic.agents.a4_staad_analyzer_agent import run_a4_staad_analyzer
+from services.workflow_store import WORKFLOW_STORE
+from orchestration.state import WorkflowState
+from agents.A1_requirements import run_a1_requirements
+from agents.A2_readiness.readiness_agent import run_a2_readiness
+from agents.A3_generate_structure import run_a3_frame_generator
+from agents.A4_staad import run_a4_staad_analyzer
 
 
 async def main(max_revisions=2, mixed=False):

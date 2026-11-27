@@ -10,11 +10,11 @@ from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from agentic.connection_materials import (
+from agents.A5_idea_statica.package_validation import (
     material_only_plate_evidence, reference_plate_material_policy, verify_plate_material_evidence,
 )
-from agentic.agents import a7_tekla_modeler_agent as tekla
-from agentic.agents import a5_ideastatica_analyzer_agent as idea
+from agents.A6_tekla import A6B_trigger_api as tekla
+from agents import A5_idea_statica as idea
 
 
 class ConnectionMaterialTests(unittest.TestCase):

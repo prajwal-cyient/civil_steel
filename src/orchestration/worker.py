@@ -1,0 +1,66 @@
+"""A disposable process owns one engineering run and its COM apartment."""
+
+import argparse
+import asyncio
+import json
+import sys
+
+from config.settings import load_environment
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run-id", required=True)
+    operation = parser.add_mutually_exclusive_group()
+    operation.add_argument("--resume-publication", action="store_true")
+    operation.add_argument("--chat-parameter-rerun", action="store_true")
+    operation.add_argument("--chat-action", choices=("preview_structure", "generate_structure", "analyze_frame",
+                                                    "design_connections", "validate_package", "publish_to_tekla",
+                                                    "update_selected_connections", "publish_selected_connections"))
+    args = parser.parse_args()
+    load_environment()
+    # OpenSTAAD explicitly requires STA. Import it before pythonnet can select
+    # a different COM apartment on this thread.
+    sys.coinit_flags = 2
+    from orchestration.state import WorkflowState, fail_workflow
+    from services.workflow_store import WORKFLOW_STORE
+    state = WORKFLOW_STORE.get_state(args.run_id)
+    if state is None:
+        raise RuntimeError("Worker input was not persisted.")
+    from utils.audit import observe, exception_record, flush_traces
+    from orchestration.desktop_lock import DesktopBusyError, desktop_lock
+    with observe(state, 'Engineering workflow', kind='workflow') as run_audit:
+        try:
+            with desktop_lock():
+                if sys.platform == "win32" and args.chat_action != "preview_structure":
+                    import agents.A4_staad.staad_com_helpers  # noqa: F401
+                from orchestration.workflow import run_agentic_workflow
+                if args.chat_action:
+                    from chatbot.chat_actions import run_chat_action
+                    result = asyncio.run(run_chat_action(state, args.chat_action))
+                elif args.resume_publication:
+                    from agents.A6_tekla.publication_recovery import run_publication_retry
+                    result = asyncio.run(run_publication_retry(state))
+                else:
+                    result = asyncio.run(run_agentic_workflow(
+                        state.raw_input, run_id=args.run_id, chat_parameter_rerun=args.chat_parameter_rerun
+                    ))
+        except DesktopBusyError as exc:
+            result = fail_workflow(state, state.current_agent, str(exc))
+        except Exception as exc:
+            exception_record(state, 'worker', exc)
+            result = fail_workflow(state, state.current_agent, f"Worker initialization failed: {exc}")
+        run_audit.update(status=result.status, reason=result.error)
+    # Full graph execution creates its own state; retain the parent operation
+    # alongside the stage records returned by that graph.
+    existing = next((e for e in result.audit_events if e['id']==run_audit['id']), None)
+    if existing is None:
+        result.audit_events.insert(0, run_audit)
+    else:
+        existing.update(run_audit)
+    flush_traces(result)
+    WORKFLOW_STORE.save_state(result)
+
+
+if __name__ == "__main__":
+    main()

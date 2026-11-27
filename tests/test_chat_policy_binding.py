@@ -8,14 +8,14 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from langchain_core.messages import AIMessage
-from agentic.chat_policy_requests import requested_policy_values, require_requested_policy
+from chatbot.policy_requests import requested_policy_values, require_requested_policy
 import test_chat as chat_fixtures
 from test_chat import ControlledModel, call
 
 
 class ProfileLookupTests(unittest.TestCase):
     def lookup(self, library, parametric):
-        path = Path(__file__).resolve().parents[1] / 'src/common/tekla_common.py'
+        path = Path(__file__).resolve().parents[1] / 'src/agents/A6_tekla/tekla_open_api.py'
         tree = ast.parse(path.read_text(encoding='utf-8-sig'))
         function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
                         and node.name == '_get_profile_parameter')
@@ -26,7 +26,7 @@ class ProfileLookupTests(unittest.TestCase):
         return namespace['_get_profile_parameter']
 
     def test_exact_parametric_names_supply_live_dimensions_to_a3(self):
-        from agentic.agents.a3_frame_generator_agent import validate_profile_catalogue
+        from agents.A3_generate_structure import validate_profile_catalogue
         calls = []
         class Library:
             def Select(self, name):
@@ -44,7 +44,7 @@ class ProfileLookupTests(unittest.TestCase):
         lookup = self.lookup(Library, Parametric)
         module = SimpleNamespace(get_profile_height=lambda name: lookup(name, 'HEIGHT'),
                                  get_profile_width=lambda name: lookup(name, 'WIDTH'))
-        with patch.dict(sys.modules, {'common.tekla_common': module}):
+        with patch.dict(sys.modules, {'agents.A6_tekla.tekla_open_api': module}):
             validate_profile_catalogue({'column_profile':'CFRHS120X120X5', 'beam_profile':'HEA140',
                 'longitudinal_brace_profile':'CFRHS100X100X4', 'transverse_brace_profile':'CFRHS100X100X4'})
             with self.assertRaises(ValueError):
@@ -95,10 +95,10 @@ class ChatPolicyBindingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.session(self.session['id'])['project_input']['grid']['n_long_bays'], 8)
         # Approval is deterministic and loads a fresh session, without ephemeral
         # request fields. The queued policy must still reach the actual A1/A8.
-        from agentic.chat import ChatRuntime
-        from agentic.state import WorkflowState
-        from agentic.agents.a1_requirements_agent import run_a1_requirements
-        from agentic.agents.a8_reporting_acceptance_agent import run_a8_reporting
+        from chatbot.chatbot import ChatRuntime
+        from orchestration.state import WorkflowState
+        from agents.A1_requirements import run_a1_requirements
+        from agents.A7_reporting import run_a8_reporting
         async def execute(data, run_id, *, chat_parameter_rerun=False):
             self.assertTrue(chat_parameter_rerun)
             state = run_a8_reporting(run_a1_requirements(WorkflowState(run_id=run_id, raw_input=data)))
@@ -107,7 +107,7 @@ class ChatPolicyBindingTests(unittest.IsolatedAsyncioTestCase):
         controller = SimpleNamespace(run_id=None, execute=AsyncMock(side_effect=execute))
         approved = self.store.transition_plan(plan['id'], self.session['id'], 'PENDING', 'EXECUTING')
         approval_turn = self.store.new_turn(self.session['id'], 'Apply approved change')
-        with patch('agentic.execution.CONTROLLER', controller), patch('agentic.chat.WORKFLOW_STORE', self.workflows):
+        with patch('orchestration.execution.CONTROLLER', controller), patch('chatbot.chatbot.WORKFLOW_STORE', self.workflows):
             await ChatRuntime(self.store).execute_approved(approval_turn, approved, True)
         self.assertEqual(approval_turn['status'], 'AWAITING_APPROVAL', approval_turn)
         saved = self.workflows.get_state(approval_turn['run_id'])

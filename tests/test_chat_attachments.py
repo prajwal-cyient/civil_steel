@@ -9,7 +9,7 @@ from unittest.mock import patch
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from agentic.chat_attachments import AttachmentStore, extract, archive
+from chatbot.attachments import AttachmentStore, extract, archive
 
 
 def bundle(entries):
@@ -90,9 +90,9 @@ class AttachmentAPI(unittest.TestCase):
         import asyncio
         from PIL import Image
         from langchain_core.messages import AIMessage, HumanMessage
-        from agentic import chat_router
-        from agentic.chat import ChatRuntime
-        from agentic.chat_store import ChatStore
+        from chatbot import chat_router
+        from chatbot.chatbot import ChatRuntime
+        from chatbot.chat_store import ChatStore
         class Model:
             messages = []
             def bind_tools(self, tools, **kwargs): return self
@@ -116,9 +116,9 @@ class AttachmentAPI(unittest.TestCase):
     def test_upload_remove_and_sent_attachment_model_context(self):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from agentic import chat_router
-        from agentic.chat import ChatRuntime
-        from agentic.chat_store import ChatStore
+        from chatbot import chat_router
+        from chatbot.chatbot import ChatRuntime
+        from chatbot.chat_store import ChatStore
         from langchain_core.messages import AIMessage, ToolMessage
         class Model:
             count = 0

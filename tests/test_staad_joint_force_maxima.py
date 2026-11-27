@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 from typing import Any, Dict, List, Tuple
 
-source_path = Path(__file__).resolve().parents[1] / "src/radiator_support/staad_integration.py"
+source_path = Path(__file__).resolve().parents[1] / "src/agents/A4_staad/staad_openstaad.py"
 tree = ast.parse(source_path.read_text(encoding="utf-8"))
 helper = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "find_connected_members_forces")
 namespace = dict(Any=Any, Dict=Dict, List=List, Tuple=Tuple)

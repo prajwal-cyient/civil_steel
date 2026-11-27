@@ -9,14 +9,15 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from agentic.run_policy import RunPolicy
-from agentic.state import WorkflowState, GraderResult
-from agentic.agents.a1_requirements_agent import run_a1_requirements
-from agentic.agents import a4_staad_analyzer_agent as a4
-from agentic.agents import a5_ideastatica_analyzer_agent as a5
-from agentic.agents.a8_reporting_acceptance_agent import run_a8_reporting, accept_gate3
-from agentic.chat import ChatRuntime, project_input
-from agentic.chat_store import ChatStore
+from config.run_policy import RunPolicy
+from orchestration.state import WorkflowState, GraderResult
+from agents.A1_requirements import run_a1_requirements
+from agents import A4_staad as a4
+from agents import A5_idea_statica as a5
+from agents.A5_idea_statica import A5A_build_json as a5_a
+from agents.A7_reporting import run_a8_reporting, accept_gate3
+from chatbot.chatbot import ChatRuntime, project_input
+from chatbot.chat_store import ChatStore
 from test_engineering_guards import valid_staad, joint_result
 
 
@@ -108,13 +109,13 @@ class RunPolicyTests(unittest.TestCase):
         self.assertFalse(a5.grade_joint_check_summary(checks).passed)
 
     def test_a6_rechecks_policy_even_with_cached_pass(self):
-        from agentic.agents import a6_package_validator_agent as a6
+        from agents.A5_idea_statica import package_validation as a6
         state = WorkflowState(run_id="audit", run_policy={"max_member_ratio": 0.7},
             grid_config={"col_height_mm": 5000}, frame_candidate={"members": [{}]},
             staad_results=valid_staad(), frame_grader_result=GraderResult(passed=True, summary="old PASS"))
-        with patch("agentic.agents.a7_tekla_modeler_agent.unmapped_connection_corrections", return_value=[]), \
+        with patch("agents.A6_tekla.A6B_trigger_api.unmapped_connection_corrections", return_value=[]), \
              patch.object(a6, "frame_signature", return_value=None), \
-             patch("agentic.reference_procedure.scope_for_state", return_value={
+             patch("agents.A3_generate_structure.connection_scope.scope_for_state", return_value={
                  "mode": "reviewed_engineering", "idea_required_groups": [], "standard_detail_groups": []}):
             a6.run_a6_package_validator(state)
         self.assertFalse(state.validation_report["passed"])
@@ -129,7 +130,7 @@ class RunPolicyTests(unittest.TestCase):
             accept_gate3(state)
 
     def test_a6_rechecks_bolt_policy_and_hash_records_thresholds(self):
-        from agentic.agents import a6_package_validator_agent as a6
+        from agents.A5_idea_statica import package_validation as a6
         result = joint_result()
         result['input_signature'] = 'fixture'
         next(c for c in result['check_summary']['summary'] if c['name'] == 'Bolts')['check_value'] = 65.
@@ -138,12 +139,12 @@ class RunPolicyTests(unittest.TestCase):
             frame_grader_result=GraderResult(passed=True, summary='cached'),
             ideastatica_results={'first': result},
             joint_grader_results={'first': GraderResult(passed=True, summary='cached')})
-        with patch('agentic.agents.a7_tekla_modeler_agent.unmapped_connection_corrections', return_value=[]), \
+        with patch('agents.A6_tekla.A6B_trigger_api.unmapped_connection_corrections', return_value=[]), \
              patch.object(a6, 'frame_signature', return_value=None), \
              patch.object(a6, 'verify_plate_material_evidence'), \
-             patch.object(a5, '_connection_payload', return_value={}), \
-             patch.object(a5, '_connection_signature', return_value='fixture'), \
-             patch('agentic.reference_procedure.scope_for_state', return_value={
+             patch.object(a5_a, '_connection_payload', return_value={}), \
+             patch.object(a5_a, '_connection_signature', return_value='fixture'), \
+             patch('agents.A3_generate_structure.connection_scope.scope_for_state', return_value={
                  'mode': 'reviewed_engineering', 'idea_required_groups': ['first'], 'standard_detail_groups': []}):
             default = a6.run_a6_package_validator(original.model_copy(deep=True))
             self.assertTrue(default.validation_report['passed'])
@@ -197,8 +198,8 @@ class ChatRunPolicyTests(unittest.IsolatedAsyncioTestCase):
             return run_a1_requirements(WorkflowState(run_id=run_id, raw_input=payload, status="FAILED"))
         controller = SimpleNamespace(run_id=None, execute=AsyncMock(side_effect=execute))
         baseline = {'grid':{'n_long_bays':21,'n_trans_bays':5}}
-        with patch("agentic.execution.CONTROLLER", controller), \
-             patch('agentic.chat_input_lifetime.master_inputs',return_value=deepcopy(baseline)):
+        with patch("orchestration.execution.CONTROLLER", controller), \
+             patch('chatbot.input_lifetime.master_inputs',return_value=deepcopy(baseline)):
             await self.runtime.engineering(self.session, "run_complete_workflow", True)
             self.assertNotIn("next_run_policy", self.store.session(self.session["id"]))
             await self.runtime.engineering(self.session, "run_complete_workflow", True)
@@ -213,7 +214,7 @@ class ChatRunPolicyTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await self.policy_tool().ainvoke({"run_policy": {"max_member_ratio": 2}})
         controller = SimpleNamespace(run_id=None, execute=AsyncMock())
-        with patch("agentic.execution.CONTROLLER", controller):
+        with patch("orchestration.execution.CONTROLLER", controller):
             with self.assertRaisesRegex(ValueError, "rejected run policy"):
                 await self.runtime.engineering(self.session, "run_complete_workflow", True)
         controller.execute.assert_not_awaited()
@@ -225,7 +226,7 @@ class ChatRunPolicyTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await self.runtime.engineering(self.session, "run_complete_workflow", False)
         self.assertIn("next_run_policy", self.session)
-        with patch("agentic.execution.CONTROLLER", SimpleNamespace(run_id="busy")):
+        with patch("orchestration.execution.CONTROLLER", SimpleNamespace(run_id="busy")):
             with self.assertRaises(ValueError):
                 await self.runtime.engineering(self.session, "run_complete_workflow", True)
         self.assertIn("next_run_policy", self.session)
@@ -233,7 +234,7 @@ class ChatRunPolicyTests(unittest.IsolatedAsyncioTestCase):
     async def test_json_policy_consumed_without_resetting_geometry(self):
         self.session["project_input"]["run_policy"] = {"max_member_ratio": 0.8}
         controller = SimpleNamespace(run_id=None, execute=AsyncMock(return_value=WorkflowState(run_id="result")))
-        with patch("agentic.execution.CONTROLLER", controller):
+        with patch("orchestration.execution.CONTROLLER", controller):
             await self.runtime.engineering(self.session, "run_complete_workflow", True)
         self.assertEqual(controller.execute.call_args.args[0]["run_policy"]["max_member_ratio"], 0.8)
         self.assertNotIn("run_policy", self.session["project_input"])
@@ -242,7 +243,7 @@ class ChatRunPolicyTests(unittest.IsolatedAsyncioTestCase):
     async def test_preview_does_not_consume_and_old_stage_cannot_adopt_new_policy(self):
         await self.policy_tool().ainvoke({"run_policy": {"drift_denominator": 300}})
         controller = SimpleNamespace(run_id=None, execute=AsyncMock(return_value=WorkflowState(run_id="preview")))
-        with patch("agentic.execution.CONTROLLER", controller):
+        with patch("orchestration.execution.CONTROLLER", controller):
             await self.runtime.engineering(self.session, "preview_structure", False)
             self.assertIn("next_run_policy", self.session)
             with self.assertRaisesRegex(ValueError, "new generation"):

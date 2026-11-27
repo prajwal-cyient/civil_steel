@@ -7,9 +7,10 @@ from unittest.mock import Mock
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from agentic.reference_procedure import build_connection_scope, scope_for_state, template_for_group
-from agentic.state import WorkflowState, GraderResult
-from agentic.agents import a5_ideastatica_analyzer_agent as a5
+from agents.A3_generate_structure.connection_scope import build_connection_scope, scope_for_state, template_for_group
+from orchestration.state import WorkflowState, GraderResult
+from agents import A5_idea_statica as a5
+from agents.A5_idea_statica import A5A_build_json as a5_a, A5B_trigger_api as a5_b
 
 
 class ReferenceScopeTests(unittest.TestCase):
@@ -65,9 +66,9 @@ class ReferenceScopeTests(unittest.TestCase):
         state = self.state()
         result = {"passed": True, "check_summary": {"summary": [
             {"name": "Plates", "check_value": 10, "check_status": True, "skipped": False}]}}
-        with patch.object(a5, "_connection_payload", return_value={}), \
-             patch.object(a5, "design_joint", return_value=result) as solve, \
-             patch("agentic.store.WORKFLOW_STORE", Mock()):
+        with patch.object(a5_a, "_connection_payload", return_value={}), \
+             patch.object(a5_b, "design_joint", return_value=result) as solve, \
+             patch("services.workflow_store.WORKFLOW_STORE", Mock()):
             a5.run_a5_ideastatica_analyzer(state)
         self.assertEqual(solve.call_count, 2)
         self.assertNotIn("support_node_no_bracing", state.joint_grader_results)
@@ -75,7 +76,7 @@ class ReferenceScopeTests(unittest.TestCase):
         self.assertEqual(state.agent_statuses["A5"]["status"], "PASSED")
 
     def test_double_brace_transverse_parameters_reach_tekla_in_mm(self):
-        from agentic.agents.a7_tekla_modeler_agent import connection_attributes
+        from agents.A6_tekla import connection_attributes
         group = "inner_node_2_longitudinal_1_transverse_bracing"
         groups = {group: {"operation_parameters": [
             {"key": "CPL_th", "expression": "0.010"},
@@ -88,7 +89,7 @@ class ReferenceScopeTests(unittest.TestCase):
         self.assertEqual(longitudinal["tpl1"], 10)
 
     def test_integer_attributes_use_the_integer_readback_overload(self):
-        from agentic.agents import a7_tekla_modeler_agent as a7
+        from agents import A6_tekla as a7
         class Int32(int):
             pass
         component, persisted, model = Mock(), Mock(), Mock()

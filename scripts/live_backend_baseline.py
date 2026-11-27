@@ -11,12 +11,12 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.coinit_flags = 2
-from common import staad_common
-from agentic.config import load_environment
+from agents.A4_staad import staad_com_helpers as staad_common
+from config.settings import load_environment
 load_environment()
-from common import tekla_common
+from agents.A6_tekla import tekla_open_api as tekla_common
 from Tekla.Structures.Model import ModelHandler
-from agentic.store import WORKFLOW_STORE
+from services.workflow_store import WORKFLOW_STORE
 
 
 def api(path, data=None, timeout=30):

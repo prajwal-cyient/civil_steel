@@ -619,7 +619,7 @@
       <div class="dwgno"><span>DWG NO. RS-001</span><span id="dwg-rev">REV —</span></div>
     </div>
 
-    <form id="grid-form" onsubmit="return false;">
+    <form id="grid-form" onsubmit="return false;" autocomplete="off">
 
       <details class="input-section">
         <summary>Grid Geometry</summary>
@@ -1826,6 +1826,38 @@ let manualUiBusy = false;
 const pendingChatTurns = new Set();
 let agenticViewVersion = 0;
 let renderedRun = {};
+let chatExtraInput = {grid: {}, load_configuration: {}};
+
+const DASHBOARD_BOOT_KEY = 'structuralDashboardBootId';
+function getStorageItem(key) {
+  try { return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null; } catch (_) { return null; }
+}
+function setStorageItem(key, value) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (value == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch (_) {}
+}
+function isBrowserReload() {
+  return typeof performance !== 'undefined'
+    && performance.getEntriesByType?.('navigation')?.[0]?.type === 'reload';
+}
+function syncServerBoot(response) {
+  const serverBoot = response?.headers?.get?.('X-Server-Boot-Id');
+  const priorBoot = getStorageItem(DASHBOARD_BOOT_KEY);
+  const restarted = Boolean(serverBoot && priorBoot && priorBoot !== serverBoot);
+  if (serverBoot) setStorageItem(DASHBOARD_BOOT_KEY, serverBoot);
+  return restarted;
+}
+function clearStaleLocationState() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('run_id');
+  url.searchParams.delete('chat');
+  url.searchParams.delete('new');
+  window.history.replaceState(null, '', url);
+  setStorageItem('structuralChatSession', null);
+}
 
 function updateActionControls() {
   const busy = agenticUiBusy || manualUiBusy || pendingChatTurns.size > 0;
@@ -1899,6 +1931,13 @@ function resetAgenticPresentation() {
 function resetRunView() {
   if (agenticUiBusy || manualUiBusy || pendingChatTurns.size) return;
   agenticViewVersion += 1;
+  revCounter = 0;
+  const dwgRev = document.getElementById('dwg-rev');
+  if (dwgRev) dwgRev.textContent = 'REV —';
+  const savedSelect = document.getElementById('saved-run-select');
+  if (savedSelect) savedSelect.value = '';
+  chatExtraInput = {grid: {}, load_configuration: {}};
+  window.structuralChatBridge?.resetChat?.();
   resetAgenticPresentation();
   setDisplayedRun(null);
   updateActionControls();
@@ -2146,13 +2185,27 @@ async function restoreSavedAgenticRun(requestedRunId = null) {
   const viewVersion = ++agenticViewVersion;
   const params = new URLSearchParams(window.location.search);
   let runId = requestedRunId || params.get('run_id');
+  const reload = !requestedRunId && isBrowserReload();
   setAgenticBusy(true);
   try {
-    if (!runId) {
-      if (params.get('new') === '1') return;
+    let active = null;
+    if (!runId || reload) {
+      if (!runId && params.get('new') === '1' && !reload) return;
       const response = await fetch('/api/v2/agentic/active');
-      if (!response.ok || viewVersion !== agenticViewVersion) return;
-      runId = (await response.json())?.run_id;
+      if (viewVersion !== agenticViewVersion) return;
+      const restarted = syncServerBoot(response);
+      active = response.ok ? await response.json() : null;
+      if (viewVersion !== agenticViewVersion) return;
+      if ((restarted || reload) && !active?.run_id) {
+        clearStaleLocationState();
+        resetAgenticPresentation();
+        currentAgenticRunId = null;
+        const label = document.getElementById('active-run-id');
+        if (label) { label.hidden = true; label.textContent = ''; }
+        window.structuralChatBridge?.resetChat?.();
+        return;
+      }
+      if (!runId || ((restarted || reload) && active?.run_id)) runId = active?.run_id;
     }
     if (!runId || viewVersion !== agenticViewVersion) return;
     resetAgenticPresentation();
@@ -2164,10 +2217,20 @@ async function restoreSavedAgenticRun(requestedRunId = null) {
       state = await response.json();
       if (viewVersion !== agenticViewVersion) return;
       const activeResponse = await fetch('/api/v2/agentic/active');
-      const active = activeResponse.ok ? await activeResponse.json() : null;
+      const restarted = syncServerBoot(activeResponse);
+      const live = activeResponse.ok ? await activeResponse.json() : null;
       if (viewVersion !== agenticViewVersion) return;
-      if (!['RUNNING', 'INITIALIZED'].includes(state.status) && active?.run_id !== runId) break;
-      if (active?.run_id !== runId) {
+      if (!requestedRunId && restarted && live?.run_id !== runId) {
+        clearStaleLocationState();
+        resetAgenticPresentation();
+        currentAgenticRunId = null;
+        const label = document.getElementById('active-run-id');
+        if (label) { label.hidden = true; label.textContent = ''; }
+        window.structuralChatBridge?.resetChat?.();
+        return;
+      }
+      if (!['RUNNING', 'INITIALIZED'].includes(state.status) && live?.run_id !== runId) break;
+      if (live?.run_id !== runId) {
         renderAgenticRunState(state, { active: false });
         agenticStatusMsg.textContent = `Saved run ${runId} has no active worker. Its results remain available for inspection.`;
         return;
@@ -2345,7 +2408,6 @@ if (gate3AcceptBtn) {
   });
 }
 // Small integration bridge: chat reuses the existing form and result rendering.
-let chatExtraInput = {grid: {}, load_configuration: {}};
 window.structuralChatBridge = {
   getInput: () => ({grid: {...chatExtraInput.grid, ...buildPayload().grid},
                    load_configuration: {...chatExtraInput.load_configuration, ...buildLoadConfiguration()}}),

@@ -8,11 +8,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 # The helpers under test are split between the radiator-support module and
-# the shared STAAD module it star-imports (common.staad_common), so pull the
+# the shared STAAD module it star-imports (agents.A4_staad.staad_com_helpers), so pull the
 # named functions/constants out of both.
 src_dir = Path(__file__).resolve().parents[1] / "src"
-source_path = src_dir / "radiator_support" / "staad_integration.py"
-common_source_path = src_dir / "common" / "staad_common.py"
+source_path = src_dir / "agents" / "A4_staad" / "staad_openstaad.py"
+common_source_path = src_dir / "agents" / "A4_staad" / "staad_com_helpers.py"
 source_tree = ast.Module(
     body=[
         *ast.parse(common_source_path.read_text(encoding="utf-8")).body,

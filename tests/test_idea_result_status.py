@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from agentic.agents import a5_ideastatica_analyzer_agent as idea
+from agents.A5_idea_statica import A5B_trigger_api as idea
 
 
 class IdeaResultStatusTests(unittest.TestCase):

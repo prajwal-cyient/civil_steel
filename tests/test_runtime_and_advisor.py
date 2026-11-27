@@ -14,11 +14,12 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agentic import advisor, execution
-from agentic.config import load_environment
-from agentic.load_combinations import validate_combinations
-from agentic.state import WorkflowState
-from agentic.store import SqliteWorkflowStore
+from services import correction_advisor as advisor
+from orchestration import execution
+from config.settings import load_environment
+from agents.A1_requirements.prepare_load_basis import validate_combinations
+from orchestration.state import WorkflowState
+from services.workflow_store import SqliteWorkflowStore
 
 
 class AdvisorAndPolicyTests(unittest.TestCase):
@@ -125,10 +126,10 @@ class AdvisorAndPolicyTests(unittest.TestCase):
 
 class DesktopLockTests(unittest.TestCase):
     def test_lock_excludes_other_processes_and_releases_after_failure(self):
-        from agentic import desktop_lock as locking
+        from orchestration import desktop_lock as locking
         script = (
             "import sys; from pathlib import Path; "
-            "from agentic import desktop_lock as lock; "
+            "from orchestration import desktop_lock as lock; "
             "lock.DESKTOP_LOCK_PATH=Path(sys.argv[1]); "
             "guard=lock.desktop_lock(); "
             "\ntry:\n guard.__enter__()\n"
@@ -150,8 +151,8 @@ class DesktopLockTests(unittest.TestCase):
 
     def test_manual_endpoints_reject_busy_desktop(self):
         from fastapi.testclient import TestClient
-        from agentic import desktop_lock as locking
-        from server import create_app
+        from orchestration import desktop_lock as locking
+        from main import create_app
 
         with tempfile.TemporaryDirectory() as directory, \
              patch.object(locking, "DESKTOP_LOCK_PATH", Path(directory) / "desktop.lock"):
@@ -165,7 +166,8 @@ class DesktopLockTests(unittest.TestCase):
                         self.assertIn("desktop tools", response.json()["detail"])
 
     def test_busy_worker_fails_before_starting_any_stage(self):
-        from agentic import desktop_lock as locking, worker
+        from orchestration import desktop_lock as locking
+        from orchestration import worker
         from unittest.mock import MagicMock
 
         store = MagicMock()
@@ -174,8 +176,8 @@ class DesktopLockTests(unittest.TestCase):
              patch.object(locking, "DESKTOP_LOCK_PATH", Path(directory) / "desktop.lock"), \
              patch.object(worker, "load_environment"), \
              patch.object(sys, "argv", ["worker", "--run-id", "locked_worker"]), \
-             patch("agentic.store.WORKFLOW_STORE", store), \
-             patch("agentic.orchestrator.run_agentic_workflow", new_callable=AsyncMock) as run:
+             patch("services.workflow_store.WORKFLOW_STORE", store), \
+             patch("orchestration.workflow.run_agentic_workflow", new_callable=AsyncMock) as run:
             with locking.desktop_lock():
                 worker.main()
             run.assert_not_awaited()
@@ -186,7 +188,7 @@ class DesktopLockTests(unittest.TestCase):
 
 class ChatParameterRerunTests(unittest.IsolatedAsyncioTestCase):
     async def test_validated_rerun_enters_graph_at_a2_with_confirmed_inputs(self):
-        from agentic import orchestrator
+        from orchestration import workflow as orchestrator
         edges = orchestrator.build_workflow_graph("a2_readiness").compile().get_graph().edges
         self.assertEqual([edge.target for edge in edges if edge.source == "__start__"], ["a2_readiness"])
         calls = []
@@ -207,7 +209,7 @@ class ChatParameterRerunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(log.agent_id == "A1" for log in result.logs), 1)
 
     async def test_invalid_rerun_never_reaches_readiness(self):
-        from agentic import orchestrator
+        from orchestration import workflow as orchestrator
         for payload in ({"grid": {"n_long_bays": 0}}, {"grid": {}, "run_policy": {"max_member_ratio": 1.5}}):
             with self.subTest(payload=payload), \
                  patch.object(orchestrator, "_sync_state"), patch.object(orchestrator, "guarded"), \
@@ -219,7 +221,7 @@ class ChatParameterRerunTests(unittest.IsolatedAsyncioTestCase):
             readiness.assert_not_called()
 
     def test_dashboard_graph_starts_at_a1(self):
-        from agentic.orchestrator import build_workflow_graph
+        from orchestration.workflow import build_workflow_graph
         edges = build_workflow_graph().compile().get_graph().edges
         self.assertEqual([edge.target for edge in edges if edge.source == "__start__"], ["a1_requirements"])
 

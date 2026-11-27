@@ -14,9 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from langgraph.graph import END, StateGraph
 
-from agentic.agents.a4_staad_analyzer_agent import build_staad_payload, run_a4_staad_analyzer
-from agentic.state import WorkflowState
-from agentic.store import SqliteWorkflowStore
+from agents.A4_staad import build_staad_payload, run_a4_staad_analyzer
+from orchestration.state import WorkflowState
+from services.workflow_store import SqliteWorkflowStore
 
 
 class StaadWorkflowStateTests(unittest.TestCase):
@@ -71,14 +71,15 @@ class StaadWorkflowStateTests(unittest.TestCase):
             payload["members_split_beams"][0]["p1"][0] = 123
             return deepcopy(self.results)
 
-        with patch("agentic.agents.a4_staad_analyzer_agent.send_to_staad", side_effect=send):
+        with patch("agents.A4_staad.A4B_trigger_api.send_to_staad", side_effect=send):
             asyncio.run(run_a4_staad_analyzer(state))
         self.assertEqual(captured, [expected])
         self.assertEqual(state.frame_candidate["members_split_beams"][0]["p1"], [0, 0, 0])
         self.assertEqual(state.agent_statuses["A4"]["status"], "PASSED")
 
     def test_staged_a4_matches_existing_entry_and_rejects_stale_request(self):
-        from agentic.agents import a4_staad_analyzer_agent as a4
+        from agents import A4_staad as a4
+        from agents.A4_staad import A4B_trigger_api as a4_b
 
         base = WorkflowState(
             run_id="staged_a4", status="RUNNING",
@@ -89,7 +90,7 @@ class StaadWorkflowStateTests(unittest.TestCase):
         )
         legacy = base.model_copy(deep=True)
         staged = base.model_copy(deep=True)
-        with patch.object(a4, "send_to_staad", side_effect=lambda _: deepcopy(self.results)) as solver:
+        with patch.object(a4_b, "send_to_staad", side_effect=lambda _: deepcopy(self.results)) as solver:
             asyncio.run(a4.run_a4_staad_analyzer(legacy))
             a4.prepare_a4_staad(staged)
             staged = WorkflowState.model_validate_json(staged.model_dump_json())
@@ -136,7 +137,7 @@ class StaadWorkflowStateTests(unittest.TestCase):
         graph.add_edge("analyze", "next_agent")
         graph.add_edge("next_agent", END)
         with patch(
-            "agentic.agents.a4_staad_analyzer_agent.send_to_staad",
+            "agents.A4_staad.A4B_trigger_api.send_to_staad",
             new=AsyncMock(return_value=self.results),
         ):
             output = asyncio.run(graph.compile().ainvoke(WorkflowState(run_id="graph_keys")))
@@ -144,7 +145,8 @@ class StaadWorkflowStateTests(unittest.TestCase):
         self.assertEqual(final.current_agent, "A5")
 
     def test_inflight_frame_change_cannot_claim_staad_evidence(self):
-        from agentic.agents import a4_staad_analyzer_agent as a4
+        from agents import A4_staad as a4
+        from agents.A4_staad import A4B_trigger_api as a4_b
         state = WorkflowState(
             run_id="changed_during_staad", status="RUNNING",
             grid_config={"col_height_mm": 5000},
@@ -156,7 +158,7 @@ class StaadWorkflowStateTests(unittest.TestCase):
             state.load_config["country"] = "UK"
             return deepcopy(self.results)
 
-        with patch.object(a4, "send_to_staad", side_effect=send):
+        with patch.object(a4_b, "send_to_staad", side_effect=send):
             asyncio.run(a4.run_a4_staged(state))
         self.assertEqual(state.status, "FAILED")
         self.assertIn("changed during STAAD analysis", state.error)
@@ -164,10 +166,11 @@ class StaadWorkflowStateTests(unittest.TestCase):
         self.assertIsNone(state.frame_grader_result)
 
     def test_subgraphs_run_on_worker_thread_and_stop_on_failure(self):
-        from agentic.agents import a3_frame_generator_agent as a3, a4_staad_analyzer_agent as a4
-        from agentic.nodes.a3_frame.graph import build_frame_graph
-        from agentic.nodes.a4_staad.graph import build_staad_graph
-        from agentic.state import fail_workflow
+        from agents.A3_generate_structure import geometry_checks as a3_g
+        from agents.A4_staad import A4A_build_json as a4_a, A4B_trigger_api as a4_b, A4C_evaluate_results as a4_c, A4D_llm_reasoning as a4_d
+        from agents.A3_generate_structure.graph import build_frame_graph
+        from agents.A4_staad.graph import build_staad_graph
+        from orchestration.state import fail_workflow
 
         calls = []
         owner_thread = threading.get_ident()
@@ -184,12 +187,12 @@ class StaadWorkflowStateTests(unittest.TestCase):
         async def api(candidate):
             return step("a4b", fail=True)(candidate)
 
-        with patch.object(a3, "evaluate_a3_frame", side_effect=step("a3a")), \
-             patch.object(a3, "generate_a3_frame", side_effect=step("a3b")), \
-             patch.object(a4, "prepare_a4_staad", side_effect=step("a4a")), \
-             patch.object(a4, "execute_a4_staad", side_effect=api), \
-             patch.object(a4, "evaluate_a4_staad") as evaluate, \
-             patch.object(a4, "decide_a4_staad") as decide:
+        with patch.object(a3_g, "evaluate_a3_frame", side_effect=step("a3a")), \
+             patch.object(a3_g, "generate_a3_frame", side_effect=step("a3b")), \
+             patch.object(a4_a, "prepare_a4_staad", side_effect=step("a4a")), \
+             patch.object(a4_b, "execute_a4_staad", side_effect=api), \
+             patch.object(a4_c, "evaluate_a4_staad") as evaluate, \
+             patch.object(a4_d, "decide_a4_staad") as decide:
             frame = asyncio.run(build_frame_graph().ainvoke({"workflow": state}))["workflow"]
             result = asyncio.run(build_staad_graph().ainvoke({"workflow": frame}))["workflow"]
         self.assertIs(result, state)

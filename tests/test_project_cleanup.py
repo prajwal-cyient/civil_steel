@@ -14,13 +14,13 @@ SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-# common.staad_common guards its openstaadpy import, so it imports safely here.
-import common.staad_common as staad_common  # noqa: E402
+# agents.A4_staad.staad_com_helpers guards its openstaadpy import, so it imports safely here.
+import agents.A4_staad.staad_com_helpers as staad_common  # noqa: E402
 
-# common.tekla_common loads pythonnet and the Tekla .NET assemblies at import
+# agents.A6_tekla.tekla_open_api loads pythonnet and the Tekla .NET assemblies at import
 # time, so extract clean_tekla() on its own (as the STAAD tests do) and run it
 # against a namespace that supplies a mocked _get_connected_model().
-TEKLA_COMMON_PATH = SRC_DIR / "common" / "tekla_common.py"
+TEKLA_COMMON_PATH = SRC_DIR / "agents" / "A6_tekla" / "tekla_open_api.py"
 _tekla_tree = ast.parse(TEKLA_COMMON_PATH.read_text(encoding="utf-8"))
 _clean_tekla_def = next(
     node for node in _tekla_tree.body
@@ -358,7 +358,7 @@ class StaadCleanupTests(unittest.TestCase):
 
 
 class ImportSafetyTests(unittest.TestCase):
-    # common.tekla_common is not covered: it loads pythonnet and the Tekla
+    # agents.A6_tekla.tekla_open_api is not covered: it loads pythonnet and the Tekla
     # assemblies at import time by design.
     def test_staad_common_import_does_not_load_openstaadpy(self):
         with patch.dict(sys.modules, {"openstaadpy": None}):

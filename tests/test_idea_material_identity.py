@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from agentic.agents.a5_ideastatica_analyzer_agent import _resolve_cross_section_id, IdeaStaticaJointError
+from agents.A5_idea_statica import _resolve_cross_section_id, IdeaStaticaJointError
 
 
 def section(identifier, material):

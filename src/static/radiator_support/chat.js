@@ -38,7 +38,7 @@
   const stop = iconButton('stop', 'Stop turn'); stop.hidden = true;
   const send = iconButton('send', 'Send'); send.type = 'submit'; form.append(attach, input, stop, send);
   panel.append(header, menu, renameForm, conversations, config, history, progress, file, attachments, form); document.body.append(toggle, panel);
-  let sessionId = new URLSearchParams(location.search).get('chat') || localStorage.getItem('structuralChatSession'), turnId = null;
+  let sessionId = new URLSearchParams(location.search).get('chat'), turnId = null;
   let busy = false, ready = false, seen = new Set(), revision = 0, uploaded = null, selectedRun = null, lastViewerRun = null;
   let draftFiles = [], sessionPromise = null;
   const watchedTurns = new Map();
@@ -89,6 +89,12 @@
   function resetView() {
     proposalViews.clear();
     revision++; discardCards(); sessionPromise = null; sessionId = null; turnId = null; selectedRun = null; lastViewerRun = null; uploaded = null; file.value = ''; input.value = '';
+    for (const [id, entry] of [...watchedTurns.entries()]) {
+      if (!entry.nativeActive && entry.turn?.status !== 'RUNNING') {
+        watchedTurns.delete(id);
+        bridge()?.setTurnBusy(id, false);
+      }
+    }
     localStorage.removeItem('structuralChatSession'); history.replaceChildren(); seen.clear(); progress.textContent = ''; heading.textContent = 'New chat';
     closeMenu(); renameForm.hidden = true; conversations.hidden = true; setBusy(false);
     const url = new URL(location.href); url.searchParams.delete('chat'); window.history.replaceState(null, '', url);
@@ -379,6 +385,47 @@
   };
   input.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } };
   stop.onclick = async () => { if (!turnId) return; const token = revision; try { await request(`/api/v2/chat/turns/${encodeURIComponent(turnId)}/cancel`,{method:'POST'}); } catch(e) { if (token === revision) message('error',e.message); } };
-  request('/api/v2/chat/config').then(data => { ready = data.enabled; config.textContent = ready ? `Model: ${data.model}` : data.reason; setBusy(busy); }).catch(e => { config.textContent = e.message; });
-  if (sessionId) openSession(sessionId); else greeting();
+  if (bridge()) bridge().resetChat = () => { resetView(); greeting(); };
+  (async () => {
+    const params = new URLSearchParams(location.search);
+    const navType = typeof performance !== 'undefined'
+      ? performance.getEntriesByType?.('navigation')?.[0]?.type
+      : null;
+    const isDashboardReload = navType === 'reload' && typeof bridge()?.showRun === 'function';
+    let cfg = null;
+    try {
+      cfg = await request('/api/v2/chat/config');
+      ready = cfg.enabled;
+      config.textContent = ready ? `Model: ${cfg.model}` : cfg.reason;
+      setBusy(busy);
+    } catch (e) {
+      config.textContent = e.message;
+    }
+    const priorBoot = localStorage.getItem('structuralChatBootId');
+    const serverRestarted = Boolean(cfg?.boot_id && priorBoot && priorBoot !== cfg.boot_id);
+    if (cfg?.boot_id) localStorage.setItem('structuralChatBootId', cfg.boot_id);
+
+    let hasActiveWorker = false;
+    if (isDashboardReload && !serverRestarted) {
+      try {
+        const active = await request('/api/v2/agentic/active');
+        hasActiveWorker = Boolean(active?.run_id);
+      } catch (_) {}
+    }
+
+    const keepOnReload = !isDashboardReload || hasActiveWorker;
+    if (!serverRestarted && keepOnReload && sessionId && params.get('new') !== '1') {
+      await openSession(sessionId);
+      return;
+    }
+    resetView();
+    if (serverRestarted || (isDashboardReload && !hasActiveWorker)) {
+      const cleanUrl = new URL(location.href);
+      cleanUrl.searchParams.delete('chat');
+      cleanUrl.searchParams.delete('run_id');
+      cleanUrl.searchParams.delete('new');
+      window.history.replaceState(null, '', cleanUrl);
+    }
+    greeting();
+  })();
 })();

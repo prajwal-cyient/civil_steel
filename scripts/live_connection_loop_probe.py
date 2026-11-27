@@ -10,12 +10,12 @@ import argparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from agentic.config import load_environment
+from config.settings import load_environment
 load_environment()
-from agentic.store import WORKFLOW_STORE, SqliteWorkflowStore
-import agentic.store as store_module
-from agentic.reference_procedure import build_connection_scope
-from agentic.agents.a5_ideastatica_analyzer_agent import run_a5_ideastatica_analyzer
+from services.workflow_store import WORKFLOW_STORE, SqliteWorkflowStore
+import services.workflow_store as store_module
+from agents.A3_generate_structure.connection_scope import build_connection_scope
+from agents.A5_idea_statica import run_a5_ideastatica_analyzer
 
 
 def main(multiplier=2.4, effect_index=0, senior_single=False):

@@ -12,10 +12,10 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from agentic.archive_io import io_path
-from agentic.run_archive import write_json, copy_files, checkpoint
-from agentic.state import WorkflowState
-from agentic.store import SqliteWorkflowStore
+from utils.archive_io import io_path
+from utils.run_archive import write_json, copy_files, checkpoint
+from orchestration.state import WorkflowState
+from services.workflow_store import SqliteWorkflowStore
 
 
 class ArchiveIOTests(unittest.TestCase):
@@ -57,7 +57,7 @@ class ArchiveIOTests(unittest.TestCase):
                 if len(attempts)<3:
                     raise PermissionError('temporary sharing violation')
                 return original(source, target)
-            with patch.object(Path,'replace',replace), patch('agentic.archive_io.time.sleep'):
+            with patch.object(Path,'replace',replace), patch('utils.archive_io.time.sleep'):
                 write_json(path, {'complete':True})
             self.assertEqual(len(attempts), 3)
             self.assertEqual(list(Path(d).glob('*.tmp')), [])
@@ -70,7 +70,7 @@ class ArchiveIOTests(unittest.TestCase):
             store.save_state(state)
             path = Path(state.output_archive['directory'])/'03_final_output/workflow_output.json'
             original = path.read_bytes()
-            with patch.object(Path,'replace',side_effect=PermissionError('locked')), patch('agentic.archive_io.time.sleep'):
+            with patch.object(Path,'replace',side_effect=PermissionError('locked')), patch('utils.archive_io.time.sleep'):
                 state.error = 'latest persisted diagnostic'
                 store.save_state(state)
             self.assertEqual(path.read_bytes(), original)
@@ -113,8 +113,8 @@ class ArchiveIOTests(unittest.TestCase):
             state = WorkflowState(run_id='run_processes',status='RUNNING')
             store.save_state(state)
             script = '''import sys,json,sqlite3
-from agentic.state import WorkflowState
-from agentic.run_archive import checkpoint
+from orchestration.state import WorkflowState
+from utils.run_archive import checkpoint
 with sqlite3.connect(sys.argv[1]) as c:
  raw=c.execute("SELECT state_json FROM workflow_runs").fetchone()[0]
 state=WorkflowState.model_validate_json(raw)

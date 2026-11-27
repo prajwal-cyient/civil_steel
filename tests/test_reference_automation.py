@@ -8,14 +8,15 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from agentic.load_combinations import reference_combinations, resolve_combinations
-from agentic.agents.a1_requirements_agent import run_a1_requirements
-from agentic.state import WorkflowState
+from agents.A1_requirements.prepare_load_basis import reference_combinations, resolve_combinations
+from agents.A1_requirements import run_a1_requirements
+from orchestration.state import WorkflowState
 
 
 class ReferenceAutomationTests(unittest.TestCase):
     def test_base_plate_offset_survives_validation_and_frame_handoff(self):
-        from agentic.agents import a3_frame_generator_agent as a3
+        from agents import A3_generate_structure as a3
+        from agents.A3_generate_structure import A3A_evaluate_plan as a3_a, A3B_generate_structure as a3_b
 
         for offset in (0, 30, 47.5):
             with self.subTest(offset=offset), patch.dict(os.environ, {
@@ -27,8 +28,8 @@ class ReferenceAutomationTests(unittest.TestCase):
                     }}))
                 self.assertEqual(state.agent_statuses["A1"]["status"], "PASSED")
                 self.assertEqual(state.grid_config["base_plate_offset_above_column_base_mm"], offset)
-                with patch.object(a3, "validate_profile_catalogue"), \
-                     patch.object(a3, "generate_members", side_effect=RuntimeError("handoff inspected")) as generate:
+                with patch.object(a3_a, "validate_profile_catalogue"), \
+                     patch.object(a3_b, "generate_members", side_effect=RuntimeError("handoff inspected")) as generate:
                     a3.run_a3_frame_generator(state)
                 self.assertEqual(generate.call_args.args[0]["base_plate_offset_above_column_base_mm"], offset)
 

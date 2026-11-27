@@ -13,18 +13,19 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from langchain_core.messages import AIMessage
-from agentic.chat import ChatRuntime, redact
-from agentic.chat_changes import (build_joint_proposal, build_project_proposal, validate_proposal,
+from chatbot.chatbot import ChatRuntime, redact
+from chatbot.parameter_changes import (build_joint_proposal, build_project_proposal, validate_proposal,
     prepare_joint_candidate, unselected_fingerprint, verify_selected_values, joint_parameters)
-from agentic.chat_guardrails import quick_scope, assess_scope
-from agentic.chat_store import ChatStore
-from agentic.chat_tool_registry import allowed_tools, execution_plan, project_reference
-from agentic.chat_usage import UsageMeter
-from agentic.evidence import frame_signature
-from agentic.state import WorkflowState, GraderResult
-from agentic.store import SqliteWorkflowStore
-from agentic.agents import a5_ideastatica_analyzer_agent as a5
-from agentic.tekla_selected_updates import component_patch, apply_components
+from chatbot.guardrails import quick_scope, assess_scope
+from chatbot.chat_store import ChatStore
+from chatbot.tool_registry import allowed_tools, execution_plan, project_reference
+from chatbot.usage import UsageMeter
+from utils.evidence import frame_signature
+from orchestration.state import WorkflowState, GraderResult
+from services.workflow_store import SqliteWorkflowStore
+from agents import A5_idea_statica as a5
+from agents.A5_idea_statica import A5A_build_json as a5_build, A5B_trigger_api as a5_api, package_validation as pkg_val
+from agents.A6_tekla.selected_updates import component_patch, apply_components
 from test_chat import ControlledModel, call
 from test_engineering_guards import valid_staad, joint_result
 
@@ -44,7 +45,7 @@ def source_state():
         staad_results=valid_staad(), frame_grader_result=GraderResult(passed=True, summary='verified fixture'),
         agent_statuses={'A3': {'status': 'PASSED'}, 'A4': {'status': 'PASSED'}})
     state.staad_results['joint_groups'] = {LONG: {'joints': [{'node':900001}]}, COMBINED: {'joints': [{'node':900002}]}}
-    from agentic.reference_procedure import build_connection_scope
+    from agents.A3_generate_structure.connection_scope import build_connection_scope
     with patch.dict(os.environ,{'PLANT_WORKFLOW_MODE':'poc2_automation'}):
         state.readiness['connection_scope']=build_connection_scope(state.staad_results['joint_groups'])
     state.staad_results['candidate_signature'] = frame_signature(state)
@@ -78,7 +79,7 @@ class GuardrailTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('update_project_inputs', allowed_tools('READ'))
 
     def test_requested_capabilities_honor_stage_and_negative_scope(self):
-        from agentic.chat_tool_registry import request_capabilities,publication_requested
+        from chatbot.tool_registry import request_capabilities,publication_requested
         tools=request_capabilities('Run STAAD only; do not publish Tekla','EXECUTE')
         self.assertIn('analyze_frame',tools);self.assertNotIn('publish_to_tekla',tools)
         self.assertNotIn('run_complete_workflow',request_capabilities('Do not run the workflow','EXECUTE'))
@@ -88,7 +89,7 @@ class GuardrailTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('run_complete_workflow',tools)
 
     def test_explanatory_question_cannot_be_upgraded_by_classifier(self):
-        from agentic.chat_guardrails import ScopeDecision,restrict_question_intent
+        from chatbot.guardrails import ScopeDecision,restrict_question_intent
         decision=restrict_question_intent('How do I publish to Tekla?',ScopeDecision(status='ALLOW',intent='EXECUTE'))
         self.assertEqual(decision.intent,'READ')
         self.assertNotIn('publish_to_tekla',allowed_tools(decision.intent))
@@ -99,7 +100,7 @@ class GuardrailTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, 'CLARIFY')
 
     async def test_project_keyword_does_not_skip_semantic_scope_gate(self):
-        from agentic.chat_guardrails import ScopeDecision
+        from chatbot.guardrails import ScopeDecision
         self.assertIsNone(quick_scope('Write a romantic poem about the Tekla project'))
         invoke=AsyncMock(return_value={'parsed':ScopeDecision(status='BLOCK',reason='Outside engineering scope'),'raw':AIMessage(content=''), 'parsing_error':None})
         model=SimpleNamespace(with_structured_output=lambda *args,**kwargs:SimpleNamespace(ainvoke=invoke))
@@ -166,7 +167,7 @@ class ProposalTests(unittest.TestCase):
 
     def test_template_change_invalidates_approval(self):
         plan=build_joint_proposal(self.session,self.source,[request_change()])
-        with patch('agentic.chat_changes.template_fingerprints',return_value={'changed':'fixture'}):
+        with patch('chatbot.parameter_changes.template_fingerprints',return_value={'changed':'fixture'}):
             with self.assertRaisesRegex(ValueError,'templates changed'):
                 validate_proposal(plan,self.session,self.source)
 
@@ -225,9 +226,9 @@ class ProposalTests(unittest.TestCase):
 
 class ScopedEngineeringTests(unittest.IsolatedAsyncioTestCase):
     async def test_later_publication_reuses_saved_calculations_and_retains_manual_gate(self):
-        from agentic import orchestrator as flow
-        from agentic.chat_actions import run_chat_action
-        from agentic.chat_changes import build_selected_publication
+        from orchestration import workflow as flow
+        from chatbot.chat_actions import run_chat_action
+        from chatbot.parameter_changes import build_selected_publication
         source=source_state();session={'id':'chat_fixture','project_input':source.raw_input,'run_id':source.run_id}
         source.tekla_results={'component_manifest_version':1,'created':1,'model_path':'fixture-model',
             'member_manifest':[{'identifier':10,'member':source.frame_candidate['members'][0]}],
@@ -252,17 +253,17 @@ class ScopedEngineeringTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store=SqliteWorkflowStore(str(Path(directory)/'runs.db'))
             with patch.dict(os.environ,{'PLANT_DEEP_AGENTS_ENABLED':'false'}),patch.object(flow,'_sync_state',store.save_state), \
-                 patch.object(a5,'_connection_payload',side_effect=payload),patch.object(a5,'design_joint') as solve, \
-                 patch('agentic.agents.a6_package_validator_agent.verify_plate_material_evidence'), \
-                 patch('agentic.tekla_selected_updates.run_selected_tekla',side_effect=native_boundary) as native:
+                 patch.object(a5_build,'_connection_payload',side_effect=payload),patch.object(a5_api,'design_joint') as solve, \
+                 patch('agents.A5_idea_statica.package_validation.verify_plate_material_evidence'), \
+                 patch('agents.A6_tekla.selected_updates.run_selected_tekla',side_effect=native_boundary) as native:
                 publish=await run_chat_action(publish,'publish_selected_connections')
         solve.assert_not_called();native.assert_called_once()
         self.assertEqual(publish.status,'PAUSED_AT_GATE3');self.assertFalse(publish.gate3_approved)
         self.assertEqual(publish.final_report['calculation_source_run'],candidate.run_id)
 
     async def test_selected_family_only_recalculated_and_full_package_checked(self):
-        from agentic import orchestrator as flow
-        from agentic.chat_actions import run_chat_action
+        from orchestration import workflow as flow
+        from chatbot.chat_actions import run_chat_action
         source=source_state();session={'id':'chat_fixture','project_input':source.raw_input}
         state=prepare_joint_candidate(build_joint_proposal(session,source,[request_change()]),source)
         solved=[]
@@ -276,10 +277,10 @@ class ScopedEngineeringTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             store=SqliteWorkflowStore(str(Path(directory)/'runs.db'))
             with patch.dict(os.environ,{'PLANT_DEEP_AGENTS_ENABLED':'false'}), \
-                 patch('agentic.store.WORKFLOW_STORE',store),patch.object(flow,'_sync_state',store.save_state), \
-                 patch.object(a5,'_connection_payload',side_effect=payload),patch.object(a5,'design_joint',side_effect=solve), \
-                 patch.object(a5,'verify_plate_material_evidence'), \
-                 patch('agentic.agents.a6_package_validator_agent.verify_plate_material_evidence'):
+                 patch('services.workflow_store.WORKFLOW_STORE',store),patch.object(flow,'_sync_state',store.save_state), \
+                 patch.object(a5_build,'_connection_payload',side_effect=payload),patch.object(a5_api,'design_joint',side_effect=solve), \
+                 patch.object(pkg_val,'verify_plate_material_evidence'), \
+                 patch('agents.A5_idea_statica.package_validation.verify_plate_material_evidence'):
                 state=await run_chat_action(state,'update_selected_connections')
         self.assertEqual(solved,[LONG]);self.assertEqual(state.status,'READY')
         self.assertTrue(state.validation_report['passed'])
@@ -290,7 +291,7 @@ class ScopedEngineeringTests(unittest.IsolatedAsyncioTestCase):
         source=source_state();session={'id':'chat_fixture','project_input':source.raw_input}
         state=prepare_joint_candidate(build_joint_proposal(session,source,[request_change()]),source)
         state.ideastatica_results.pop(COMBINED)
-        with patch.object(a5,'_connection_payload',side_effect=payload),patch.object(a5,'design_joint') as solve:
+        with patch.object(a5_build,'_connection_payload',side_effect=payload),patch.object(a5_api,'design_joint') as solve:
             a5.run_a5_ideastatica_analyzer(state)
         solve.assert_not_called();self.assertEqual(state.status,'FAILED')
 
@@ -299,8 +300,8 @@ class ScopedEngineeringTests(unittest.IsolatedAsyncioTestCase):
         state=prepare_joint_candidate(build_joint_proposal(session,source,[request_change()]),source)
         with tempfile.TemporaryDirectory() as directory:
             store=SqliteWorkflowStore(str(Path(directory)/'runs.db'))
-            with patch('agentic.store.WORKFLOW_STORE',store),patch.object(a5,'_connection_payload',side_effect=payload), \
-                 patch.object(a5,'verify_plate_material_evidence'),patch.object(a5,'design_joint',return_value=joint_result(120,False)) as solve:
+            with patch('services.workflow_store.WORKFLOW_STORE',store),patch.object(a5_build,'_connection_payload',side_effect=payload), \
+                 patch.object(pkg_val,'verify_plate_material_evidence'),patch.object(a5_api,'design_joint',return_value=joint_result(120,False)) as solve:
                 a5.run_a5_ideastatica_analyzer(state)
         self.assertEqual(solve.call_count,1)
         self.assertIn('new change preview',state.error)
@@ -311,8 +312,8 @@ class ScopedEngineeringTests(unittest.IsolatedAsyncioTestCase):
         state=prepare_joint_candidate(build_joint_proposal(session,source,[request_change()]),source)
         with tempfile.TemporaryDirectory() as directory:
             store=SqliteWorkflowStore(str(Path(directory)/'runs.db'))
-            with patch('agentic.store.WORKFLOW_STORE',store),patch.object(a5,'_connection_payload',side_effect=payload), \
-                 patch.object(a5,'verify_plate_material_evidence'),patch.object(a5,'design_joint',side_effect=RuntimeError('controlled API unavailable')):
+            with patch('services.workflow_store.WORKFLOW_STORE',store),patch.object(a5_build,'_connection_payload',side_effect=payload), \
+                 patch.object(pkg_val,'verify_plate_material_evidence'),patch.object(a5_api,'design_joint',side_effect=RuntimeError('controlled API unavailable')):
                 a5.run_a5_ideastatica_analyzer(state)
         self.assertEqual(state.status,'FAILED');self.assertNotIn(LONG,state.ideastatica_results)
         self.assertTrue(state.ideastatica_results[COMBINED]['passed'])
@@ -324,14 +325,14 @@ class NativeComponentContractTests(unittest.TestCase):
                 {'identifier':2,'number':30,'name':'unselected','groups':[COMBINED],'direction':None,'attributes':{'diameter':16.},'member_names':['beam-x-2','beam-y-2'],'scope_basis':'joint_member_pair'}]
 
     def test_component_scope_is_joint_pair_not_column_wide(self):
-        from agentic.agents.a7_tekla_modeler_agent import component_joint_groups
+        from agents.A6_tekla import component_joint_groups
         groups={LONG:{'joints':[{'members':[{'tekla_name':'column-1'},{'tekla_name':'brace-top'}]}]},
                 COMBINED:{'joints':[{'members':[{'tekla_name':'column-1'},{'tekla_name':'brace-bottom'}]}]}}
         self.assertEqual(component_joint_groups(groups,['column-1','brace-top']),[LONG])
         self.assertEqual(component_joint_groups(groups,['column-1','brace-bottom']),[COMBINED])
 
     def test_physical_model_changes_block_selected_publication(self):
-        from agentic.tekla_selected_updates import verify_members
+        from agents.A6_tekla.selected_updates import verify_members
         member={'name':'column','p1':[0,0,0],'p2':[0,0,5000],'profile':'CFRHS120X120X5','material':'S355JR'}
         obj=SimpleNamespace(StartPoint=SimpleNamespace(X=0,Y=0,Z=0),EndPoint=SimpleNamespace(X=0,Y=0,Z=5000),
             Profile=SimpleNamespace(ProfileString=member['profile']),Material=SimpleNamespace(MaterialString=member['material']))
@@ -375,13 +376,13 @@ class DynamicChatApiTests(unittest.TestCase):
     def setUp(self):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from agentic import chat_router
+        from chatbot import chat_router
         self.module=chat_router;self.temp=tempfile.TemporaryDirectory();self.stack=ExitStack()
         self.store=ChatStore(Path(self.temp.name)/'chat.db');self.workflows=SqliteWorkflowStore(str(Path(self.temp.name)/'runs.db'))
         self.runtime=ChatRuntime(self.store,lambda:ControlledModel(AIMessage(content='Project response.')))
         for path,value in [('CHAT_STORE',self.store),('RUNTIME',self.runtime),('WORKFLOW_STORE',self.workflows)]:
             self.stack.enter_context(patch.object(chat_router,path,value))
-        self.stack.enter_context(patch('agentic.chat.WORKFLOW_STORE',self.workflows))
+        self.stack.enter_context(patch('chatbot.chatbot.WORKFLOW_STORE',self.workflows))
         self.stack.enter_context(patch.dict(os.environ,{'PLANT_CHAT_ENABLED':'true','PLANT_AGENT_MODEL':'controlled','OPENAI_API_KEY':'test-key'}))
         app=FastAPI();app.include_router(chat_router.router);self.client=self.stack.enter_context(TestClient(app))
         self.session=self.store.session();self.session['project_input']={'grid':{'n_long_bays':8}};self.store.save_session(self.session)
@@ -428,8 +429,8 @@ class DynamicChatApiTests(unittest.TestCase):
             with self.assertRaises(ValueError):self.store.admit_request(self.session['id'])
 
     def test_model_proposes_real_named_edit_then_approval_runs_existing_a5_a6_only(self):
-        from agentic import orchestrator as flow
-        from agentic.chat_actions import run_chat_action
+        from orchestration import workflow as flow
+        from chatbot.chat_actions import run_chat_action
         source=source_state();self.workflows.save_state(source)
         self.session.update(project_input=source.raw_input,run_id=source.run_id);self.store.save_session(self.session)
         model=ControlledModel(call('get_joint_parameters',{'joint_groups':[LONG]}),
@@ -455,10 +456,10 @@ class DynamicChatApiTests(unittest.TestCase):
         async def execute(data,run_id,resume_state,chat_action):
             result=await run_chat_action(resume_state,chat_action);self.workflows.save_state(result);return result
         controller=SimpleNamespace(run_id=None,execute=AsyncMock(side_effect=execute))
-        with patch('agentic.execution.CONTROLLER',controller),patch('agentic.store.WORKFLOW_STORE',self.workflows), \
+        with patch('orchestration.execution.CONTROLLER',controller),patch('services.workflow_store.WORKFLOW_STORE',self.workflows), \
              patch.object(flow,'_sync_state',self.workflows.save_state),patch.dict(os.environ,{'PLANT_DEEP_AGENTS_ENABLED':'false'}), \
-             patch.object(a5,'_connection_payload',side_effect=payload),patch.object(a5,'design_joint',side_effect=solve), \
-             patch.object(a5,'verify_plate_material_evidence'),patch('agentic.agents.a6_package_validator_agent.verify_plate_material_evidence'):
+             patch.object(a5_build,'_connection_payload',side_effect=payload),patch.object(a5_api,'design_joint',side_effect=solve), \
+             patch.object(pkg_val,'verify_plate_material_evidence'):
             approved=self.client.post(f"/api/v2/chat/sessions/{self.session['id']}/changes/{plan['id']}/approve",
                 json={'digest':plan['digest'],'allow_native_tools':True})
             self.assertEqual(approved.status_code,202)
@@ -489,7 +490,7 @@ class DynamicChatApiTests(unittest.TestCase):
         self.session['project_input']={'grid':{'n_long_bays':21,'n_trans_bays':5}};self.store.save_session(self.session)
         self.runtime.model_factory=lambda:ControlledModel(call('run_complete_workflow'),AIMessage(content='Input preview required.'))
         controller=SimpleNamespace(run_id=None,execute=AsyncMock())
-        with patch('agentic.execution.CONTROLLER',controller):
+        with patch('orchestration.execution.CONTROLLER',controller):
             response=self.client.post('/api/v2/chat/messages',json={'session_id':self.session['id'],
                 'message':'Run the 8 x 5 agentic workflow','allow_native_tools':True})
             import time
@@ -502,7 +503,7 @@ class DynamicChatApiTests(unittest.TestCase):
         self.assertEqual(self.store.session(self.session['id'])['project_input']['grid']['n_long_bays'],21)
 
     def test_explicit_stage_dependency_plan_avoids_unrelated_agents(self):
-        from agentic.chat_tool_registry import configuration_action,configuration_tools
+        from chatbot.tool_registry import configuration_action,configuration_tools
         action=configuration_action('Change column height to 6000 mm and run STAAD only')
         self.assertEqual(action,'analyze_frame')
         self.assertEqual(configuration_tools(action),['generate_structure','analyze_frame'])

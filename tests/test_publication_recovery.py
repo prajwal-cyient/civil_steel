@@ -5,8 +5,8 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from agentic.publication_recovery import prepare_publication_retry, run_publication_retry
-from agentic.state import WorkflowState
+from agents.A6_tekla.publication_recovery import prepare_publication_retry, run_publication_retry
+from orchestration.state import WorkflowState
 
 
 class PublicationRecoveryTests(unittest.TestCase):
@@ -28,7 +28,7 @@ class PublicationRecoveryTests(unittest.TestCase):
                 prepare_publication_retry(source, "retry")
 
     def test_changed_evidence_stops_before_any_tekla_mutation(self):
-        from agentic import orchestrator
+        from orchestration import workflow as orchestrator
         state = WorkflowState(run_id="retry", status="RUNNING", readiness={"publication_resume_source": "source"})
         def invalid(candidate):
             candidate.validation_report = {"passed": False}

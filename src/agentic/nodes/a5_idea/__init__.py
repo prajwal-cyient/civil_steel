@@ -1,1 +1,0 @@
-"""IDEA connection design stages."""

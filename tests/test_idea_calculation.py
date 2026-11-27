@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
-from agentic.idea_calculation import calculate_connection, calculation_budget
-from agentic.idea_runtime import _active_solver_ids
+from agents.A5_idea_statica.idea_runtime import calculate_connection, calculation_budget
+from agents.A5_idea_statica.idea_runtime import _active_solver_ids
 
 
 class Jobs:
@@ -61,7 +61,7 @@ class IdeaCalculationTests(unittest.TestCase):
 
     def test_timeout_requests_native_cancellation_of_only_its_job(self):
         client=self.client(status='running')
-        with patch('agentic.idea_calculation.time.monotonic',side_effect=[0,11]):
+        with patch('agents.A5_idea_statica.idea_runtime.time.monotonic',side_effect=[0,11]):
             with self.assertRaises(TimeoutError):calculate_connection(client,'project',1,10,Mock())
         client.calculation_jobs.cancel_calculation_job.assert_called_once_with('project','owned-job',_request_timeout=(10.0,20.0))
 
@@ -80,7 +80,7 @@ class IdeaCalculationTests(unittest.TestCase):
         client.calculation.calculate.assert_not_called()
 
     def test_budget_is_bounded_by_total_run_cap(self):
-        with patch('agentic.idea_calculation.settings',return_value=SimpleNamespace(run_timeout=3600,agent_timeout=180)), \
+        with patch('agents.A5_idea_statica.idea_runtime.settings',return_value=SimpleNamespace(run_timeout=3600,agent_timeout=180)), \
              patch.dict('os.environ',{'PLANT_IDEA_CALCULATION_TIMEOUT_SECONDS':'600'}):
             self.assertEqual(calculation_budget(1),600)
             self.assertEqual(calculation_budget(13),2340)

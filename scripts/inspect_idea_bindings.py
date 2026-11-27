@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'src'))
-from agentic.config import load_environment
+from config.settings import load_environment
 load_environment()
-from agentic.agents.a5_ideastatica_analyzer_agent import _get_client,_to_jsonable,_set_parameters
+from agents.A5_idea_statica import _get_client,_to_jsonable,_set_parameters
 with _get_client() as c:
     c.project.open_project_from_filepath(str(ROOT/'sample_projects/two-longitudinal.ideaCon'))
     p=c.project.active_project_id

@@ -4,7 +4,7 @@ const path = require('node:path');
 const { test } = require('node:test');
 const vm = require('node:vm');
 
-function setup({ states = [], active = null, search = '', history = [] } = {}) {
+function setup({ states = [], active = null, search = '', history = [], storage = null, performance = undefined, activeHeaders = null } = {}) {
   const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'static', 'radiator_support', 'index.html'), 'utf8');
   const start = html.indexOf('const agenticRunBtn =');
   const end = html.indexOf('\nif (agenticRunBtn) {', start);
@@ -18,8 +18,16 @@ function setup({ states = [], active = null, search = '', history = [] } = {}) {
   };
   const calls = [], geometry = [], staad = [], idea = [], summary = [], urls = [];
   const location = { href: 'http://localhost:8060/radiator_support' + search, search };
+  const localStorageMock = storage ? {
+    getItem(k) { return Object.prototype.hasOwnProperty.call(storage, k) ? storage[k] : null; },
+    setItem(k, v) { storage[k] = String(v); },
+    removeItem(k) { delete storage[k]; },
+  } : undefined;
   const context = vm.createContext({
-    URL, URLSearchParams, window: { location, history: { replaceState(_, __, url) { urls.push(String(url)); location.href = String(url); location.search = url.search; } } },
+    URL, URLSearchParams,
+    ...(localStorageMock ? { localStorage: localStorageMock } : {}),
+    ...(performance !== undefined ? { performance } : {}),
+    window: { location, history: { replaceState(_, __, url) { urls.push(String(url)); location.href = String(url); location.search = url.search; } } },
     document: { getElementById: element, createElement: tag => ({ tag, value: '', textContent: '' }) },
     genBtn: element('generate-btn'), sendStaadBtn: element('send-staad-btn'), updateTeklaBtn: element('update-tekla-btn'), sendIdeaBtn: element('send-idea-btn'),
     statusMsg: element('status-msg'), staadStatus: element('staad-status'), ideaStatus: element('idea-status'), teklaStatus: element('tekla-status'),
@@ -31,12 +39,13 @@ function setup({ states = [], active = null, search = '', history = [] } = {}) {
     setTimeout: callback => callback(),
     fetch: async (url, options) => {
       calls.push([url, options]);
-      const body = url.includes('?limit=') ? history : url.endsWith('/active') ? (Array.isArray(active) ? active.shift() : active) : states.shift();
-      return { ok: true, json: async () => body };
+      const isActiveCall = url.endsWith('/active');
+      const body = url.includes('?limit=') ? history : isActiveCall ? (Array.isArray(active) ? active.shift() : active) : states.shift();
+      return { ok: true, headers: isActiveCall && activeHeaders ? { get: k => activeHeaders[k] ?? null } : undefined, json: async () => body };
     },
   });
   vm.runInContext(html.slice(start, end), context);
-  return { context, calls, geometry, staad, idea, summary, urls, element };
+  return { context, calls, geometry, staad, idea, summary, urls, element, storage };
 }
 
 function state(agent = 'A3', overrides = {}) {
@@ -305,4 +314,57 @@ test('new run keeps the existing request payload, renders polling updates and ig
   assert.match(ui.element('agentic-status-msg').textContent, /Design accepted/);
   assert.equal(ui.geometry.length, 2);
   assert.equal(ui.calls.filter(([, options]) => options?.method === 'POST').length, 1);
+});
+
+test('browser reload clears stale run, chat query params, and chat storage when idle', async () => {
+  const storage = { structuralChatSession: 'chat_old', structuralDashboardBootId: 'boot_1' };
+  let resetCalls = 0;
+  const ui = setup({
+    search: '?run_id=run_old&chat=chat_old',
+    storage,
+    performance: { getEntriesByType: () => [{ type: 'reload' }] },
+    active: null,
+    activeHeaders: { 'X-Server-Boot-Id': 'boot_1' },
+  });
+  ui.context.window.structuralChatBridge = { resetChat() { resetCalls += 1; } };
+  await ui.context.restoreSavedAgenticRun();
+  assert.equal(ui.geometry.length, 0);
+  assert.equal(resetCalls, 1);
+  assert.equal(storage.structuralChatSession, undefined);
+  assert.ok(!ui.urls.at(-1).includes('run_id='));
+  assert.ok(!ui.urls.at(-1).includes('chat='));
+  assert.equal(ui.calls.filter(([u]) => u.includes('/runs/')).length, 0);
+});
+
+test('server restart clears stale URL run_id and localStorage session even on direct navigation', async () => {
+  const storage = { structuralChatSession: 'chat_old', structuralDashboardBootId: 'boot_old' };
+  let resetCalls = 0;
+  const ui = setup({
+    states: [state('A8', { status: 'COMPLETED' })],
+    search: '?run_id=run_old&chat=chat_old',
+    storage,
+    active: null,
+    activeHeaders: { 'X-Server-Boot-Id': 'boot_new' },
+  });
+  ui.context.window.structuralChatBridge = { resetChat() { resetCalls += 1; } };
+  await ui.context.restoreSavedAgenticRun();
+  assert.equal(storage.structuralDashboardBootId, 'boot_new');
+  assert.equal(storage.structuralChatSession, undefined);
+  assert.equal(resetCalls, 1);
+  assert.ok(!ui.urls.at(-1).includes('run_id='));
+  assert.ok(!ui.urls.at(-1).includes('chat='));
+  assert.equal(ui.element('active-run-id').hidden, true);
+});
+
+test('resetRunView clears saved selection, revision counter, and chat bridge', () => {
+  const ui = setup();
+  let resetCalls = 0;
+  ui.context.window.structuralChatBridge = { resetChat() { resetCalls += 1; } };
+  ui.element('saved-run-select').value = 'run_old';
+  ui.context.renderAgenticRunState(state('A8', { status: 'COMPLETED', staad_results: staadResult() }));
+  ui.context.resetRunView();
+  assert.equal(resetCalls, 1);
+  assert.equal(ui.element('saved-run-select').value, '');
+  assert.equal(ui.element('dwg-rev').textContent, 'REV —');
+  assert.equal(ui.element('active-run-id').hidden, true);
 });

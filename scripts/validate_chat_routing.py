@@ -8,9 +8,9 @@ import tempfile
 from unittest.mock import patch, AsyncMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from agentic.config import load_environment
-from agentic.chat import ChatRuntime
-from agentic.chat_store import ChatStore
+from config.settings import load_environment
+from chatbot.chatbot import ChatRuntime
+from chatbot.chat_store import ChatStore
 
 
 async def validate(output):

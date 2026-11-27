@@ -11,10 +11,10 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from langchain_core.messages import AIMessage
-from agentic.chat import ChatRuntime, requests_complete_workflow
-from agentic.chat_store import ChatStore
-from agentic.state import GraderResult, fail_workflow
-from agentic.store import SqliteWorkflowStore
+from chatbot.chatbot import ChatRuntime, requests_complete_workflow
+from chatbot.chat_store import ChatStore
+from orchestration.state import GraderResult, fail_workflow
+from services.workflow_store import SqliteWorkflowStore
 from test_chat import ControlledModel, call
 
 
@@ -37,7 +37,9 @@ class FullRequestScopeTests(unittest.TestCase):
 
 class ChatApprovalTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        from agentic import chat_router, router, orchestrator
+        from chatbot import chat_router
+        from orchestration import dashboard_router as router
+        from orchestration import workflow as orchestrator
         self.chat_router, self.router, self.flow = chat_router, router, orchestrator
         self.temp = tempfile.TemporaryDirectory()
         self.chats = ChatStore(Path(self.temp.name) / 'chat.db')
@@ -54,7 +56,7 @@ class ChatApprovalTests(unittest.IsolatedAsyncioTestCase):
                                      (chat_router, 'WORKFLOW_STORE', self.workflows),
                                      (router, 'WORKFLOW_STORE', self.workflows)]:
             self.stack.enter_context(patch.object(module, field, value))
-        self.stack.enter_context(patch('agentic.chat.WORKFLOW_STORE', self.workflows))
+        self.stack.enter_context(patch('chatbot.chatbot.WORKFLOW_STORE', self.workflows))
         self.stack.enter_context(patch.dict(os.environ, {'PLANT_DEEP_AGENTS_ENABLED': 'false',
             'PLANT_LLM_ENABLED': 'false', 'PLANT_WORKFLOW_MODE': 'poc2_automation', 'LANGSMITH_TRACING': 'false',
             'PLANT_CHAT_ENABLED':'true', 'OPENAI_API_KEY':'controlled-test-key', 'PLANT_AGENT_MODEL':'controlled-model'}))
@@ -99,7 +101,7 @@ class ChatApprovalTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('chat_action', kwargs, 'A general run must invoke the existing full graph')
             return await orchestrator.run_agentic_workflow(payload, run_id)
         self.controller = type('Controller', (), {'run_id':None, 'execute':AsyncMock(side_effect=execute)})()
-        self.stack.enter_context(patch('agentic.execution.CONTROLLER', self.controller))
+        self.stack.enter_context(patch('orchestration.execution.CONTROLLER', self.controller))
 
     async def full_request(self, model=None):
         turn = self.chats.new_turn(self.session['id'], '21X5 current input run')
@@ -122,8 +124,8 @@ class ChatApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.chats.list_sessions()[0]['awaiting_approval'])
 
     async def test_run_policy_reaches_a8_and_next_full_graph_uses_defaults(self):
-        from agentic.run_policy import RunPolicy
-        from agentic.agents.a8_reporting_acceptance_agent import accept_gate3
+        from config.run_policy import RunPolicy
+        from agents.A7_reporting import accept_gate3
         policy = {'max_member_ratio': 0.8, 'drift_denominator': 300,
                   'max_bolt_utilization_percent': 90, 'max_weld_utilization_percent': 85}
         model = ControlledModel(call('set_next_run_policy', {'run_policy': policy}),

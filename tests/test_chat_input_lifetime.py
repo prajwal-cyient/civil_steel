@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, patch
 import unittest
 
 import test_chat as fixtures
-from agentic.chat import ChatRuntime
-from agentic.chat_changes import build_project_proposal
-from agentic.chat_input_lifetime import reset_finished_inputs, next_request_inputs
-from agentic.state import WorkflowState
+from chatbot.chatbot import ChatRuntime
+from chatbot.parameter_changes import build_project_proposal
+from chatbot.input_lifetime import reset_finished_inputs, next_request_inputs
+from orchestration.state import WorkflowState
 
 
 MASTER = {'grid':{'n_long_bays':21,'n_trans_bays':5}}
@@ -32,8 +32,8 @@ class InputLifetimeTests(unittest.IsolatedAsyncioTestCase):
         session = self.session
         session['next_run_policy'] = {'max_bolt_utilization_percent':90.}
         runtime = ChatRuntime(self.store)
-        with patch('agentic.execution.CONTROLLER', controller), patch('agentic.chat.WORKFLOW_STORE',self.workflows), \
-             patch('agentic.chat_input_lifetime.master_inputs',return_value=deepcopy(MASTER)):
+        with patch('orchestration.execution.CONTROLLER', controller), patch('chatbot.chatbot.WORKFLOW_STORE',self.workflows), \
+             patch('chatbot.input_lifetime.master_inputs',return_value=deepcopy(MASTER)):
             await runtime.engineering(session, 'run_complete_workflow', True)
             self.assertEqual(session['project_input'], MASTER)
             first_id = session['run_id']
@@ -53,7 +53,7 @@ class InputLifetimeTests(unittest.IsolatedAsyncioTestCase):
                 self.store.save_session(session)
                 # Load a fresh session to exercise persisted recovery markers.
                 session = self.store.session(session['id'])
-                with patch('agentic.chat_input_lifetime.master_inputs',return_value=deepcopy(MASTER)):
+                with patch('chatbot.input_lifetime.master_inputs',return_value=deepcopy(MASTER)):
                     result = reset_finished_inputs(session,self.store,self.workflows)
                 expected = status in {'COMPLETED','FAILED','CANCELLED'}
                 self.assertEqual(result,expected)
@@ -63,7 +63,7 @@ class InputLifetimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_old_form_cannot_reintroduce_custom_geometry_but_new_edits_can(self):
         session = {'project_input':deepcopy(MASTER), 'input_reset':{
             'previous_run_input':deepcopy(CUSTOM),'master_input':deepcopy(MASTER)}}
-        with patch('agentic.chat_input_lifetime.master_inputs',return_value=deepcopy(MASTER)):
+        with patch('chatbot.input_lifetime.master_inputs',return_value=deepcopy(MASTER)):
             self.assertEqual(next_request_inputs(session,CUSTOM,fresh=True),MASTER)
             self.assertIsNone(next_request_inputs(session,CUSTOM,fresh=False))
             explicit = {'grid':{'n_long_bays':12,'n_trans_bays':5}}
@@ -76,11 +76,11 @@ class InputLifetimeTests(unittest.IsolatedAsyncioTestCase):
         session.update(project_input=deepcopy(MASTER),input_reset={
             'previous_run_input':deepcopy(CUSTOM),'master_input':deepcopy(MASTER)})
         newer = {'grid':{'n_long_bays':22,'n_trans_bays':5}}
-        with patch('agentic.chat_input_lifetime.master_inputs',return_value=newer):
+        with patch('chatbot.input_lifetime.master_inputs',return_value=newer):
             self.assertEqual(next_request_inputs(session,MASTER,fresh=True),newer)
         state=WorkflowState(run_id='run_12345678',status='FAILED',raw_input=CUSTOM)
         session.update(project_input=deepcopy(CUSTOM),temporary_input_run_id=state.run_id)
-        with patch('agentic.chat_input_lifetime.master_inputs',side_effect=ValueError('invalid master')):
+        with patch('chatbot.input_lifetime.master_inputs',side_effect=ValueError('invalid master')):
             self.assertFalse(reset_finished_inputs(session,self.store,self.workflows,state))
         self.assertEqual(session['project_input'],CUSTOM)
         self.assertIn('input_reset_error',session)
@@ -97,8 +97,8 @@ class InputLifetimeTests(unittest.IsolatedAsyncioTestCase):
             self.workflows.save_state(state)
             return state
         controller=SimpleNamespace(run_id=None,execute=AsyncMock(side_effect=execute))
-        with patch('agentic.execution.CONTROLLER',controller),patch('agentic.chat.WORKFLOW_STORE',self.workflows), \
-             patch('agentic.chat_input_lifetime.master_inputs',return_value=deepcopy(MASTER)):
+        with patch('orchestration.execution.CONTROLLER',controller),patch('chatbot.chatbot.WORKFLOW_STORE',self.workflows), \
+             patch('chatbot.input_lifetime.master_inputs',return_value=deepcopy(MASTER)):
             await runtime.execute_approved(turn,plan,True)
         self.assertEqual(turn['status'],'COMPLETED',turn)
         self.assertEqual(self.store.session(self.session['id'])['project_input'],MASTER)
@@ -106,15 +106,15 @@ class InputLifetimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved['grid']['n_long_bays'],10)
 
     async def test_master_file_is_read_only(self):
-        from agentic.config import ROOT
-        from agentic.chat_input_lifetime import master_inputs
-        path=ROOT/'src/radiator_support/frame_specs.json'
+        from config.settings import ROOT
+        from chatbot.input_lifetime import master_inputs
+        path=ROOT/'src/agents/A3_generate_structure/frame_specs.json'
         before=path.read_bytes()
         master_inputs()
         self.assertEqual(path.read_bytes(),before)
 
     async def test_manual_approval_observation_resets_inputs_and_keeps_saved_result(self):
-        from agentic import chat_router
+        from chatbot import chat_router
         state=WorkflowState(run_id='run_12345678',status='COMPLETED',raw_input=deepcopy(CUSTOM),
             gate3_approved=True,agent_statuses={'A8':{'status':'PASSED'}},accepted_by='Test Engineer',
             acceptance_timestamp='2026-11-23T12:00:00')
@@ -125,7 +125,7 @@ class InputLifetimeTests(unittest.IsolatedAsyncioTestCase):
         turn.update(status='AWAITING_APPROVAL',run_id=state.run_id)
         self.store.save_turn(turn)
         with patch.object(chat_router,'CHAT_STORE',self.store),patch.object(chat_router,'WORKFLOW_STORE',self.workflows), \
-             patch('agentic.chat_input_lifetime.master_inputs',return_value=deepcopy(MASTER)):
+             patch('chatbot.input_lifetime.master_inputs',return_value=deepcopy(MASTER)):
             completed=chat_router.sync_approval(turn)
         self.assertEqual(completed['status'],'COMPLETED')
         self.assertEqual(self.store.session(self.session['id'])['project_input'],MASTER)

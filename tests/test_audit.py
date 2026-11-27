@@ -10,10 +10,11 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from agentic import audit, orchestrator
-from agentic.state import WorkflowState, AgentLogEntry, GraderResult
-from agentic.store import SqliteWorkflowStore
-from agentic.publication_recovery import prepare_publication_retry
+from utils import audit
+from orchestration import workflow as orchestrator
+from orchestration.state import WorkflowState, AgentLogEntry, GraderResult
+from services.workflow_store import SqliteWorkflowStore
+from agents.A6_tekla.publication_recovery import prepare_publication_retry
 
 
 class AuditTests(unittest.TestCase):
@@ -163,7 +164,7 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(correction['status'], 'VERIFIED')
 
     def test_worker_parent_audit_survives_graph_state_copy_and_manual_gate(self):
-        from agentic import worker
+        from orchestration import worker
         async def run(candidate, action):
             result = candidate.model_copy(deep=True)
             audit.evaluation(result, 'STAAD', {'passed':True})
@@ -173,9 +174,9 @@ class AuditTests(unittest.TestCase):
         store.get_state.return_value = self.state
         with patch.object(worker,'load_environment'), \
              patch.object(sys,'argv',['worker','--run-id',self.state.run_id,'--chat-action','preview_structure']), \
-             patch('agentic.desktop_lock.desktop_lock', return_value=nullcontext()), \
-             patch('agentic.store.WORKFLOW_STORE',store), \
-             patch('agentic.chat_actions.run_chat_action',new=AsyncMock(side_effect=run)):
+             patch('orchestration.desktop_lock.desktop_lock', return_value=nullcontext()), \
+             patch('services.workflow_store.WORKFLOW_STORE',store), \
+             patch('chatbot.chat_actions.run_chat_action',new=AsyncMock(side_effect=run)):
             worker.main()
         result = store.save_state.call_args.args[0]
         parents = [e for e in result.audit_events if e['kind']=='workflow']

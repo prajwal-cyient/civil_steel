@@ -24,7 +24,7 @@ from unittest.mock import patch, AsyncMock
 # Ensure src/ is on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from agentic.ladders import (
+from config.ladders import (
     get_next_profile,
     get_next_plate_thickness,
     get_next_bolt_diameter,
@@ -33,19 +33,19 @@ from agentic.ladders import (
     COLUMN_PROFILE_LADDER,
     BEAM_PROFILE_LADDER
 )
-from agentic.agents.a3_frame_generator_agent import (
+from agents.A3_generate_structure import (
     check_geometry,
     evaluate_frame_parameters,
     generate_members,
     generate_members_from_parameters,
 )
-from agentic.agents.a4_staad_analyzer_agent import grade_staad_results
-from agentic.agents.a5_ideastatica_analyzer_agent import grade_joint_check_summary
-from agentic.agents.a6_package_validator_agent import run_a6_package_validator
-from agentic.orchestrator import run_agentic_workflow
-from agentic.agents.a8_reporting_acceptance_agent import accept_gate3
-from agentic.store import SqliteWorkflowStore
-from agentic.state import WorkflowState, GraderResult
+from agents.A4_staad import grade_staad_results
+from agents.A5_idea_statica import grade_joint_check_summary
+from agents.A5_idea_statica.package_validation import run_a6_package_validator
+from orchestration.workflow import run_agentic_workflow
+from agents.A7_reporting import accept_gate3
+from services.workflow_store import SqliteWorkflowStore
+from orchestration.state import WorkflowState, GraderResult
 
 
 class TestEnhancedAgenticWorkflow(unittest.TestCase):
@@ -69,9 +69,9 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
         widths = {"HEA140": 140, "CFRHS120X120X5": 120}
         for cfg, expected_hash in cases:
             with self.subTest(cfg=cfg), \
-                 patch("agentic.agents.a3_frame_generator_agent._lookup_profile_height",
+                 patch("agents.A3_generate_structure.A3A_evaluate_plan._lookup_profile_height",
                        side_effect=dimensions.__getitem__) as heights, \
-                 patch("agentic.agents.a3_frame_generator_agent._lookup_profile_width",
+                 patch("agents.A3_generate_structure.A3A_evaluate_plan._lookup_profile_width",
                        side_effect=widths.__getitem__) as profile_widths:
                 original_entry_result = generate_members(cfg)
                 parameters = evaluate_frame_parameters(cfg)
@@ -88,8 +88,8 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
             "bay_long_mm": 4000, "bay_trans_mm": 3000,
             "col_height_mm": 3000, "total_structure_height": 4000,
         }
-        with patch("agentic.agents.a3_frame_generator_agent._lookup_profile_height", return_value=133), \
-             patch("agentic.agents.a3_frame_generator_agent._lookup_profile_width", return_value=120):
+        with patch("agents.A3_generate_structure.A3A_evaluate_plan._lookup_profile_height", return_value=133), \
+             patch("agents.A3_generate_structure.A3A_evaluate_plan._lookup_profile_width", return_value=120):
             with self.assertRaisesRegex(ValueError, "too small"):
                 evaluate_frame_parameters({**cfg, "total_structure_height": 266})
             parameters = evaluate_frame_parameters(cfg)
@@ -99,7 +99,10 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
                 generate_members_from_parameters({**cfg, "total_structure_height": 5000}, parameters)
 
     def test_a3_stages_match_existing_entry_and_reject_stale_plan(self):
-        from agentic.agents import a3_frame_generator_agent as a3
+        from agents import A3_generate_structure as a3
+        from agents.A3_generate_structure import A3A_evaluate_plan as a3_a, connection_scope as a3_scope
+        from agents.A3_generate_structure import A3A_evaluate_plan as a3_a, connection_scope as a3_scope
+        from agents.A3_generate_structure import A3A_evaluate_plan as a3_a, connection_scope as a3_scope
         cfg = {
             "n_long_bays": 2, "n_trans_bays": 1,
             "bay_long_mm": 4000, "bay_trans_mm": 3000,
@@ -109,10 +112,10 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
         }
         original = WorkflowState(run_id="original", grid_config=cfg)
         staged = WorkflowState(run_id="staged", grid_config=cfg)
-        with patch.object(a3, "validate_profile_catalogue"), \
-             patch.object(a3, "template_coverage", return_value={"missing": []}), \
-             patch.object(a3, "_lookup_profile_height", return_value=133), \
-             patch.object(a3, "_lookup_profile_width", return_value=120):
+        with patch.object(a3_a, "validate_profile_catalogue"), \
+             patch.object(a3_scope, "template_coverage", return_value={"missing": []}), \
+             patch.object(a3_a, "_lookup_profile_height", return_value=133), \
+             patch.object(a3_a, "_lookup_profile_width", return_value=120):
             a3.run_a3_frame_generator(original)
             a3.evaluate_a3_frame(staged)
             staged = WorkflowState.model_validate_json(staged.model_dump_json())
@@ -275,8 +278,8 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
             staad_results={"joint_groups": {"con1": {}}},
             joint_grader_results={"con1": GraderResult(passed=False, summary="Missing solve")}
         )
-        with patch("agentic.agents.a6_package_validator_agent.frame_signature", return_value="current"), \
-             patch("agentic.agents.a6_package_validator_agent.grade_staad_results",
+        with patch("agents.A5_idea_statica.package_validation.frame_signature", return_value="current"), \
+             patch("agents.A5_idea_statica.package_validation.grade_staad_results",
                    return_value=GraderResult(passed=True, summary="OK")):
             state.staad_results["candidate_signature"] = "current"
             res = run_a6_package_validator(state)
@@ -285,7 +288,7 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
         self.assertEqual(res.validation_report.get("recovery_target"), "a5_ideastatica_analyzer")
 
     def test_strict_package_audit_stops_stale_frame_but_retries_joint_evidence(self):
-        from agentic.agents import a6_package_validator_agent as audit
+        from agents.A5_idea_statica import package_validation as audit
         state = WorkflowState(
             run_id="strict_audit",
             frame_candidate={"members": [{"name": "m1"}]},
@@ -328,7 +331,7 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
         self.assertEqual(no_groups.loop_c_count, 0)
 
     def test_package_graph_has_no_frame_recovery_edge_and_rejects_invalid_target(self):
-        from agentic import orchestrator
+        from orchestration import workflow as orchestrator
         edges = orchestrator.build_workflow_graph().compile().get_graph().edges
         self.assertNotIn(
             ("a5c_package_audit", "a3_frame_generator"),
@@ -356,7 +359,7 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
         self.assertEqual(orchestrator.route_after_a6(result), "__end__")
 
     def test_idea_routes_to_tekla_only_after_package_audit_passes(self):
-        from agentic.orchestrator import route_after_a5
+        from orchestration.workflow import route_after_a5
 
         state = WorkflowState(
             run_id="idea_routing", layout_version=2, status="RUNNING",
@@ -373,7 +376,7 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
         self.assertEqual(route_after_a5(state), "a5_ideastatica_analyzer")
 
     def test_graph_gate_requires_verified_publication_and_pending_human_review(self):
-        from agentic import orchestrator
+        from orchestration import workflow as orchestrator
         state = WorkflowState(
             run_id="gate", status="PAUSED_AT_GATE3",
             validation_report={"passed": True},
@@ -416,18 +419,19 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
 
     def test_orchestrator_stops_on_failed_analysis(self):
         """Exercise graph failure routing with adapters replaced; never touch live models."""
-        from agentic import orchestrator
-        from agentic.agents import a3_frame_generator_agent as a3, a4_staad_analyzer_agent as a4
+        from orchestration import workflow as orchestrator
+        from agents.A3_generate_structure import A3A_evaluate_plan as a3_a, A3B_generate_structure as a3_b, connection_scope as a3_scope
+        from agents.A4_staad import A4B_trigger_api as a4_b
         candidate = {"members": [{"name": "column", "p1": [0, 0, 0], "p2": [0, 0, 5000]}],
                      "members_split_beams": [{"name": "column", "p1": [0, 0, 0], "p2": [0, 0, 5000]}]}
         with tempfile.TemporaryDirectory() as directory:
             store = SqliteWorkflowStore(os.path.join(directory, "runs.db"))
-            with patch("agentic.store.WORKFLOW_STORE", store), \
+            with patch("services.workflow_store.WORKFLOW_STORE", store), \
                  patch.object(orchestrator, "run_a2_readiness", side_effect=lambda state: state), \
-                 patch.object(a3, "generate_members_from_parameters", return_value=candidate), \
-                 patch.object(a3, "validate_profile_catalogue"), \
-                 patch.object(a3, "template_coverage", return_value={"missing": []}), \
-                 patch.object(a4, "send_to_staad", new=AsyncMock(return_value={"analysis_failed": True})), \
+                 patch.object(a3_b, "generate_members_from_parameters", return_value=candidate), \
+                 patch.object(a3_a, "validate_profile_catalogue"), \
+                 patch.object(a3_scope, "template_coverage", return_value={"missing": []}), \
+                 patch.object(a4_b, "send_to_staad", new=AsyncMock(return_value={"analysis_failed": True})), \
                  patch.object(orchestrator, "run_a5_staged") as idea:
                 state = asyncio.run(run_agentic_workflow({"grid": {}, "load_configuration": {"load_combinations": [{"name": "SLS", "envelope": "SERVICEABILITY", "factors": {"DL": 1}}, {"name": "ULS", "envelope": "STRENGTH", "factors": {"DL": 1.35}}]}}, run_id="controlled_failure"))
         self.assertEqual(state.status, "FAILED")

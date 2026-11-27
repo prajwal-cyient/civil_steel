@@ -16,9 +16,10 @@ from pydantic import Field
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
-from agentic import deep_runtime, orchestrator
-from agentic.config import workflow_mode
-from agentic.state import WorkflowState
+from services import deep_agents_runtime as deep_runtime
+from orchestration import workflow as orchestrator
+from config.settings import workflow_mode
+from orchestration.state import WorkflowState
 
 
 class StageModel(BaseChatModel):

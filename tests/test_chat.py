@@ -11,11 +11,11 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from langchain_core.messages import AIMessage, ToolMessage
-from agentic.chat import ChatRuntime, project_input, redact
-from agentic.chat_store import ChatStore
-from agentic.chat_actions import run_chat_action
-from agentic.state import WorkflowState, GraderResult
-from agentic.store import SqliteWorkflowStore
+from chatbot.chatbot import ChatRuntime, project_input, redact
+from chatbot.chat_store import ChatStore
+from chatbot.chat_actions import run_chat_action
+from orchestration.state import WorkflowState, GraderResult
+from services.workflow_store import SqliteWorkflowStore
 
 
 class ControlledModel:
@@ -52,7 +52,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
     async def respond(self, model, text="Show current inputs", live=False):
         turn = self.store.new_turn(self.session["id"], text)
         runtime = ChatRuntime(self.store, lambda: model)
-        with patch("agentic.chat.WORKFLOW_STORE", self.workflows):
+        with patch("chatbot.chatbot.WORKFLOW_STORE", self.workflows):
             await runtime.respond(turn, live)
         return self.store.turn(turn["id"])
 
@@ -80,7 +80,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_live_tool_permission_is_checked_outside_model(self):
         model = ControlledModel(call("publish_to_tekla"), AIMessage(content="Live tools are disabled."))
-        with patch("agentic.execution.CONTROLLER.execute", new_callable=AsyncMock) as execute:
+        with patch("orchestration.execution.CONTROLLER.execute", new_callable=AsyncMock) as execute:
             turn = await self.respond(model, "Publish to Tekla")
         execute.assert_not_awaited()
         self.assertTrue(any(e["type"] == "tool_error" and "not enabled" in e["error"] for e in turn["events"]))
@@ -128,9 +128,9 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_preview_uses_existing_geometry_and_cannot_pass_engineering_gate(self):
         state = WorkflowState(run_id="preview", status="RUNNING", raw_input=self.session["project_input"])
-        with patch("agentic.orchestrator._sync_state"), patch("agentic.deep_runtime.run_deep_stage"), patch.dict(os.environ, {"PLANT_DEEP_AGENTS_ENABLED": "false"}), \
-             patch("agentic.agents.a3_frame_generator_agent._lookup_profile_height", return_value=133), \
-             patch("agentic.agents.a3_frame_generator_agent._lookup_profile_width", return_value=120):
+        with patch("orchestration.workflow._sync_state"), patch("services.deep_agents_runtime.run_deep_stage"), patch.dict(os.environ, {"PLANT_DEEP_AGENTS_ENABLED": "false"}), \
+             patch("agents.A3_generate_structure.A3A_evaluate_plan._lookup_profile_height", return_value=133), \
+             patch("agents.A3_generate_structure.A3A_evaluate_plan._lookup_profile_width", return_value=120):
             state = await run_chat_action(state, "preview_structure")
             self.assertEqual(state.status, "READY")
             self.assertTrue(state.readiness["preview_only"])
@@ -150,7 +150,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             s.loop_a_count = 1
             return s
         async def a3(s): calls.append("A3"); return s
-        with patch("agentic.orchestrator.node_a4", side_effect=a4), patch("agentic.orchestrator.node_a3", side_effect=a3):
+        with patch("orchestration.workflow.node_a4", side_effect=a4), patch("orchestration.workflow.node_a3", side_effect=a3):
             result = await run_chat_action(state, "analyze_frame")
         self.assertEqual(calls, ["A4", "A3", "A4"])
         self.assertEqual(result.status, "READY")
@@ -158,13 +158,13 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_frame_evidence_blocks_idea_and_publication(self):
         for action in ("design_connections", "publish_to_tekla"):
             state = WorkflowState(run_id="invalid", status="RUNNING", agent_statuses={"A3": {"status": "PASSED"}})
-            with patch("agentic.orchestrator.node_a5", new_callable=AsyncMock) as a5, patch("agentic.orchestrator.node_a7", new_callable=AsyncMock) as a7:
+            with patch("orchestration.workflow.node_a5", new_callable=AsyncMock) as a5, patch("orchestration.workflow.node_a7", new_callable=AsyncMock) as a7:
                 result = await run_chat_action(state, action)
                 a5.assert_not_awaited(); a7.assert_not_awaited()
                 self.assertEqual(result.status, "FAILED")
 
     async def test_connection_and_package_loops_preserve_human_gate(self):
-        from agentic.evidence import frame_signature
+        from utils.evidence import frame_signature
         state = WorkflowState(run_id="loops", status="RUNNING", agent_statuses={"A3": {"status": "PASSED"}},
                               frame_grader_result=GraderResult(passed=True, summary="Controlled passing fixture"))
         state.staad_results["candidate_signature"] = frame_signature(state)
@@ -182,16 +182,16 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             return s
         async def a7(s): calls.append("A7"); return s
         async def a8(s): calls.append("A8"); s.status = "PAUSED_AT_GATE3"; return s
-        with patch("agentic.orchestrator.node_a5", side_effect=a5), patch("agentic.orchestrator.node_a6", side_effect=a6), \
-             patch("agentic.orchestrator.node_a7", side_effect=a7), patch("agentic.orchestrator.node_a8", side_effect=a8), \
-             patch("agentic.orchestrator.route_after_a6", return_value="a5_ideastatica_analyzer"):
+        with patch("orchestration.workflow.node_a5", side_effect=a5), patch("orchestration.workflow.node_a6", side_effect=a6), \
+             patch("orchestration.workflow.node_a7", side_effect=a7), patch("orchestration.workflow.node_a8", side_effect=a8), \
+             patch("orchestration.workflow.route_after_a6", return_value="a5_ideastatica_analyzer"):
             result = await run_chat_action(state, "publish_to_tekla")
         self.assertEqual(calls, ["A6", "A5", "A5", "A6", "A7", "A8"])
         self.assertEqual(result.status, "PAUSED_AT_GATE3")
         self.assertFalse(result.gate3_approved)
 
     async def test_invalid_package_recovery_stops_without_rerunning_frame(self):
-        from agentic.evidence import frame_signature
+        from utils.evidence import frame_signature
         state = WorkflowState(run_id="invalid_recovery", status="RUNNING",
                               agent_statuses={"A3": {"status": "PASSED"}},
                               frame_grader_result=GraderResult(passed=True, summary="Passing"))
@@ -202,9 +202,9 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             candidate.validation_report = {"recovery_target": "a3_frame_generator"}
             return candidate
 
-        with patch("agentic.orchestrator.node_a6", side_effect=a6), \
-             patch("agentic.orchestrator.node_a3", new_callable=AsyncMock) as a3, \
-             patch("agentic.orchestrator.node_a7", new_callable=AsyncMock) as a7:
+        with patch("orchestration.workflow.node_a6", side_effect=a6), \
+             patch("orchestration.workflow.node_a3", new_callable=AsyncMock) as a3, \
+             patch("orchestration.workflow.node_a7", new_callable=AsyncMock) as a7:
             result = await run_chat_action(state, "publish_to_tekla")
         self.assertEqual(result.status, "FAILED")
         self.assertIn("recovery is invalid", result.error)
@@ -216,7 +216,7 @@ class ChatApiTests(unittest.TestCase):
     def setUp(self):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from agentic import chat_router
+        from chatbot import chat_router
         self.module = chat_router
         self.temp = tempfile.TemporaryDirectory()
         self.store = ChatStore(Path(self.temp.name) / "chat.db")
@@ -326,6 +326,22 @@ class ChatApiTests(unittest.TestCase):
         active.update(status='COMPLETED', assistant='Finished in the original chat')
         self.store.save_turn(active)
         self.assertEqual(self.client.get('/api/v2/chat/sessions/' + original['id']).json()['turns'][-1]['assistant'], 'Finished in the original chat')
+
+    def test_chat_config_and_app_expose_boot_id_and_no_store_headers(self):
+        from fastapi.testclient import TestClient
+        from config.settings import SERVER_BOOT_ID
+        from main import create_app
+
+        cfg = self.client.get('/api/v2/chat/config').json()
+        self.assertEqual(cfg['boot_id'], SERVER_BOOT_ID)
+
+        with TestClient(create_app()) as app_client:
+            ui_resp = app_client.get('/radiator_support')
+            self.assertEqual(ui_resp.status_code, 200)
+            self.assertEqual(ui_resp.headers.get('X-Server-Boot-Id'), SERVER_BOOT_ID)
+            self.assertEqual(ui_resp.headers.get('Cache-Control'), 'no-store')
+            active_resp = app_client.get('/api/v2/agentic/active')
+            self.assertEqual(active_resp.headers.get('X-Server-Boot-Id'), SERVER_BOOT_ID)
 
 
 if __name__ == '__main__':

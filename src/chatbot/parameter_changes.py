@@ -130,7 +130,7 @@ def build_joint_proposal(session, state, changes, action="validate_selected_conn
         component_patch(state.tekla_results["connection_manifest"], patch, groups)
     proposal = {"kind": "joint_parameters", "source_run_id": state.run_id,
                 "source_fingerprint": source_fingerprint(state), "groups": groups,
-                "changes": patch, "action": action, "steps": execution_plan(action, state.layout_version), "run_policy":state.run_policy,
+                "changes": patch, "action": action, "steps": execution_plan(action), "run_policy":state.run_policy,
                 "unchanged_parameters":unchanged,
                 "physical_joint_counts":{group:metadata[group]['physical_joint_count'] for group in groups},
                 "template_fingerprints":template_fingerprints(state,groups),

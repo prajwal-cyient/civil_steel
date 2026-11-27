@@ -22,7 +22,7 @@ class FullRequestScopeTests(unittest.TestCase):
     def test_general_runs_include_the_complete_workflow(self):
         for text in ['21X5 current input run', 'Run agentic workflow', 'Run the current inputs',
                      'Please run this 21 × 5 bay frame', 'Just run the workflow including Tekla',
-                     'Execute the pipeline', 'Run A1-A7', 'Run A1–A7', 'Run A1-A8', 'Run A1–A8', 'run this']:
+                     'Execute the pipeline', 'Run A1-A7', 'Run A1–A7', 'Run A1-A7', 'Run A1–A7', 'run this']:
             with self.subTest(text=text):
                 self.assertTrue(requests_complete_workflow(text))
 
@@ -30,7 +30,7 @@ class FullRequestScopeTests(unittest.TestCase):
         for text in ['Run STAAD only', 'Run only STAAD', 'Analyze the frame', 'Run the IDEA connection checks',
                      'Run the workflow but stop before Tekla', 'Run only A1 to A6',
                      'Do not run the workflow', 'Show a preview only', 'What is the current status?',
-                     'Continue the validated run through A7 and A8']:
+                     'Continue the validated run through A7 and A7']:
             with self.subTest(text=text):
                 self.assertFalse(requests_complete_workflow(text))
 
@@ -61,29 +61,29 @@ class ChatApprovalTests(unittest.IsolatedAsyncioTestCase):
             'PLANT_LLM_ENABLED': 'false', 'PLANT_WORKFLOW_MODE': 'poc2_automation', 'LANGSMITH_TRACING': 'false',
             'PLANT_CHAT_ENABLED':'true', 'OPENAI_API_KEY':'controlled-test-key', 'PLANT_AGENT_MODEL':'controlled-model'}))
         self.stack.enter_context(patch.object(orchestrator, '_sync_state', self.workflows.save_state))
-        real_a1, real_a8 = orchestrator.run_a1_requirements, orchestrator.run_a8_reporting
+        real_a1, real_a8 = orchestrator.run_a1_requirements, orchestrator.run_a7_reporting
         def a1(state):
             self.calls.append('A1')
             return real_a1(state)
         def a8(state):
-            self.calls.append('A8')
+            self.calls.append('A7')
             return real_a8(state)
         self.stack.enter_context(patch.object(orchestrator, 'run_a1_requirements', a1))
-        self.stack.enter_context(patch.object(orchestrator, 'run_a8_reporting', a8))
+        self.stack.enter_context(patch.object(orchestrator, 'run_a7_reporting', a8))
         names = {'A2':'run_a2_readiness', 'A3':'run_a3_staged', 'A4':'run_a4_staged',
-                 'A5':'run_a5_staged', 'A6':'run_a6_package_validator', 'A7':'run_a7_staged'}
+                 'A5':'run_a5_staged', 'A5c':'run_package_validator', 'A6':'run_a6_staged'}
         for stage, name in names.items():
             def operation(state, stage=stage):
                 self.calls.append(stage)
                 if self.fail_stage == stage:
                     return fail_workflow(state, stage, 'Controlled failed engineering evidence')
-                status_stage = 'A6' if stage == 'A7' and state.layout_version == 2 else stage
+                status_stage = stage
                 state.agent_statuses[status_stage] = {'status':'PASSED'}
                 if stage == 'A4':
                     state.frame_grader_result = GraderResult(passed=True, summary='Controlled frame evidence')
-                if stage == 'A6':
+                if stage == 'A5c':
                     state.validation_report = {'passed':True, 'package_hash':'controlled-fixture'}
-                if stage == 'A7':
+                if stage == 'A6':
                     state.tekla_results = {'created':194}
                 return state
             self.stack.enter_context(patch.object(orchestrator, name, operation))
@@ -92,9 +92,9 @@ class ChatApprovalTests(unittest.IsolatedAsyncioTestCase):
             state = orchestrator.run_a5_staged(state)
             if state.status == "FAILED":
                 return state
-            state = orchestrator.run_a6_package_validator(state)
+            state = orchestrator.run_package_validator(state)
             if state.status != "FAILED":
-                state.agent_statuses["A5c"] = state.agent_statuses.pop("A6")
+                self.assertIn("A5c", state.agent_statuses)
             return state
         self.stack.enter_context(patch.object(orchestrator, 'run_idea_graph', idea_graph))
         async def execute(payload, run_id, **kwargs):
@@ -105,13 +105,13 @@ class ChatApprovalTests(unittest.IsolatedAsyncioTestCase):
 
     async def full_request(self, model=None):
         turn = self.chats.new_turn(self.session['id'], '21X5 current input run')
-        model = model or ControlledModel(call('run_complete_workflow'), AIMessage(content='A8 report prepared.'))
+        model = model or ControlledModel(call('run_complete_workflow'), AIMessage(content='A7 report prepared.'))
         await ChatRuntime(self.chats, lambda:model).respond(turn, allow_native=True)
         return self.chats.turn(turn['id']), model
 
-    async def test_short_run_executes_all_eight_then_waits_for_manual_approval(self):
+    async def test_short_run_executes_all_seven_then_waits_for_manual_approval(self):
         turn, model = await self.full_request()
-        self.assertEqual(self.calls, ['A'+str(n) for n in range(1,9)])
+        self.assertEqual(self.calls, ['A1','A2','A3','A4','A5','A5c','A6','A7'])
         self.assertEqual(turn['status'], 'AWAITING_APPROVAL')
         self.assertIn('manual engineer approval', turn['assistant'])
         self.assertIn('run_complete_workflow', model.tools)
@@ -131,7 +131,7 @@ class ChatApprovalTests(unittest.IsolatedAsyncioTestCase):
         model = ControlledModel(call('set_next_run_policy', {'run_policy': policy}),
                                 call('run_complete_workflow'), AIMessage(content='Report ready.'))
         turn, _ = await self.full_request(model)
-        self.assertEqual(self.calls, ['A'+str(n) for n in range(1,9)])
+        self.assertEqual(self.calls, ['A1','A2','A3','A4','A5','A5c','A6','A7'])
         state = self.workflows.get_state(turn['run_id'])
         self.assertEqual(state.run_policy, RunPolicy.model_validate(policy).model_dump())
         self.assertEqual(state.final_report['run_policy'], RunPolicy.model_validate(policy).model_dump())

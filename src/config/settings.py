@@ -52,8 +52,8 @@ def _integer(name: str, default: int, minimum: int = 1) -> int:
 
 
 def deep_agents_enabled() -> bool:
-    """Explicit opt-in keeps historical deterministic runs reproducible."""
-    return os.getenv("PLANT_DEEP_AGENTS_ENABLED", "false").lower() == "true"
+    """Deep Agents is the default; an explicit false selects direct execution."""
+    return os.getenv("PLANT_DEEP_AGENTS_ENABLED", "true").strip().lower() == "true"
 
 
 def deep_agent_call_limit() -> int:

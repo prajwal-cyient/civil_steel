@@ -19,7 +19,7 @@ TERMINAL = {'COMPLETED', 'FAILED', 'CANCELLED'}
 
 
 def archive_agents(state):
-    return [f'A{n}' for n in range(1, 8 if state.layout_version == 2 else 9)]
+    return [f'A{n}' for n in range(1, 8)]
 
 
 def write_json(path, value):
@@ -158,7 +158,7 @@ def _checkpoint(state):
             'execution_recorded':any((folder/'01_agents'/agent).glob('attempt_*/input.json'))} for agent in archive_agents(state)},
         'software':{name:{'stage_status':state.agent_statuses.get(agent,{}).get('status','NOT_RUN'),
             'capture_manifests':[str(p.relative_to(folder)) for p in (folder/'02_software'/name).rglob('copy_manifest.json')]}
-            for name,agent in [('STAAD','A4'),('IDEA_StatiCa','A5'),('Tekla','A6' if state.layout_version == 2 else 'A7')]},
+            for name,agent in [('STAAD','A4'),('IDEA_StatiCa','A5'),('Tekla','A6')]},
         'native_files_notice':'See each software copy_manifest.json. Files are not claimed saved unless listed. Open Tekla model copies are not independently reopen-validated.',
     })
     # Copy a changing worker log on terminal/approval checkpoints, never the source itself.

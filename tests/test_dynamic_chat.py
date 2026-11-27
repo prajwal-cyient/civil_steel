@@ -129,7 +129,7 @@ class ProposalTests(unittest.TestCase):
         self.assertEqual(plan['groups'], [LONG])
         self.assertEqual(plan['changes'][0]['parameter'], 'GRD_d')
         self.assertEqual(plan['changes'][0]['new_native'], 0.02)
-        self.assertEqual(plan['steps'], ['A5:selected','A6:package'])
+        self.assertEqual(plan['steps'], ['A5:selected','A5c:package'])
         self.assertEqual(self.source.model_dump_json(), before)
         validate_proposal(plan, self.session, self.source)
 

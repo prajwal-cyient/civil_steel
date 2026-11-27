@@ -836,7 +836,6 @@
       <div class="agent-step" id="step-A5"><span class="step-num">A5</span><span class="step-label" id="label-A5">IDEA + audit</span><span class="step-badge" id="badge-A5"></span><span class="step-time" id="timer-A5">00:00</span><span class="substeps" id="substeps-A5"></span></div>
       <div class="agent-step" id="step-A6"><span class="step-num">A6</span><span class="step-label" id="label-A6">Tekla</span><span class="step-time" id="timer-A6">00:00</span><span class="substeps" id="substeps-A6"></span></div>
       <div class="agent-step" id="step-A7"><span class="step-num">A7</span><span class="step-label" id="label-A7">Report</span><span class="step-time" id="timer-A7">00:00</span></div>
-      <div class="agent-step" id="step-A8" hidden><span class="step-num">A8</span><span class="step-label">Accept</span><span class="step-time" id="timer-A8">00:00</span></div>
     </div>
 
     <!-- Gate 3 Final Acceptance Banner -->
@@ -1811,7 +1810,7 @@ sendIdeaBtn.addEventListener('click', async () => {
 });
 
 /* ---------------------------------------------------------------
-   Autonomous Agentic Workflow (A1–A8 with Loop Engineering)
+   Autonomous Agentic Workflow (A1-A7 with Loop Engineering)
 --------------------------------------------------------------- */
 const agenticRunBtn = document.getElementById('agentic-run-btn');
 const agenticCancelBtn = document.getElementById('agentic-cancel-btn');
@@ -1964,17 +1963,14 @@ async function loadSavedRunChoices() {
   updateActionControls();
 }
 
-function updateAgentSteps(agentStatuses, loopA, loopB, timings = {}, workflowStatus = '', layoutVersion = 2, substages = {}) {
+function updateAgentSteps(agentStatuses, loopA, loopB, timings = {}, workflowStatus = '', substages = {}) {
   window.AgentTimers?.update(timings, agentStatuses, workflowStatus);
-  const legacy = layoutVersion !== 2;
-  document.getElementById('label-A5').textContent = legacy ? 'IDEA' : 'IDEA + audit';
-  document.getElementById('label-A6').textContent = legacy ? 'Validate' : 'Tekla';
-  document.getElementById('label-A7').textContent = legacy ? 'Tekla' : 'Report';
-  document.getElementById('step-A8').hidden = !legacy;
+  document.getElementById('label-A5').textContent = 'IDEA + audit';
+  document.getElementById('label-A6').textContent = 'Tekla';
+  document.getElementById('label-A7').textContent = 'Report';
   for (const [stage, letters] of Object.entries({A3: 'ab', A4: 'abcd', A5: 'abcd', A6: 'abcd'})) {
     const container = document.getElementById(`substeps-${stage}`);
     container.replaceChildren();
-    if (legacy) continue;
     for (const letter of letters) {
       const label = `${stage}${letter}`;
       const item = document.createElement('span');
@@ -1984,7 +1980,7 @@ function updateAgentSteps(agentStatuses, loopA, loopB, timings = {}, workflowSta
       container.append(item);
     }
   }
-  const steps = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8'];
+  const steps = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7'];
   for (const step of steps) {
     const el = document.getElementById(`step-${step}`);
     if (!el) continue;
@@ -2048,7 +2044,7 @@ function renderUnverifiedPreview(data, runId = null) {
 function renderAgenticRunState(state, { active = ['RUNNING', 'INITIALIZED'].includes(state.status) } = {}) {
   if (state.readiness?.preview_only) {
     renderUnverifiedPreview(state.frame_candidate, state.run_id);
-    updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {}, state.agent_timings || {}, state.status, state.layout_version || 1, state.substage_statuses || {});
+    updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {}, state.agent_timings || {}, state.status, state.substage_statuses || {});
     setAgenticBusy(active);
     return;
   }
@@ -2059,7 +2055,7 @@ function renderAgenticRunState(state, { active = ['RUNNING', 'INITIALIZED'].incl
   if (gate3Banner) gate3Banner.style.display = 'none';
 
   // Update tracker UI with final state
-  updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {}, state.agent_timings || {}, state.status, state.layout_version || 1, state.substage_statuses || {});
+  updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {}, state.agent_timings || {}, state.status, state.substage_statuses || {});
 
   // 1. Update 3D Viewer & Members
   const frameKey = `${state.run_id}:${state.design_generation || 0}`;
@@ -2395,7 +2391,7 @@ if (gate3AcceptBtn) {
         agenticStatusMsg.className = 'agentic-status-pill ok';
         agenticStatusMsg.textContent = `✅ Design Accepted & Signed Off by ${acceptedState.accepted_by || 'Lead Structural Engineer'}`;
       }
-      const reportStep = document.getElementById(acceptedState.layout_version === 2 ? 'step-A7' : 'step-A8');
+      const reportStep = document.getElementById('step-A7');
       if (reportStep) {
         reportStep.className = 'agent-step passed';
       }

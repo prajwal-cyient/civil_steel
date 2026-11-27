@@ -11,7 +11,7 @@ from orchestration.state import WorkflowState
 
 class PublicationRecoveryTests(unittest.TestCase):
     def test_retry_isolated_from_source_and_clears_publication_acceptance(self):
-        original = WorkflowState(run_id="source", status="FAILED", current_agent="A7", error="Typed attribute rejected",
+        original = WorkflowState(run_id="source", status="FAILED", current_agent="A6", error="Typed attribute rejected",
                                  validation_report={"passed": True}, tekla_results={"created": 1}, gate3_approved=True)
         retry = prepare_publication_retry(original, "retry")
         self.assertEqual(original.status, "FAILED")
@@ -21,7 +21,7 @@ class PublicationRecoveryTests(unittest.TestCase):
         self.assertFalse(retry.gate3_approved)
 
     def test_analysis_or_unvalidated_failures_cannot_skip_to_publication(self):
-        for agent, validation in (("A4", True), ("A5", True), ("A7", False)):
+        for agent, validation in (("A4", True), ("A5", True), ("A6", False)):
             source = WorkflowState(run_id="source", status="FAILED", current_agent=agent,
                                    validation_report={"passed": validation})
             with self.assertRaises(ValueError):
@@ -33,8 +33,8 @@ class PublicationRecoveryTests(unittest.TestCase):
         def invalid(candidate):
             candidate.validation_report = {"passed": False}
             return candidate
-        with patch.object(orchestrator, "node_a6", side_effect=invalid), \
-             patch.object(orchestrator, "node_a7") as publish:
+        with patch.object(orchestrator, "node_package_audit", side_effect=invalid), \
+             patch.object(orchestrator, "node_a6") as publish:
             result = asyncio.run(run_publication_retry(state))
         self.assertEqual(result.status, "FAILED")
         self.assertIn("revalidation", result.error)

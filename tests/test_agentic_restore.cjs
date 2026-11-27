@@ -55,7 +55,7 @@ function state(agent = 'A3', overrides = {}) {
 }
 const staadResult = () => ({ created: 1, candidate_signature: 'verified-frame', member_data_by_id: { 900001: { name: 'column', start: 1, end: 2 } } });
 
-test('new and historical workflows display distinct stage meanings and actual substage progress', () => {
+test('all runs display the single A1-A7 layout and actual substage progress', () => {
   const ui = setup();
   ui.context.renderAgenticRunState(state('A6', {
     layout_version: 2,
@@ -64,16 +64,14 @@ test('new and historical workflows display distinct stage meanings and actual su
   assert.equal(ui.element('label-A6').textContent, 'Tekla');
   assert.equal(ui.element('label-A5').textContent, 'IDEA + audit');
   assert.equal(ui.element('label-A7').textContent, 'Report');
-  assert.equal(ui.element('step-A8').hidden, true);
   assert.equal(ui.element('substeps-A6').children[0].className, 'passed');
   assert.equal(ui.element('substeps-A6').children[1].className, 'running');
   assert.equal(ui.element('substeps-A6').children[2].className, 'pending');
-  ui.context.renderAgenticRunState(state('A8', { run_id: 'run_old' }));
-  assert.equal(ui.element('label-A6').textContent, 'Validate');
-  assert.equal(ui.element('label-A5').textContent, 'IDEA');
-  assert.equal(ui.element('label-A7').textContent, 'Tekla');
-  assert.equal(ui.element('step-A8').hidden, false);
-  assert.equal(ui.element('substeps-A6').children.length, 0);
+  ui.context.renderAgenticRunState(state('A7', { run_id: 'run_saved_other' }));
+  assert.equal(ui.element('label-A6').textContent, 'Tekla');
+  assert.equal(ui.element('label-A7').textContent, 'Report');
+  assert.equal(ui.element('substeps-A6').children.length, 4);
+  assert.ok(!fs.readFileSync(path.join(__dirname, '..', 'src', 'static', 'radiator_support', 'index.html'), 'utf8').includes('id="step-A8"'));
 });
 
 function chatBridge(ui) {
@@ -90,7 +88,7 @@ test('manual sign-off displays success only after backend confirmation', async (
   const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'static', 'radiator_support', 'index.html'), 'utf8');
   const start = html.indexOf('\nif (gate3AcceptBtn) {');
   vm.runInContext(html.slice(start, html.indexOf('// Small integration bridge:', start)), ui.context);
-  ui.context.renderAgenticRunState(state('A8', { status: 'PAUSED_AT_GATE3' }));
+  ui.context.renderAgenticRunState(state('A7', { status: 'PAUSED_AT_GATE3' }));
   const errors = [];
   ui.context.alert = text => errors.push(text);
   const button = ui.element('gate3-accept-btn');
@@ -104,13 +102,13 @@ test('manual sign-off displays success only after backend confirmation', async (
   ui.context.fetch = async () => ({ ok: true, json: async () => ({ status: 'COMPLETED', gate3_approved: true, accepted_by: 'Test Engineer' }) });
   await button.handlers.click();
   assert.match(ui.element('agentic-status-msg').textContent, /Test Engineer/);
-  assert.equal(ui.element('step-A8').className, 'agent-step passed');
+  assert.equal(ui.element('step-A7').className, 'agent-step passed');
 });
 
 test('chat preview clears prior calculation and sign-off evidence without enabling native handoff', () => {
   const ui = setup();
   const bridge = chatBridge(ui);
-  ui.context.renderAgenticRunState(state('A8', { status: 'PAUSED_AT_GATE3', staad_results: staadResult() }));
+  ui.context.renderAgenticRunState(state('A7', { status: 'PAUSED_AT_GATE3', staad_results: staadResult() }));
   assert.equal(ui.element('gate3-banner').style.display, 'flex');
   bridge.showPreview(state().frame_candidate, 'run_preview');
   assert.equal(ui.element('active-run-id').textContent, 'Run: run_preview');
@@ -142,7 +140,7 @@ test('chat turn locks survive conversation changes and retain ownership until ev
 test('chat rendering keeps a saved final state locked while its worker is still active', () => {
   const ui = setup();
   const bridge = chatBridge(ui);
-  const final = state('A8', { status: 'PAUSED_AT_GATE3', staad_results: staadResult() });
+  const final = state('A7', { status: 'PAUSED_AT_GATE3', staad_results: staadResult() });
   bridge.showRun(final, { active: true });
   assert.equal(ui.element('generate-btn').disabled, true);
   assert.equal(ui.element('gate3-banner').style.display, 'none');
@@ -162,7 +160,7 @@ test('restoring a saved preview never promotes it to a live validated candidate'
 });
 
 test('refresh restores an explicitly linked final package using GET requests only', async () => {
-  const ui = setup({ states: [state('A8', { status: 'COMPLETED' })], search: '?run_id=run_saved' });
+  const ui = setup({ states: [state('A7', { status: 'COMPLETED' })], search: '?run_id=run_saved' });
   await ui.context.restoreSavedAgenticRun();
   assert.equal(ui.geometry.length, 1);
   assert.ok(ui.calls.every(([, options]) => options === undefined));
@@ -171,7 +169,7 @@ test('refresh restores an explicitly linked final package using GET requests onl
 });
 
 test('refresh immediately renders active intermediate geometry before waiting for final results', async () => {
-  const ui = setup({ states: [state(), state('A8', { status: 'COMPLETED' })], active: [{ run_id: 'run_saved' }, null], search: '?run_id=run_saved' });
+  const ui = setup({ states: [state(), state('A7', { status: 'COMPLETED' })], active: [{ run_id: 'run_saved' }, null], search: '?run_id=run_saved' });
   const observed = [];
   ui.context.setTimeout = callback => { observed.push({ draws: ui.geometry.length, manualDisabled: ui.element('send-staad-btn').disabled }); callback(); };
   await ui.context.restoreSavedAgenticRun();
@@ -188,7 +186,7 @@ test('orphaned saved run remains inspectable without keeping controls locked', a
 });
 
 test('refresh keeps controls locked until a worker releases its completed run', async () => {
-  const final = state('A8', { status: 'COMPLETED' });
+  const final = state('A7', { status: 'COMPLETED' });
   const ui = setup({ states: [final, final], active: [{ run_id: 'run_saved' }, null], search: '?run_id=run_saved' });
   let waiting = false;
   ui.context.setTimeout = callback => { waiting = ui.element('generate-btn').disabled; callback(); };
@@ -207,7 +205,7 @@ test('clean root does not force restoration of a historical failure; saved runs 
 });
 
 test('clean root reconnects to an actual active run', async () => {
-  const ui = setup({ active: [{ run_id: 'run_saved' }, null], states: [state('A8', { status: 'COMPLETED' })] });
+  const ui = setup({ active: [{ run_id: 'run_saved' }, null], states: [state('A7', { status: 'COMPLETED' })] });
   await ui.context.restoreSavedAgenticRun();
   assert.equal(ui.geometry.length, 1);
   assert.ok(ui.urls.at(-1).includes('run_id=run_saved'));
@@ -244,7 +242,7 @@ test('revised geometry clears old STAAD bindings and connection panels before ne
 
 test('reset clears the view without any POST or deleting saved runs', async () => {
   const ui = setup();
-  ui.context.renderAgenticRunState(state('A8', { status: 'COMPLETED', staad_results: staadResult() }));
+  ui.context.renderAgenticRunState(state('A7', { status: 'COMPLETED', staad_results: staadResult() }));
   ui.context.resetRunView();
   assert.equal(ui.context.lastGeneratedResult, null);
   assert.equal(ui.context.staadViewResult, null);
@@ -263,7 +261,7 @@ test('active run locks manual/reset/history actions, and completion releases val
   for (const id of ['generate-btn', 'send-staad-btn', 'send-idea-btn', 'update-tekla-btn', 'new-run-btn', 'load-saved-run-btn']) assert.equal(ui.element(id).disabled, true, id);
   ui.context.resetRunView();
   assert.equal(ui.element('active-run-id').textContent, 'Run: run_saved');
-  ui.context.renderAgenticRunState(state('A8', { status: 'COMPLETED', staad_results: staadResult() }));
+  ui.context.renderAgenticRunState(state('A7', { status: 'COMPLETED', staad_results: staadResult() }));
   for (const id of ['generate-btn', 'send-staad-btn', 'send-idea-btn', 'update-tekla-btn', 'new-run-btn']) assert.equal(ui.element(id).disabled, false, id);
   assert.equal(ui.context.beginManualAction(), true);
   assert.equal(ui.element('agentic-run-btn').disabled, true);
@@ -305,7 +303,7 @@ test('new run keeps the existing request payload, renders polling updates and ig
   await firstPoll;
   assert.equal(ui.geometry.length, 1);
   const latePoll = poll();
-  const final = state('A8', { status: 'COMPLETED', staad_results: staadResult() });
+  const final = state('A7', { status: 'COMPLETED', staad_results: staadResult() });
   resolvePost({ ok: true, json: async () => final });
   await job;
   resolveLatePoll({ ok: true, json: async () => state('A5', { staad_results: staadResult() }) });
@@ -340,7 +338,7 @@ test('server restart clears stale URL run_id and localStorage session even on di
   const storage = { structuralChatSession: 'chat_old', structuralDashboardBootId: 'boot_old' };
   let resetCalls = 0;
   const ui = setup({
-    states: [state('A8', { status: 'COMPLETED' })],
+    states: [state('A7', { status: 'COMPLETED' })],
     search: '?run_id=run_old&chat=chat_old',
     storage,
     active: null,
@@ -361,7 +359,7 @@ test('resetRunView clears saved selection, revision counter, and chat bridge', (
   let resetCalls = 0;
   ui.context.window.structuralChatBridge = { resetChat() { resetCalls += 1; } };
   ui.element('saved-run-select').value = 'run_old';
-  ui.context.renderAgenticRunState(state('A8', { status: 'COMPLETED', staad_results: staadResult() }));
+  ui.context.renderAgenticRunState(state('A7', { status: 'COMPLETED', staad_results: staadResult() }));
   ui.context.resetRunView();
   assert.equal(resetCalls, 1);
   assert.equal(ui.element('saved-run-select').value, '');

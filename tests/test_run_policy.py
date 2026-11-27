@@ -15,7 +15,7 @@ from agents.A1_requirements import run_a1_requirements
 from agents import A4_staad as a4
 from agents import A5_idea_statica as a5
 from agents.A5_idea_statica import A5A_build_json as a5_a
-from agents.A7_reporting import run_a8_reporting, accept_gate3
+from agents.A7_reporting import run_a7_reporting, accept_gate3
 from chatbot.chatbot import ChatRuntime, project_input
 from chatbot.chat_store import ChatStore
 from test_engineering_guards import valid_staad, joint_result
@@ -117,12 +117,12 @@ class RunPolicyTests(unittest.TestCase):
              patch.object(a6, "frame_signature", return_value=None), \
              patch("agents.A3_generate_structure.connection_scope.scope_for_state", return_value={
                  "mode": "reviewed_engineering", "idea_required_groups": [], "standard_detail_groups": []}):
-            a6.run_a6_package_validator(state)
+            a6.run_package_validator(state)
         self.assertFalse(state.validation_report["passed"])
         self.assertIn("0.7", " ".join(state.validation_report["failures"]))
 
     def test_report_records_policy_and_does_not_auto_approve(self):
-        state = run_a8_reporting(WorkflowState(run_id="report", run_policy=RunPolicy(max_member_ratio=0.8).model_dump()))
+        state = run_a7_reporting(WorkflowState(run_id="report", run_policy=RunPolicy(max_member_ratio=0.8).model_dump()))
         self.assertEqual(state.final_report["run_policy"]["max_member_ratio"], 0.8)
         self.assertEqual(state.status, "PAUSED_AT_GATE3")
         self.assertFalse(state.gate3_approved)
@@ -146,27 +146,27 @@ class RunPolicyTests(unittest.TestCase):
              patch.object(a5_a, '_connection_signature', return_value='fixture'), \
              patch('agents.A3_generate_structure.connection_scope.scope_for_state', return_value={
                  'mode': 'reviewed_engineering', 'idea_required_groups': ['first'], 'standard_detail_groups': []}):
-            default = a6.run_a6_package_validator(original.model_copy(deep=True))
+            default = a6.run_package_validator(original.model_copy(deep=True))
             self.assertTrue(default.validation_report['passed'])
             strict = original.model_copy(deep=True)
             strict.run_policy = RunPolicy(max_bolt_utilization_percent=60).model_dump()
-            self.assertFalse(a6.run_a6_package_validator(strict).validation_report['passed'])
+            self.assertFalse(a6.run_package_validator(strict).validation_report['passed'])
             changed = original.model_copy(deep=True)
             changed.run_policy = RunPolicy(max_bolt_utilization_percent=70).model_dump()
-            a6.run_a6_package_validator(changed)
+            a6.run_package_validator(changed)
             self.assertTrue(changed.validation_report['passed'])
             self.assertNotEqual(default.package_hash, changed.package_hash)
             relaxed = original.model_copy(deep=True)
             relaxed.run_policy = RunPolicy(max_bolt_utilization_percent=90).model_dump()
             bolts = next(c for c in relaxed.ideastatica_results['first']['check_summary']['summary'] if c['name'] == 'Bolts')
             bolts['check_value'] = 85.
-            self.assertTrue(a6.run_a6_package_validator(relaxed).validation_report['passed'])
+            self.assertTrue(a6.run_package_validator(relaxed).validation_report['passed'])
             self.assertEqual(relaxed.validation_report['run_policy']['max_bolt_utilization_percent'], 90.)
             default_again = relaxed.model_copy(deep=True)
             default_again.run_policy = RunPolicy().model_dump()
-            self.assertFalse(a6.run_a6_package_validator(default_again).validation_report['passed'])
+            self.assertFalse(a6.run_package_validator(default_again).validation_report['passed'])
             bolts['check_status'] = False
-            self.assertFalse(a6.run_a6_package_validator(relaxed).validation_report['passed'])
+            self.assertFalse(a6.run_package_validator(relaxed).validation_report['passed'])
 
     def test_json_policy_validated(self):
         value = project_input({"grid": {}, "run_policy": {"max_member_ratio": 0.8}})

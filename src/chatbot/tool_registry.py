@@ -52,30 +52,23 @@ def requested_dimensions(message):
     return next(iter(values),None)
 
 
-def execution_plan(action, layout_version=2):
+def execution_plan(action):
     """Known operation dependencies. These names refer to existing worker stages."""
     plans = {
         "configuration_only": [],
-        "validate_selected_connections": ["A5:selected", "A6:package"],
-        "publish_selected_connections": ["A5:selected", "A6:package", "A7:selected", "A8:report"],
-        "run_complete_workflow": ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8:manual_approval"],
+        "validate_selected_connections": ["A5:selected", "A5c:package"],
+        "publish_selected_connections": ["A5:selected", "A5c:package", "A6:selected", "A7:report"],
+        "run_complete_workflow": ["A1", "A2", "A3", "A4", "A5", "A5c:package", "A6", "A7:manual_approval"],
         "preview_structure": ["A1", "A3:unverified_preview"],
         "generate_structure": ["A1", "A2", "A3"],
         "analyze_frame": ["A1", "A2", "A3", "A4"],
         "design_connections": ["A1", "A2", "A3", "A4", "A5"],
-        "validate_package": ["A1", "A2", "A3", "A4", "A5", "A6"],
-        "publish_to_tekla": ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8:manual_approval"],
+        "validate_package": ["A1", "A2", "A3", "A4", "A5", "A5c:package"],
+        "publish_to_tekla": ["A1", "A2", "A3", "A4", "A5", "A5c:package", "A6", "A7:manual_approval"],
     }
     if action not in plans:
         raise ValueError("Unsupported execution plan.")
-    if layout_version == 1:
-        return plans[action][:]
-    if layout_version != 2:
-        raise ValueError("Unsupported workflow layout version.")
-    mapping = {"A6": "A5c", "A7": "A6", "A8": "A7"}
-    return [mapping.get(step.partition(":")[0], step.partition(":")[0])
-            + (":" + step.partition(":")[2] if ":" in step else "")
-            for step in plans[action]]
+    return plans[action][:]
 
 
 def configuration_action(message):

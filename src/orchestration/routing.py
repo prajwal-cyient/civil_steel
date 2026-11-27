@@ -44,7 +44,7 @@ def route_after_a5(state: WorkflowState) -> Literal["a5_ideastatica_analyzer", "
     return "__end__"
 
 
-def route_after_a6(state: WorkflowState) -> Literal["a5_ideastatica_analyzer", "a7_tekla_modeler", "__end__"]:
+def route_after_package_audit(state: WorkflowState) -> Literal["a5_ideastatica_analyzer", "a6_tekla_modeler", "__end__"]:
     if state.status == "FAILED":
         return "__end__"
     status_a6 = state.agent_statuses.get(workflow_stage(state, "package"), {}).get("status", "")
@@ -53,7 +53,7 @@ def route_after_a6(state: WorkflowState) -> Literal["a5_ideastatica_analyzer", "
             return "a5_ideastatica_analyzer"
         return "__end__"
     if status_a6 == "PASSED":
-        return "a7_tekla_modeler"
+        return "a6_tekla_modeler"
     return "__end__"
 
 

@@ -1,7 +1,7 @@
 """
-a8_reporting_acceptance_agent.py
+build_report.py
 
-Agent A8: Report and Accept (Calculation Synthesizer & Human Gate 3).
+Agent A7: Report and Accept (Calculation Synthesizer & Human Gate 3).
 Consolidates the complete design and analysis audit trail.
 Pauses at Gate 3 for the responsible human engineer to review and sign off.
 """
@@ -11,9 +11,9 @@ from typing import Optional
 from orchestration.state import WorkflowState, AgentLogEntry, workflow_stage
 
 
-def run_a8_reporting(state: WorkflowState) -> WorkflowState:
+def run_a7_reporting(state: WorkflowState) -> WorkflowState:
     """
-    Executes Agent A8: Prepares calculation package and pauses for Final Engineer Acceptance.
+    Executes Agent A7: Prepares calculation package and pauses for Final Engineer Acceptance.
     """
     ts = datetime.now().strftime("%H:%M:%S")
     state.current_agent = workflow_stage(state, "report")

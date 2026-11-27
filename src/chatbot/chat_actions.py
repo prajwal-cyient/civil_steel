@@ -1,4 +1,4 @@
-"""Selected chat actions on the existing STA worker; engineering rules stay in A1-A8."""
+"""Selected chat actions on the existing STA worker; engineering rules stay in A1-A7."""
 from orchestration.state import fail_workflow, workflow_stage
 
 
@@ -30,17 +30,17 @@ async def run_chat_action(state, action):
 
     async def audit():
         nonlocal state
-        if not await checked("a6"):
+        if not await checked("package_audit"):
             return False
         while state.agent_statuses.get(workflow_stage(state, "package"), {}).get("status") == "REVISING":
-            target = flow.route_after_a6(state)
+            target = flow.route_after_package_audit(state)
             if target == "a5_ideastatica_analyzer":
                 if not await joints():
                     return False
             else:
                 state = fail_workflow(state, workflow_stage(state, "package"), "Package recovery is invalid or exhausted; start a new workflow.")
                 return False
-            if not await checked("a6"):
+            if not await checked("package_audit"):
                 return False
         return state.validation_report.get("passed") is True
 
@@ -55,13 +55,13 @@ async def run_chat_action(state, action):
         if not state.change_scope.get('reuse_calculations') and not await checked("a5"):
             return state
         verify_selected_values(state)
-        if not await checked("a6") or not state.validation_report.get("passed"):
+        if not await checked("package_audit") or not state.validation_report.get("passed"):
             return fail_workflow(state, workflow_stage(state, "package"), "Selected change needs broader recovery or failed package validation; no additional groups were changed.")
         verify_selected_values(state)
         if action == "publish_selected_connections":
             from agents.A6_tekla.selected_updates import run_selected_tekla
             state = await flow._run_stage(state, workflow_stage(state, "tekla"), run_selected_tekla)
-            if state.status == "FAILED" or not await checked("a8"):
+            if state.status == "FAILED" or not await checked("a7"):
                 return state
         else:
             state.status = "READY"
@@ -109,7 +109,7 @@ async def run_chat_action(state, action):
                 if not await audit():
                     return state
                 if action == "publish_to_tekla":
-                    if not await checked("a7") or not await checked("a8"):
+                    if not await checked("a6") or not await checked("a7"):
                         return state
                     return state  # Retain the existing human Gate 3 pause.
             else:

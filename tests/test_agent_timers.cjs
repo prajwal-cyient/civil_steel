@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const {test} = require('node:test');
 const code = fs.readFileSync(path.join(__dirname,'../src/static/radiator_support/agent_timers.js'),'utf8');
 function setup(now = 100000) {
-  const elements = new Map(Array.from({length:8},(_,i)=>[`timer-A${i+1}`,{}]));
+  const elements = new Map(Array.from({length:7},(_,i)=>[`timer-A${i+1}`,{}]));
   let tick = null;
   const clock = {now};
   const context = vm.createContext({window:{}, document:{getElementById:id=>elements.get(id)},
@@ -32,11 +32,11 @@ test('refresh, retries and long solves use saved timing rather than page-open ti
   ui.update({A5:{running:false,elapsed_seconds:3661,attempts:2}},{A5:{status:'PASSED'}},'PAUSED_AT_GATE3');
   assert.equal(ui.elements.get('timer-A5').textContent,'61:01');
 });
-test('A8 waiting time, failed stages and reset do not keep a browser clock running',()=>{
+test('A7 waiting time, failed stages and reset do not keep a browser clock running',()=>{
   const ui=setup();
-  ui.update({A8:{running:false,elapsed_seconds:7,attempts:1}},{A8:{status:'AWAITING_APPROVAL'}},'PAUSED_AT_GATE3');
+  ui.update({A7:{running:false,elapsed_seconds:7,attempts:1}},{A7:{status:'AWAITING_APPROVAL'}},'PAUSED_AT_GATE3');
   ui.clock.now+=3600000;ui.tick();
-  assert.equal(ui.elements.get('timer-A8').textContent,'00:07');
+  assert.equal(ui.elements.get('timer-A7').textContent,'00:07');
   ui.update({A5:{running:false,elapsed_seconds:30,attempts:1}},{A5:{status:'FAILED'}},'FAILED');
   assert.equal(ui.elements.get('timer-A5').textContent,'00:30');
   ui.update();

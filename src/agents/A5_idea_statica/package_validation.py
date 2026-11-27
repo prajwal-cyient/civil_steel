@@ -75,9 +75,9 @@ def verify_plate_material_evidence(evidence, policy, iom_file):
 
 
 """
-a6_package_validator_agent.py
+package_validation.py
 
-Agent A6: Validate the Package (Data Integrity Auditor).
+Stage A5c: Validate the Package (Data Integrity Auditor inside A5).
 Cross-checks evidence from A3, A4, and A5.
 Verifies that 100% of joints passed and data is intact before Tekla publication.
 """
@@ -93,9 +93,9 @@ from utils.evidence import frame_signature
 from agents.A5_idea_statica.package_validation import reference_plate_material_policy, verify_plate_material_evidence
 
 
-def run_a6_package_validator(state: WorkflowState, *, agent_id: str = "A6") -> WorkflowState:
+def run_package_validator(state: WorkflowState, *, agent_id: str = "A5c") -> WorkflowState:
     """
-    Executes Agent A6: Audits all calculation evidence and prepares the verified package.
+    Executes A5c: Audits all calculation evidence and prepares the verified package.
     """
     ts = datetime.now().strftime("%H:%M:%S")
     state.current_agent = agent_id

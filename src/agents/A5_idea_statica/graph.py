@@ -30,8 +30,8 @@ async def _api(state: IdeaState) -> IdeaState:
 @substage("A5c")
 async def _evaluate(state: IdeaState) -> IdeaState:
     if state["context"]["complete"]:
-        from agents.A5_idea_statica.package_validation import run_a6_package_validator
-        workflow = run_a6_package_validator(state["workflow"], agent_id="A5c")
+        from agents.A5_idea_statica.package_validation import run_package_validator
+        workflow = run_package_validator(state["workflow"], agent_id="A5c")
         if workflow.validation_report:
             from utils.audit import evaluation
             evaluation(workflow, "Package", workflow.validation_report)

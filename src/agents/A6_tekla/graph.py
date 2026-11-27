@@ -14,26 +14,26 @@ class TeklaState(TypedDict):
 
 @substage("A6a")
 async def _build(state: TeklaState) -> TeklaState:
-    from .A6A_build_json import prepare_a7_tekla
-    return {"workflow": prepare_a7_tekla(state["workflow"])}
+    from .A6A_build_json import prepare_a6_tekla
+    return {"workflow": prepare_a6_tekla(state["workflow"])}
 
 
 @substage("A6b")
 async def _api(state: TeklaState) -> TeklaState:
-    from .A6B_trigger_api import execute_a7_tekla
-    return {"workflow": execute_a7_tekla(state["workflow"])}
+    from .A6B_trigger_api import execute_a6_tekla
+    return {"workflow": execute_a6_tekla(state["workflow"])}
 
 
 @substage("A6c")
 async def _evaluate(state: TeklaState) -> TeklaState:
-    from .A6C_check_publication import evaluate_a7_tekla
-    return {"workflow": evaluate_a7_tekla(state["workflow"])}
+    from .A6C_check_publication import evaluate_a6_tekla
+    return {"workflow": evaluate_a6_tekla(state["workflow"])}
 
 
 @substage("A6d")
 async def _decide(state: TeklaState) -> TeklaState:
-    from .A6D_llm_reasoning import decide_a7_tekla
-    return {"workflow": decide_a7_tekla(state["workflow"])}
+    from .A6D_llm_reasoning import decide_a6_tekla
+    return {"workflow": decide_a6_tekla(state["workflow"])}
 
 
 def build_tekla_graph():

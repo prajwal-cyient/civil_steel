@@ -109,7 +109,7 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(correction['status'], 'VERIFIED')
 
     def test_tekla_retry_preserves_source_and_records_failure_and_action(self):
-        source = WorkflowState(run_id='source', current_agent='A7', status='FAILED',
+        source = WorkflowState(run_id='source', current_agent='A6', status='FAILED',
             error='component readback failed', validation_report={'passed':True}, tekla_results={'errors':['bad component']})
         retry = prepare_publication_retry(source, 'retry')
         action = retry.audit_events[-1]

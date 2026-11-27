@@ -6,7 +6,7 @@ New runs create a directory under `store output run/` in the repository root:
 run_<id>_23_November_2026_17-20-44_IST/
   00_input/                 original_input.json, effective_input.json, run_policy.json
   01_agents/A1/attempt_001/ input.json, output.json, process.json
-  01_agents/A2/ ... A7/     one folder per agent and execution attempt (A8 in legacy runs)
+  01_agents/A2/ ... A7/     one folder per agent and execution attempt
   02_software/STAAD/        results, input and available native files per attempt
   02_software/IDEA_StatiCa/ exact group names, one folder per calculation or reused result
   02_software/Tekla/        publication JSON, verified components and model file copy

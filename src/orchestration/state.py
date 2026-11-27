@@ -5,7 +5,7 @@ Defines the centralized state and data models for the LangGraph agentic workflow
 Every agent reads from and updates this typed WorkflowState.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -31,10 +31,10 @@ class AgentLogEntry(BaseModel):
 
 class WorkflowState(BaseModel):
     """
-    The shared state dictionary passed across all 8 agents in LangGraph.
+    The shared state dictionary for the single A1-A7 workflow.
     """
     run_id: str
-    layout_version: int = 1
+    layout_version: Literal[2] = Field(default=2, frozen=True)
     status: str = "INITIALIZED"  # "RUNNING", "PAUSED_AT_GATE3", "COMPLETED", "FAILED"
     current_agent: str = "A1"
     logs: List[AgentLogEntry] = Field(default_factory=list)
@@ -87,14 +87,14 @@ class WorkflowState(BaseModel):
     max_loop_b: int = 3
     loop_b_history: List[Dict[str, Any]] = Field(default_factory=list)
 
-    # A6 Package Validation & Loop C Recovery
+    # A5c Package Validation & Loop C Recovery (inside A5)
     validation_report: Dict[str, Any] = Field(default_factory=dict)
     loop_c_count: int = 0
     max_loop_c: int = 2
     loop_c_history: List[Dict[str, Any]] = Field(default_factory=list)
     package_hash: str = ""
 
-    # A7 Tekla 3D Detailing Model
+    # A6 Tekla 3D Detailing Model
     tekla_results: Dict[str, Any] = Field(default_factory=dict)
     tekla_request: Dict[str, Any] = Field(default_factory=dict)
     tekla_publication_passed: Optional[bool] = None
@@ -104,7 +104,7 @@ class WorkflowState(BaseModel):
     max_tekla_retries: int = 5
     tekla_retry_history: List[Dict[str, Any]] = Field(default_factory=list)
 
-    # A8 Final Report & Gate 3 Human Acceptance
+    # A7 Final Report & Gate 3 Human Acceptance
     final_report: Dict[str, Any] = Field(default_factory=dict)
     gate3_approved: bool = False
     accepted_by: Optional[str] = None
@@ -132,13 +132,11 @@ def fail_workflow(state: WorkflowState, agent_id: str, message: str) -> Workflow
 
 
 def workflow_stage(state: WorkflowState, role: str) -> str:
-    """Resolve stage IDs without reinterpreting unversioned historical runs."""
+    """Resolve roles in the single supported A1-A7 layout."""
     stages = {
-        "package": ("A6", "A5c"),
-        "tekla": ("A7", "A6"),
-        "report": ("A8", "A7"),
+        "package": "A5c",
+        "tekla": "A6",
+        "report": "A7",
     }
-    if state.layout_version not in (1, 2):
-        raise ValueError(f"Unsupported workflow layout version: {state.layout_version}")
-    return stages[role][state.layout_version - 1]
+    return stages[role]
 

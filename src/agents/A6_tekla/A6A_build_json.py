@@ -19,7 +19,7 @@ def build_tekla_payload(state: WorkflowState) -> dict:
 from copy import deepcopy
 from orchestration.state import workflow_stage
 
-def prepare_a7_tekla(state: WorkflowState) -> WorkflowState:
+def prepare_a6_tekla(state: WorkflowState) -> WorkflowState:
     from orchestration.state import fail_workflow
     # local build_tekla_payload
     state.current_agent = workflow_stage(state, "tekla")
@@ -33,8 +33,8 @@ def prepare_a7_tekla(state: WorkflowState) -> WorkflowState:
     if not state.validation_report.get("passed"):
         return fail_workflow(state, workflow_stage(state, "tekla"), "A passing package validation is required before Tekla publication.")
     if state.tekla_retry_count:
-        from agents.A5_idea_statica.package_validation import run_a6_package_validator
-        state = run_a6_package_validator(state, agent_id="A5c")
+        from agents.A5_idea_statica.package_validation import run_package_validator
+        state = run_package_validator(state, agent_id="A5c")
         if (state.status == "FAILED" or not state.validation_report.get("passed")
                 or state.agent_statuses.get("A5c", {}).get("status") != "PASSED"):
             return fail_workflow(state, workflow_stage(state, "tekla"), "Calculation evidence failed revalidation before Tekla retry.")

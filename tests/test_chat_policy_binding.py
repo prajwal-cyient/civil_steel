@@ -84,7 +84,7 @@ class ChatPolicyBindingTests(unittest.IsolatedAsyncioTestCase):
         model = ControlledModel(call('update_project_inputs', {'grid_updates':{'n_long_bays':10}}),
             call('set_next_run_policy', {'run_policy':{'max_bolt_utilization_percent':90.}}, 'policy'),
             call('update_project_inputs', {'grid_updates':{'n_long_bays':10}}, 'preview'))
-        turn = await self.respond(model, 'Change to a 10x5 bay frame and run A1-A8. '
+        turn = await self.respond(model, 'Change to a 10x5 bay frame and run A1-A7. '
             'Use maximum bolt utilization 90% for this run only. Show the approval preview first.', live=True)
         self.assertEqual(turn['outcome'], 'CHANGE_APPROVAL_REQUIRED')
         self.assertTrue(any(e['type']=='tool_error' and e.get('tool')=='update_project_inputs' for e in turn['events']))
@@ -94,14 +94,14 @@ class ChatPolicyBindingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan['candidate']['grid']['n_long_bays'], 10)
         self.assertEqual(self.store.session(self.session['id'])['project_input']['grid']['n_long_bays'], 8)
         # Approval is deterministic and loads a fresh session, without ephemeral
-        # request fields. The queued policy must still reach the actual A1/A8.
+        # request fields. The queued policy must still reach the actual A1/A7.
         from chatbot.chatbot import ChatRuntime
         from orchestration.state import WorkflowState
         from agents.A1_requirements import run_a1_requirements
-        from agents.A7_reporting import run_a8_reporting
+        from agents.A7_reporting import run_a7_reporting
         async def execute(data, run_id, *, chat_parameter_rerun=False):
             self.assertTrue(chat_parameter_rerun)
-            state = run_a8_reporting(run_a1_requirements(WorkflowState(run_id=run_id, raw_input=data)))
+            state = run_a7_reporting(run_a1_requirements(WorkflowState(run_id=run_id, raw_input=data)))
             self.workflows.save_state(state)
             return state
         controller = SimpleNamespace(run_id=None, execute=AsyncMock(side_effect=execute))

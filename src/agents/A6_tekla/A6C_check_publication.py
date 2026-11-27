@@ -118,7 +118,7 @@ from orchestration.state import WorkflowState, workflow_stage
 from . import A6A_build_json
 
 
-def evaluate_a7_tekla(state: WorkflowState) -> WorkflowState:
+def evaluate_a6_tekla(state: WorkflowState) -> WorkflowState:
     from orchestration.state import fail_workflow
     # local grade_tekla_publication
     try:

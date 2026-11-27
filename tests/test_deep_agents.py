@@ -101,9 +101,9 @@ class DeepAgentTests(unittest.TestCase):
         with patch.dict(os.environ, {"PLANT_DEEP_AGENTS_ENABLED": "true"}), \
              patch.object(orchestrator, "_sync_state"), \
              patch.object(orchestrator, "guarded"), \
-             patch.object(orchestrator, "run_a6_package_validator", side_effect=audit), \
+             patch.object(orchestrator, "run_package_validator", side_effect=audit), \
              patch.object(deep_runtime, "_build_model", return_value=StageModel()):
-            result = asyncio.run(orchestrator.node_a6(state))
+            result = asyncio.run(orchestrator.node_package_audit(state))
 
         self.assertEqual(calls, ["A5c"])
         self.assertEqual(result.agent_statuses["A5c"]["status"], "PASSED")
@@ -157,19 +157,19 @@ class DeepAgentTests(unittest.TestCase):
         with patch.dict(os.environ, {"PLANT_WORKFLOW_MODE": ""}):
             self.assertEqual(workflow_mode(), "poc2_automation")
 
-    def test_real_sdk_all_eight_stages_preserve_three_recovery_loops_and_gate3(self):
+    def test_real_sdk_all_seven_stages_preserve_three_recovery_loops_and_gate3(self):
         seen = []
         counts = {}
         def operation(agent):
             def run(state):
                 seen.append(agent);counts[agent] = counts.get(agent, 0) + 1
-                status_agent = "A6" if agent == "A7" and state.layout_version == 2 else agent
+                status_agent = agent
                 state.agent_statuses[status_agent] = {"status": "PASSED"}
                 if agent == "A4" and counts[agent] == 1:
                     state.loop_a_count += 1;state.agent_statuses[agent]["status"] = "REVISING"
                 if agent == "A5" and counts[agent] == 1:
                     state.loop_b_count["controlled"] = 1;state.agent_statuses[agent]["status"] = "REVISING"
-                if agent == "A6":
+                if agent == "A5c":
                     if counts[agent] == 1:
                         state.loop_c_count += 1;state.agent_statuses[agent]["status"] = "REVISING"
                         state.validation_report = {"recovery_target": "a5_ideastatica_analyzer"}
@@ -177,20 +177,20 @@ class DeepAgentTests(unittest.TestCase):
                 return state
             return run
         names = ["run_a1_requirements", "run_a2_readiness", "run_a3_staged", "run_a4_staged",
-                 "run_a5_staged", "run_a6_package_validator", "run_a7_staged"]
+                 "run_a5_staged", "run_package_validator", "run_a6_staged"]
         with ExitStack() as stack:
             stack.enter_context(patch.dict(os.environ, {"PLANT_DEEP_AGENTS_ENABLED": "true", "PLANT_DEEP_AGENT_MODEL_CALL_LIMIT": "64"}))
             stack.enter_context(patch.object(orchestrator, "_sync_state"))
             stack.enter_context(patch.object(deep_runtime, "_build_model", side_effect=StageModel))
-            for i, name in enumerate(names, 1):
-                stack.enter_context(patch.object(orchestrator, name, side_effect=operation(f"A{i}")))
+            for agent, name in zip(["A1", "A2", "A3", "A4", "A5", "A5c", "A6"], names):
+                stack.enter_context(patch.object(orchestrator, name, side_effect=operation(agent)))
             async def idea_graph(state, *, audit_package):
                 self.assertTrue(audit_package)
                 state = await orchestrator.run_a5_staged(state)
                 if state.agent_statuses["A5"]["status"] != "PASSED":
                     return state
-                state = orchestrator.run_a6_package_validator(state)
-                audit = state.agent_statuses.pop("A6")
+                state = orchestrator.run_package_validator(state)
+                audit = state.agent_statuses["A5c"]
                 state.agent_statuses["A5c"] = audit
                 if audit["status"] == "REVISING":
                     state.agent_statuses["A5"] = {"status": "REVISING"}
@@ -202,7 +202,7 @@ class DeepAgentTests(unittest.TestCase):
         self.assertTrue(all(e["status"] == "VERIFIED" and e["tool_calls"] == 1 for e in result.deep_agent_events))
         self.assertEqual(counts["A3"], 2)
         self.assertEqual(counts["A5"], 3)
-        self.assertEqual(counts["A6"], 2)
+        self.assertEqual(counts["A5c"], 2)
         self.assertEqual(result.agent_statuses["A7"]["status"], "AWAITING_APPROVAL")
         self.assertFalse(result.gate3_approved)
 

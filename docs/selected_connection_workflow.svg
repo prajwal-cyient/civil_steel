@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1460 850" role="img" aria-label="Selected-connection changes with scope, approval, validation and optional publication">
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="#526780"/></marker></defs>
+<style>text{font-family:Segoe UI,Arial,sans-serif;fill:#18304b} .edge{fill:none;stroke:#526780;stroke-width:2;marker-end:url(#arrow)} .note{font-size:15px} .label{font-size:19px;font-weight:600}</style>
+<rect width="1460" height="850" fill="#f8fafc"/>
+<rect x="40" y="40" width="350" height="125" rx="12" fill="#fce8f2" stroke="#8ba3bc"/>
+<text x="215.0" y="69" text-anchor="middle" class="label">Propose selected joint changes</text>
+<text x="215.0" y="97" text-anchor="middle" class="note">Read existing values / exact group scope</text>
+<text x="215.0" y="121" text-anchor="middle" class="note">Preview and template fingerprints</text>
+<text x="215.0" y="145" text-anchor="middle" class="note">Reject → no edits applied</text>
+<rect x="540" y="40" width="370" height="125" rx="12" fill="#e8f2ff" stroke="#8ba3bc"/>
+<text x="725.0" y="69" text-anchor="middle" class="label">User approves / validate proposal</text>
+<text x="725.0" y="97" text-anchor="middle" class="note">Current passing STAAD evidence</text>
+<text x="725.0" y="121" text-anchor="middle" class="note">Unchanged templates / same desktop lock</text>
+<text x="725.0" y="145" text-anchor="middle" class="note">Invalid / stale evidence → FAILED</text>
+<polyline points="390,100 540,100" class="edge"/>
+<rect x="430.4" y="73" width="69.19999999999999" height="23" fill="#f8fafc"/>
+<text x="465" y="90" text-anchor="middle" class="note">Approve</text>
+<rect x="540" y="235" width="370" height="125" rx="12" fill="#e8f2ff" stroke="#8ba3bc"/>
+<text x="725.0" y="264" text-anchor="middle" class="label">A5 selected calculations</text>
+<text x="725.0" y="292" text-anchor="middle" class="note">Reuse only eligible approved calculations</text>
+<text x="725.0" y="316" text-anchor="middle" class="note">Otherwise calculate / grade selected groups</text>
+<text x="725.0" y="340" text-anchor="middle" class="note">Verify exact selected values</text>
+<polyline points="725,165 725,235" class="edge"/>
+<rect x="540" y="430" width="370" height="125" rx="12" fill="#e8f2ff" stroke="#8ba3bc"/>
+<text x="725.0" y="459" text-anchor="middle" class="label">Verify package and approved scope</text>
+<text x="725.0" y="487" text-anchor="middle" class="note">Failure / broader recovery → stop</text>
+<text x="725.0" y="511" text-anchor="middle" class="note">Full-model rebuild is not substituted</text>
+<text x="725.0" y="535" text-anchor="middle" class="note">Publish only when explicitly requested</text>
+<polyline points="725,360 725,430" class="edge"/>
+<rect x="40" y="650" width="350" height="100" rx="12" fill="#e3f5e7" stroke="#8ba3bc"/>
+<text x="215.0" y="679" text-anchor="middle" class="label">READY</text>
+<text x="215.0" y="707" text-anchor="middle" class="note">Calculations + package validated</text>
+<text x="215.0" y="731" text-anchor="middle" class="note">Tekla publication not requested</text>
+<polyline points="540,495 215,495 215,650" class="edge"/>
+<rect x="233.8" y="467" width="122.39999999999999" height="23" fill="#f8fafc"/>
+<text x="295" y="484" text-anchor="middle" class="note">No publication</text>
+<rect x="1010" y="430" width="390" height="125" rx="12" fill="#eee7ff" stroke="#8ba3bc"/>
+<text x="1205.0" y="459" text-anchor="middle" class="label">Scoped Tekla connection updates</text>
+<text x="1205.0" y="487" text-anchor="middle" class="note">Read back selected connection changes</text>
+<text x="1205.0" y="511" text-anchor="middle" class="note">Failure → stop / inspect</text>
+<text x="1205.0" y="535" text-anchor="middle" class="note">No full-model rebuild</text>
+<polyline points="910,490 1010,490" class="edge"/>
+<rect x="925.4" y="463" width="69.19999999999999" height="23" fill="#f8fafc"/>
+<text x="960" y="480" text-anchor="middle" class="note">Publish</text>
+<rect x="1010" y="650" width="390" height="100" rx="12" fill="#fff3cc" stroke="#8ba3bc"/>
+<text x="1205.0" y="679" text-anchor="middle" class="label">A7 report / Human Gate 3</text>
+<text x="1205.0" y="707" text-anchor="middle" class="note">Wait for engineer acceptance</text>
+<text x="1205.0" y="731" text-anchor="middle" class="note">Accepted → COMPLETED</text>
+<polyline points="1205,555 1205,650" class="edge"/>
+</svg>

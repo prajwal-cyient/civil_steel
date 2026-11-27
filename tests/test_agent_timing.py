@@ -41,11 +41,11 @@ class AgentTimingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(flow,'deep_agents_enabled',return_value=True),patch.object(flow,'_sync_state'), \
              patch('services.deep_agents_runtime.run_deep_stage',new=AsyncMock(side_effect=engine)), \
              patch('utils.agent_timing.time.monotonic',side_effect=[10.,45.]):
-            await flow._run_stage(state,'A8',lambda s:s)
-        self.assertEqual(state.agent_timings['A8']['elapsed_seconds'],35.)
-        self.assertFalse(state.agent_timings['A8']['running'])
+            await flow._run_stage(state,'A7',lambda s:s)
+        self.assertEqual(state.agent_timings['A7']['elapsed_seconds'],35.)
+        self.assertFalse(state.agent_timings['A7']['running'])
         stop_running_timings(state)
-        self.assertEqual(state.agent_timings['A8']['elapsed_seconds'],35.)
+        self.assertEqual(state.agent_timings['A7']['elapsed_seconds'],35.)
         self.assertEqual(state.status,'PAUSED_AT_GATE3')
         self.assertFalse(state.gate3_approved)
 

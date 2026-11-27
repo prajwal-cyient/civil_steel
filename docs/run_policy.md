@@ -49,11 +49,11 @@ default rules to clear it (`set_next_run_policy` with `{}`).
 - Geometry, loads and bracing belong to that run. After completion, failure or
   cancellation, chat reloads `src/radiator_support/frame_specs.json` as the inputs
   for the next run. The master file is read only and is never rewritten by chat.
-  A8 waiting for manual sign-off and intermediate stage continuations retain
+  A7 waiting for manual sign-off and intermediate stage continuations retain
   their custom inputs. Saved run JSON and exported inputs keep the actual custom
   values even after chat resets. An unchanged old-run form snapshot is ignored
   after reset; explicitly edited new inputs can still be supplied.
-- `run_policy` is saved in workflow state, the validated package and A8's report.
+- `run_policy` is saved in workflow state, the validated package and A7's report.
   New IDEA summary JSON also records it. The package hash includes the policy.
 - A4 evaluates drift from actual millimetre displacements using the selected
   denominator; it still verifies the native H/200 evidence for consistency.

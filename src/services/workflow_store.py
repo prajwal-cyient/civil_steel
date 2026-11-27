@@ -157,6 +157,10 @@ class SqliteWorkflowStore:
                 ).fetchone()
                 if row:
                     data = json.loads(row["state_json"])
+                    # Historical records stay on disk, but their stage IDs must
+                    # never be reinterpreted or resumed in the A1-A7 workflow.
+                    if data.get("layout_version") != 2:
+                        return None
                     state = WorkflowState(**data)
                     self._cache[run_id] = state
                     return state
@@ -169,6 +173,7 @@ class SqliteWorkflowStore:
                 rows = conn.execute("""
                     SELECT run_id, status, current_agent, created_at, updated_at
                     FROM workflow_runs
+                    WHERE json_extract(state_json, '$.layout_version') = 2
                     ORDER BY updated_at DESC
                     LIMIT ?
                 """, (limit,)).fetchall()

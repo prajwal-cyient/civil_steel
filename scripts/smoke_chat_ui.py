@@ -16,7 +16,7 @@ def main(base, browser_channel=None):
     approval_waiting, approval_recorded, approvals = [False], [False], []
     native_fixture = [None]
     native_run = {
-        'run_id': 'run_abcdef12', 'status': 'RUNNING', 'current_agent': 'A3', 'design_generation': 1,
+        'run_id': 'run_abcdef12', 'layout_version': 2, 'status': 'RUNNING', 'current_agent': 'A3', 'design_generation': 1,
         'raw_input': {}, 'grid_config': {'col_height_mm': 5000}, 'readiness': {},
         'agent_statuses': {'A1': {'status': 'PASSED'}, 'A2': {'status': 'PASSED'}, 'A3': {'status': 'PASSED'}},
         'frame_candidate': {'members': [{'name': 'column-0-0', 'type': 'column', 'profile': 'CFRHS120X120X5',
@@ -76,7 +76,7 @@ def main(base, browser_channel=None):
             if path.startswith('turns/'):
                 session, turn = next((s,t) for s in sessions.values() for t in s['turns'] if t['id'] == path.split('/')[1])
                 if turn['message'] == 'Run agentic workflow' and approval_waiting[0]:
-                    text = 'A1–A8 finished processing. Waiting for manual engineer approval.'
+                    text = 'A1–A7 finished processing. Waiting for manual engineer approval.'
                     if approval_recorded[0]:
                         text += '\n\nDesign accepted and signed off. This run request is completed; continue in the same conversation.'
                     turn.update(status='COMPLETED' if approval_recorded[0] else 'AWAITING_APPROVAL', assistant=text)
@@ -219,7 +219,7 @@ def main(base, browser_channel=None):
 
         # The next candidate completes between polls while the LLM is still busy.
         native_run['agent_statuses']['A5'] = {'status':'PASSED'}
-        advance_candidate('run_abcdef15', 'A6', active=False)
+        advance_candidate('run_abcdef15', 'A5c', active=False)
         page.wait_for_function("document.getElementById('active-run-id').textContent.includes('run_abcdef15')")
         assert page.locator('#generate-btn').is_disabled(), 'Pending chat retains ownership between actions'
         running[0] = False
@@ -240,10 +240,10 @@ def main(base, browser_channel=None):
         native_run['agent_statuses'].update(A3={'status':'PASSED'}, A4={'status':'PASSED'}, A5={'status':'RUNNING'})
         page.wait_for_function("document.getElementById('step-A5').classList.contains('running')")
         assert page.locator('#staad-results-panel').is_visible()
-        native_run.update(status='PAUSED_AT_GATE3', current_agent='A8',
+        native_run.update(status='PAUSED_AT_GATE3', current_agent='A7',
             final_report={'summary':{'staad_max_stress_ratio':0.2,'package_integrity_hash':'fixture'}})
-        native_run['agent_statuses'].update(A5={'status':'PASSED'}, A6={'status':'PASSED'},
-            A7={'status':'PASSED'}, A8={'status':'AWAITING_APPROVAL'})
+        native_run['agent_statuses'].update(A5={'status':'PASSED'}, A5c={'status':'PASSED'},
+            A6={'status':'PASSED'}, A7={'status':'AWAITING_APPROVAL'})
         native_fixture[0] = None
         button_request[0].fulfill(json=native_run)
         page.wait_for_function("!document.getElementById('generate-btn').disabled")
@@ -259,10 +259,10 @@ def main(base, browser_channel=None):
         page.get_by_role('button', name='Send', exact=True).click()
         page.wait_for_function("document.getElementById('active-run-id').textContent.includes('run_abcdef17')")
         full_session = submissions[-1]['session_id']
-        for agent in ('A3','A4','A5','A6','A7'):
+        for agent in ('A3','A4','A5','A5c','A6'):
             native_run['agent_statuses'][agent] = {'status':'PASSED'}
-        native_run['agent_statuses']['A8'] = {'status':'AWAITING_APPROVAL'}
-        native_run.update(status='PAUSED_AT_GATE3',current_agent='A8',gate3_approved=False)
+        native_run['agent_statuses']['A7'] = {'status':'AWAITING_APPROVAL'}
+        native_run.update(status='PAUSED_AT_GATE3',current_agent='A7',gate3_approved=False)
         native_runs[native_run['run_id']] = json.loads(json.dumps(native_run))
         native_fixture[0] = None; running[0] = False; approval_waiting[0] = True
         page.wait_for_function("document.querySelector('.sc-progress').textContent.includes('Waiting for engineer approval')")
@@ -287,7 +287,7 @@ def main(base, browser_channel=None):
             assert route.request.method == 'POST'
             approvals.append(route.request.post_data_json)
             native_run.update(status='COMPLETED',gate3_approved=True,accepted_by='Lead Structural Engineer')
-            native_run['agent_statuses']['A8'] = {'status':'PASSED'}
+            native_run['agent_statuses']['A7'] = {'status':'PASSED'}
             native_runs[native_run['run_id']] = json.loads(json.dumps(native_run))
             approval_recorded[0] = True
             route.fulfill(json=native_run)
@@ -297,7 +297,7 @@ def main(base, browser_channel=None):
         page.wait_for_function("!document.querySelector('#structural-chat button[type=submit]').disabled")
         assert len(approvals) == 1
         assert 'Design accepted and signed off' in page.locator('.sc-history').inner_text()
-        assert page.locator('#step-A8').evaluate("node=>node.classList.contains('passed')")
+        assert page.locator('#step-A7').evaluate("node=>node.classList.contains('passed')")
         page.get_by_role('textbox', name='Chat message').fill('What is the latest result?')
         page.get_by_role('button', name='Send', exact=True).click()
         page.wait_for_function("document.querySelectorAll('#structural-chat .sc-message.user').length===2")

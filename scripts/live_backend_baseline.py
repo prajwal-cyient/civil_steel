@@ -53,7 +53,7 @@ def main():
     root = ROOT / "output_validation/backend_loop_test"
     folder = root / f"baseline_{uuid.uuid4().hex[:6]}"
     folder.mkdir()
-    report = {"kind":"REAL backend HTTP A1-A8, native STAAD/IDEA/Tekla; no solver mocks",
+    report = {"kind":"REAL backend HTTP A1-A7, native STAAD/IDEA/Tekla; no solver mocks",
               "source_input":"run_5830ed43", "artifact_folder":str(folder)}
     def save():
         (root / "baseline_report.json").write_text(json.dumps(report,indent=2))

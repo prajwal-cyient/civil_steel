@@ -47,6 +47,8 @@ flowchart LR
 | Optional LLM | Conversational tool selection, bounded Deep Agents review and supported correction advice. |
 | Storage | Saved run/chat state, logs, agent timings and per-run evidence archives. |
 
+Detailed workflow: [offline visual diagram](docs/workflow_diagram.html), [editable Mermaid and source map](docs/workflow_diagram.md), and [verification scope](docs/workflow_diagram_validation.md).
+
 ## Installation
 
 ### Prerequisites
@@ -158,6 +160,8 @@ Forced server termination is not the normal way to cancel native calculations.
 
 ### Execution switches
 
+Deep Agents and LLM access default to `true` in both the runtime and `.env.example`. A fresh clone requires a configured model and valid credentials to execute engineering stages. Set `PLANT_DEEP_AGENTS_ENABLED=false` to use direct stage execution; also set `PLANT_LLM_ENABLED=false` to disable correction-advisor model calls. Chat has its own switch. Existing explicit environment settings take precedence over the defaults.
+
 | Setting | `false` | `true` |
 |---|---|---|
 | `PLANT_CHAT_ENABLED` | Chat disabled; dashboard/API available. | Conversational tools enabled when credentials are configured. |
@@ -177,7 +181,7 @@ PLANT_CHAT_ENABLED=true
 
 Set `PLANT_CHAT_ENABLED=false` too if no conversational model calls are wanted. Chat's model is independent of the stage/advisor switches.
 
-**Deep Agents:**
+**Deep Agents (default):**
 
 ```env
 PLANT_WORKFLOW_MODE=poc2_automation
@@ -256,7 +260,7 @@ flowchart LR
 
 - Server workers and the manual generation/STAAD/IDEA/Tekla endpoints share a nonblocking, cross-process desktop lock in the current user's temporary directory. A conflicting manual request returns HTTP 409; a conflicting worker is recorded as failed before starting the workflow.
 - The lock is cooperative: independently launched CLI commands, other applications, and older server processes that have not reloaded this code do not participate. Do not run them against the same desktop models concurrently.
-- A3 runs geometry evaluation and generation in an A3a/A3b LangGraph subgraph. A4, IDEA and Tekla use a–d subgraphs; A5c also runs the complete package audit after the required connection groups. New runs use layout version 2 (A6 Tekla, A7 report); unversioned historical A1–A8 runs retain their original meanings.
+- A3 runs geometry evaluation and generation in an A3a/A3b LangGraph subgraph. A4, IDEA and Tekla use a–d subgraphs; A5c also runs the complete package audit after the required connection groups. The only supported layout is version 2: A6 Tekla and A7 reporting. Historical records from other layouts remain on disk but are excluded from loading and the run list; start a new run for this workflow.
 - Tekla retries at most five times only for a verified connection failure before model changes, re-auditing evidence before each retry. A partial or uncertain publication stops for inspection; it is not automatically retried.
 - Corrections need verified mappings and exposed parameters. Unsupported localization stops the run instead of guessing changes to several details.
 - Failed native checks are never replaced with simulated passes. Unchanged signature-matched IDEA evidence may be reused and is rechecked.
@@ -427,7 +431,7 @@ store output run/
     |   +-- run_policy.json
     +-- 01_agents/
     |   +-- A1/attempt_001/{input.json, output.json, process.json}
-    |   +-- A2/ ... A7/ (legacy runs may contain A8/)
+    |   +-- A2/ ... A7/
     |   +-- A5/attempt_002/             # when retried
     +-- 02_software/
     |   +-- STAAD/attempt_001/

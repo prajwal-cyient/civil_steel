@@ -14,7 +14,7 @@ load_environment()
 from orchestration.state import WorkflowState
 from services.workflow_store import SqliteWorkflowStore
 import services.workflow_store as store_module
-from agents.A5_idea_statica.package_validation import run_a6_package_validator
+from agents.A5_idea_statica.package_validation import run_package_validator
 from agents.A5_idea_statica import run_a5_ideastatica_analyzer, _connection_payload
 
 
@@ -38,7 +38,7 @@ def main():
             "source_run":source.run_id,"damaged_family":group,"removed_category":"Welds",
             "cached_pass_initially_retained":state.joint_grader_results[group].passed,
             "no_load_geometry_or_limit_change":True}
-    state=run_a6_package_validator(state)
+    state=run_package_validator(state)
     report["feedback"]=deepcopy(state.validation_report)
     report["a6_detected_missing_check"]=(not state.validation_report.get("passed") and
         state.validation_report.get("recovery_target")=="a5_ideastatica_analyzer")
@@ -49,9 +49,9 @@ def main():
     report["restored_weld_check"]=any("weld" in row["name"].lower() for row in
         state.ideastatica_results[group]["check_summary"]["summary"])
     report["other_families_reused_unchanged"]={key:state.ideastatica_results[key]==value for key,value in intact.items() if key!=group}
-    state=run_a6_package_validator(state)
+    state=run_package_validator(state)
     report["regraded_package"]=state.validation_report
-    report["final_code_revalidation"]={"status":state.agent_statuses.get("A6"),"error":state.error}
+    report["final_code_revalidation"]={"status":state.agent_statuses.get("A5c"),"error":state.error}
     report["outcome"]="PASS" if (report["a6_detected_missing_check"] and report["restored_weld_check"]
         and all(report["other_families_reused_unchanged"].values()) and state.validation_report.get("passed") and state.status!="FAILED") else "FAIL"
     (root / "package_recovery_report.json").write_text(json.dumps(report,indent=2))

@@ -24,9 +24,9 @@ from agents.A3_generate_structure import run_a3_staged
 from agents.A4_staad import run_a4_staged
 from agents.A5_idea_statica import run_a5_staged
 from agents.A5_idea_statica.graph import run_idea_graph
-from agents.A5_idea_statica.package_validation import run_a6_package_validator
-from agents.A6_tekla import run_a7_staged
-from agents.A7_reporting import run_a8_reporting
+from agents.A5_idea_statica.package_validation import run_package_validator
+from agents.A6_tekla import run_a6_staged
+from agents.A7_reporting import run_a7_reporting
 
 
 # ─── LangGraph Node Wrappers ───────────────────────────────────────────────────
@@ -111,10 +111,10 @@ async def node_a5_full(state: WorkflowState) -> WorkflowState:
     return await _run_stage(state, "A5", design_and_audit)
 
 
-async def node_a6(state: WorkflowState) -> WorkflowState:
+async def node_package_audit(state: WorkflowState) -> WorkflowState:
     def audit_package(candidate):
         agent_id = workflow_stage(candidate, "package")
-        result = run_a6_package_validator(candidate, agent_id=agent_id)
+        result = run_package_validator(candidate, agent_id=agent_id)
         if (result.status != "FAILED"
                 and result.agent_statuses.get(agent_id, {}).get("status") == "REVISING"
                 and (result.loop_c_count > result.max_loop_c
@@ -124,12 +124,12 @@ async def node_a6(state: WorkflowState) -> WorkflowState:
     return await _run_stage(state, workflow_stage(state, "package"), audit_package)
 
 
+async def node_a6(state: WorkflowState) -> WorkflowState:
+    return await _run_stage(state, workflow_stage(state, "tekla"), run_a6_staged)
+
+
 async def node_a7(state: WorkflowState) -> WorkflowState:
-    return await _run_stage(state, workflow_stage(state, "tekla"), run_a7_staged)
-
-
-async def node_a8(state: WorkflowState) -> WorkflowState:
-    return await _run_stage(state, workflow_stage(state, "report"), run_a8_reporting)
+    return await _run_stage(state, workflow_stage(state, "report"), run_a7_reporting)
 
 
 async def node_gate3(state: WorkflowState) -> WorkflowState:
@@ -145,7 +145,7 @@ async def node_gate3(state: WorkflowState) -> WorkflowState:
 
 # ─── Conditional Routing Edges (Loop A & Loop B) ───────────────────────────────
 
-from orchestration.routing import route_after_a4, route_after_a5, route_after_a6
+from orchestration.routing import route_after_a4, route_after_a5, route_after_package_audit
 
 # ─── Graph Construction ────────────────────────────────────────────────────────
 
@@ -161,8 +161,8 @@ def build_workflow_graph(entry_stage: Literal["a1_requirements", "a2_readiness"]
     graph.add_node("a3_frame_generator", node_a3)
     graph.add_node("a4_staad_analyzer", node_a4)
     graph.add_node("a5_ideastatica_analyzer", node_a5_full)
-    graph.add_node("a6_tekla_modeler", node_a7)
-    graph.add_node("a7_reporting", node_a8)
+    graph.add_node("a6_tekla_modeler", node_a6)
+    graph.add_node("a7_reporting", node_a7)
     graph.add_node("gate3_human_review", node_gate3)
 
     # Standard transitions

@@ -484,7 +484,7 @@ def create_app():
 
         return result
 
-    # Mount the 8-Agent Autonomous Design Workflow Router
+    # Mount the 7-Agent Autonomous Design Workflow Router
     try:
         from orchestration.dashboard_router import router as agentic_router
         app.include_router(agentic_router)

@@ -34,7 +34,7 @@ def build_report():
     recovery_summary=read(ART / "package_recovery_report.json") or {}
     regression_summary=read(ART / "regression-cases.json") or []
     item("Original failing input, new complete native backend run: "+str(baseline_summary.get("run_id"))+" / "+str(baseline_summary.get("status")))
-    item("A8 engineer sign-off is intentionally pending; A1-A7 passing does not constitute engineer acceptance.")
+    item("A7 engineer sign-off is intentionally pending; A1-A6 passing does not constitute engineer acceptance.")
     item("Native Loop A: failed frame -> four localized column revisions -> fresh passing STAAD solve; see section 4.")
     item("Native negative frame tests: retry exhausted and mixed passing/failing columns -> explicit failure, no unsafe correction.")
     item("Native Loop C: missing check detected despite cached PASS -> only affected IDEA family recalculated -> package revalidated: "+str(recovery_summary.get("outcome")))
@@ -59,7 +59,7 @@ def build_report():
     item("Fix: ambiguous multi-parameter automatic changes are blocked. Only a unique exposed candidate or explicit localized keys may change.")
     item("Weld localization uses actual failed solver weld IDs and reversible exported-geometry probes in a disposable IDEA project.")
     item("The probes must restore expressions and geometry. A parameter touching passing welds or unrelated geometry is rejected.")
-    item("A6 blocks publication if an IDEA correction has no validated Tekla attribute mapping; a solved analytical change may not be silently omitted.")
+    item("A5c blocks publication if an IDEA correction has no validated Tekla attribute mapping; a solved analytical change may not be silently omitted.")
     item("Supported live templates must return Analysis, Plates, Local deformation, Bolts and Welds checks; missing/skipped families are rejected.")
     item("Cached IDEA PASS records are rechecked for full coverage and source validity before reuse, allowing Loop C to repair incomplete evidence.")
     item("The existing retry limits, numeric ladders, grades, loads and code-design settings remain unchanged.")
@@ -171,15 +171,15 @@ def build_report():
     item("Legacy archive note: the original 4x timeout JSON was recovered verbatim from report_before_idea_followup.txt after a shared latest-result copy had captured a later 3.2x case.")
     item("Retest QA compares the actual old/new load effects and unchanged template hash. Future connection probes use unique run artifact folders.")
     item("The earlier shared connection_attempt_N files can be overwritten between cases; archived embedded summary JSON remains the record of those earlier results.")
-    section("6. FULL A1-A8 BACKEND PIPELINE / REGRESSION OF THE USER INPUT")
+    section("6. FULL A1-A7 BACKEND PIPELINE / REGRESSION OF THE USER INPUT")
     baseline=read(ART / "baseline_report.json")
     item(json.dumps(baseline,indent=2) if baseline else "PENDING: complete new pipeline result not yet captured.")
     if baseline and baseline.get("status"):
         statuses=baseline.get("agent_statuses",{})
-        passed=all(statuses.get(f"A{i}",{}).get("status")=="PASSED" for i in range(1,8))
-        reached=baseline.get("status")=="PAUSED_AT_GATE3" and statuses.get("A8",{}).get("status")=="AWAITING_APPROVAL"
-        item("LIVE FULL BASELINE OUTCOME: "+("PASS - A1-A7 verified; A8 produced report awaiting genuine engineer sign-off" if passed and reached else "FAIL/UNRESOLVED"))
-        item("No engineer identity/signature was fabricated to mark A8 accepted.")
+        passed=all(statuses.get(f"A{i}",{}).get("status")=="PASSED" for i in range(1,7))
+        reached=baseline.get("status")=="PAUSED_AT_GATE3" and statuses.get("A7",{}).get("status")=="AWAITING_APPROVAL"
+        item("LIVE FULL BASELINE OUTCOME: "+("PASS - A1-A6 verified; A7 produced report awaiting genuine engineer sign-off" if passed and reached else "FAIL/UNRESOLVED"))
+        item("No engineer identity/signature was fabricated to mark A7 accepted.")
         item("NOTE: this baseline worker began before the final check-coverage/cache guard additions. Native Loop C replay below revalidates that evidence with the final implementation.")
     api_guard=read(ART / "live_api_guard_report.json")
     item("Live concurrent-run ownership test: "+json.dumps(api_guard))

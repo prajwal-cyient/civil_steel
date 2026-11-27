@@ -21,14 +21,6 @@ ROLES = {
     "A2": "Readiness checker: verify saved STAAD/Tekla models, IDEA service and templates.",
     "A3": "Frame maker: generate and validate physical and analytical frame geometry.",
     "A4": "Structural analyzer/checker: run STAAD and its independent frame grader; retain Loop A decisions.",
-    "A5": "Connection maker/checker: run IDEA and its independent joint grader; retain localized Loop B decisions.",
-    "A6": "Package validator: independently verify evidence signatures, grades and material identity; retain Loop C.",
-    "A7": "BIM publisher/checker: create and read back Tekla frame and connection attributes.",
-    "A8": "Reporting engineer: assemble the verified package and pause for human engineer acceptance.",
-}
-
-ROLES_V2 = {
-    **ROLES,
     "A5": "Connection & package auditor: run IDEA, its independent joint grader, and A5c package audit; retain Loop B/C decisions.",
     "A5c": "Package auditor: independently verify STAAD/IDEA evidence signatures, grades and material identity inside A5.",
     "A6": "BIM publisher/checker: build Tekla payload, publish via Open API, grade fabrication read-back and retry safely up to limit.",
@@ -104,8 +96,7 @@ def _build_agent(model, tool, audit):
     # Each disposable worker serves one workflow; configure only its exact model.
     register_harness_profile("openai:" + model.model_name, profile)
     state, event, _ = audit
-    roles = ROLES_V2 if state.layout_version == 2 else ROLES
-    role_prompt = roles[event["stage"]]
+    role_prompt = ROLES[event["stage"]]
     return create_deep_agent(
         model=model, tools=[tool], name=audit[1]["stage"],
         system_prompt=(role_prompt + "\n"

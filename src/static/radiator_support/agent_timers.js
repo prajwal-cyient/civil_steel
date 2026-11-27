@@ -9,7 +9,7 @@
     return timing?.running && !['FAILED', 'CANCELLED', 'COMPLETED'].includes(workflowStatus);
   }
   function draw() {
-    for (let n = 1; n <= 8; n++) {
+    for (let n = 1; n <= 7; n++) {
       const id = `A${n}`, element = document.getElementById(`timer-${id}`);
       if (!element) continue;
       const timing = timings[id];

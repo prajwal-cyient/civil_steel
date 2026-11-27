@@ -116,7 +116,7 @@ class InputLifetimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_manual_approval_observation_resets_inputs_and_keeps_saved_result(self):
         from chatbot import chat_router
         state=WorkflowState(run_id='run_12345678',status='COMPLETED',raw_input=deepcopy(CUSTOM),
-            gate3_approved=True,agent_statuses={'A8':{'status':'PASSED'}},accepted_by='Test Engineer',
+            gate3_approved=True,agent_statuses={'A7':{'status':'PASSED'}},accepted_by='Test Engineer',
             acceptance_timestamp='2026-11-23T12:00:00')
         self.workflows.save_state(state)
         self.session.update(project_input=deepcopy(CUSTOM),run_id=state.run_id,temporary_input_run_id=state.run_id)

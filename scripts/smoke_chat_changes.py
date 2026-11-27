@@ -12,7 +12,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     plan = {'id':'change_fixture','session_id':'chat_fixture','status':'PENDING','digest':'a'*64,
             'changes':[{'joint_group':'inner_node_2_longitudinal_bracings','parameter':'GRD_d','old_mm':16,'new_mm':20}],
-            'steps':['A5:selected','A6:package'],'notice':'Only the selected named group may change.'}
+            'steps':['A5:selected','A5c:package'],'notice':'Only the selected named group may change.'}
     state = {'plan':deepcopy(plan),'turns':[],'posts':[]}
     errors = []
     with sync_playwright() as p:

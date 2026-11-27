@@ -1,6 +1,6 @@
 """Agent A6: Tekla Structures publication, read-back checks, and recovery."""
 
-from .A6A_build_json import build_tekla_payload, prepare_a7_tekla, _tekla_request_matches
+from .A6A_build_json import build_tekla_payload, prepare_a6_tekla, _tekla_request_matches
 from .A6B_trigger_api import (
     TeklaPrePublicationConnectionError,
     TEKLA_CONNECTION_PARAMETER_MAP,
@@ -26,9 +26,9 @@ from .A6B_trigger_api import (
     print_attributes,
     pick_and_print_attributes,
     send_to_tekla,
-    execute_a7_tekla,
+    execute_a6_tekla,
 )
-from .A6C_check_publication import grade_tekla_publication, publication_passed, evaluate_a7_tekla
+from .A6C_check_publication import grade_tekla_publication, publication_passed, evaluate_a6_tekla
 from .publication_corrections import decide_tekla_outcome
-from .A6D_llm_reasoning import decide_a7_tekla, run_a7_tekla_modeler, run_a7_staged
+from .A6D_llm_reasoning import decide_a6_tekla, run_a6_tekla_modeler, run_a6_staged
 from .graph import TeklaState, build_tekla_graph, run_tekla_graph

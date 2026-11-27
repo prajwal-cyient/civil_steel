@@ -34,13 +34,13 @@ def prepare_publication_retry(source, run_id):
 
 
 async def run_publication_retry(state):
-    from orchestration.workflow import node_a6, node_a7, node_a8
+    from orchestration.workflow import node_package_audit, node_a6, node_a7
     if not state.readiness.get("publication_resume_source"):
         return fail_workflow(state, workflow_stage(state, "package"), "No publication recovery source was recorded.")
-    state = await node_a6(state)
+    state = await node_package_audit(state)
     if not state.validation_report.get("passed") or state.agent_statuses.get(workflow_stage(state, "package"), {}).get("status") != "PASSED":
         return fail_workflow(state, workflow_stage(state, "package"), "Calculation evidence changed or failed revalidation; run the complete workflow again.")
-    state = await node_a7(state)
+    state = await node_a6(state)
     if state.agent_statuses.get(workflow_stage(state, "tekla"), {}).get("status") == "PASSED":
-        state = await node_a8(state)
+        state = await node_a7(state)
     return state

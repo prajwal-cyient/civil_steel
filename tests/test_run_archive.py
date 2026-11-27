@@ -43,14 +43,14 @@ class RunArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.read(self.folder/'00_input/run_policy.json'),self.state.run_policy)
         self.assertTrue(self.read(self.folder/'03_final_output/engineer_approval.json')['approved'])
         self.assertEqual(self.read(self.folder/'03_final_output/workflow_output.json')['status'],'COMPLETED')
-        self.assertEqual(len(list((self.folder/'01_agents').iterdir())),8)
+        self.assertEqual(len(list((self.folder/'01_agents').iterdir())),7)
 
-    async def test_new_and_legacy_archives_preserve_distinct_stage_ids(self):
-        legacy = self.store.get_state(self.state.run_id)
+    async def test_all_archives_use_only_seven_main_stage_ids(self):
+        saved = self.store.get_state(self.state.run_id)
         modern = WorkflowState(run_id='run_newlayout', layout_version=2, status='RUNNING')
         self.store.save_state(modern)
-        self.assertEqual(legacy.layout_version, 1)
-        self.assertEqual(len(list((archive_folder(legacy)/'01_agents').iterdir())), 8)
+        self.assertEqual(saved.layout_version, 2)
+        self.assertEqual(len(list((archive_folder(saved)/'01_agents').iterdir())), 7)
         self.assertEqual(len(list((archive_folder(modern)/'01_agents').iterdir())), 7)
         manifest = self.read(archive_folder(modern)/'manifest.json')
         self.assertEqual(manifest['layout_version'], 2)
@@ -119,9 +119,9 @@ class RunArchiveTests(unittest.IsolatedAsyncioTestCase):
         (model/'TeklaModel.db1').write_bytes(b'model-database')
         (model/'attributes/connection.j144').write_text('attributes')
         (model/'model.lck').write_text('lock')
-        self.state.agent_statuses['A7']={'status':'PASSED'}
+        self.state.agent_statuses['A6']={'status':'PASSED'}
         self.state.tekla_results={'model_path':str(model),'created':206}
-        finish_stage(self.state,'A7')
+        finish_stage(self.state,'A6')
         folder=self.folder/'02_software/Tekla/attempt_001'
         self.assertEqual((folder/'model_snapshot/TeklaModel.db1').read_bytes(),b'model-database')
         self.assertTrue((folder/'model_snapshot/attributes/connection.j144').exists())
@@ -148,7 +148,7 @@ class RunArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((self.folder/'00_input/original_input.json').read_bytes(),original)
         self.assertEqual(self.read(archive_folder(fork)/'00_input/original_input.json'),fork.raw_input)
 
-    async def test_full_eight_stage_fixture_archives_all_agents_and_waits_for_approval(self):
+    async def test_full_seven_stage_fixture_archives_all_agents_and_waits_for_approval(self):
         from contextlib import ExitStack
         import os
         from agents.A7_reporting import accept_gate3
@@ -157,13 +157,13 @@ class RunArchiveTests(unittest.IsolatedAsyncioTestCase):
         (model/'fixture_model.db1').write_bytes(b'synthetic fixture, not a real Tekla database')
         def stage(agent):
             def operation(state):
-                status_agent = 'A6' if agent == 'A7' and state.layout_version == 2 else agent
+                status_agent = agent
                 state.agent_statuses[status_agent]={'status':'PASSED'}
                 if agent=='A4':
                     state.frame_grader_result=GraderResult(passed=True,summary='fixture')
-                elif agent=='A6':
+                elif agent=='A5c':
                     state.validation_report={'passed':True,'package_hash':'fixture'}
-                elif agent=='A7':
+                elif agent=='A6':
                     state.tekla_results={'model_path':str(model),'created':1}
                 return state
             return operation
@@ -171,13 +171,13 @@ class RunArchiveTests(unittest.IsolatedAsyncioTestCase):
             stack.enter_context(patch.dict(os.environ,{'PLANT_DEEP_AGENTS_ENABLED':'false'}))
             stack.enter_context(patch.object(flow,'_sync_state',self.store.save_state))
             for n,name in [(2,'run_a2_readiness'),(3,'run_a3_staged'),(4,'run_a4_staged'),
-                           (5,'run_a5_staged'),(6,'run_a6_package_validator'),(7,'run_a7_staged')]:
-                stack.enter_context(patch.object(flow,name,stage(f'A{n}')))
+                           (5,'run_a5_staged'),(6,'run_package_validator'),(7,'run_a6_staged')]:
+                stack.enter_context(patch.object(flow,name,stage('A5c' if n == 6 else 'A6' if n == 7 else f'A{n}')))
             async def idea_graph(state, *, audit_package):
                 self.assertTrue(audit_package)
                 state = flow.run_a5_staged(state)
-                state = flow.run_a6_package_validator(state)
-                state.agent_statuses['A5c'] = state.agent_statuses.pop('A6')
+                state = flow.run_package_validator(state)
+                self.assertIn('A5c', state.agent_statuses)
                 return state
             stack.enter_context(patch.object(flow,'run_idea_graph',idea_graph))
             result=await flow.run_agentic_workflow({'grid':{'n_long_bays':8,'n_trans_bays':5}},'run_abcdef12')

@@ -33,7 +33,7 @@ def requests_complete_workflow(message):
     text = str(message).lower().replace('×', 'x').replace('–', '-').replace('—', '-')
     if not re.search(r'\b(run|start|execute|perform)\b', text):
         return False
-    stage = r'(?:staad|idea|tekla|a[1-8]|analysis|analy[sz]e|connections?|package|preview|generate|publish|geometry)'
+    stage = r'(?:staad|idea|tekla|a[1-7]|analysis|analy[sz]e|connections?|package|preview|generate|publish|geometry)'
     if re.search(r"\b(?:do not|don't|dont|never)\s+(?:run|start|execute|perform)\b", text):
         return False
     if re.search(r'\b(?:without|except|skip|before|not|no)\b.*\b' + stage + r'\b', text):
@@ -43,7 +43,7 @@ def requests_complete_workflow(message):
         return False
     if re.search(r'\bstop\b.*\ba[1-7]\b', text):
         return False
-    if re.search(r'\b(?:agentic|workflow|pipeline)\b|\ba1\s*(?:-|to|through)\s*a[78]\b', text):
+    if re.search(r'\b(?:agentic|workflow|pipeline)\b|\ba1\s*(?:-|to|through)\s*a7\b', text):
         return True
     if re.search(r'\b' + stage + r'\b', text):
         return False
@@ -116,7 +116,7 @@ class ChatRuntime:
 
     @staticmethod
     def build_model():
-        # Chat has its own switch; deterministic A1-A8 and advisor flags stay unchanged.
+        # Chat has its own switch; deterministic A1-A7 and advisor flags stay unchanged.
         if os.getenv("PLANT_CHAT_ENABLED", "true").lower() != "true":
             raise ValueError("Chat is disabled by PLANT_CHAT_ENABLED.")
         from services.deep_agents_runtime import _build_model

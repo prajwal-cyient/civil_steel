@@ -1,7 +1,7 @@
 """
-a7_tekla_modeler_agent.py
+A6B_trigger_api.py
 
-Agent A7: Build the Model (Tekla Structures 3D Detailing Modeler).
+Agent A6: Build the Model (Tekla Structures 3D Detailing Modeler).
 Consolidated & Self-Contained. Connects directly to Tekla Structures via .NET Open API,
 modifies the 3D grid, inserts physical members, and details base plates and joint connections
 with attributes designed by IDEA StatiCa.
@@ -618,7 +618,7 @@ def send_to_tekla(data: dict) -> dict:
 from . import A6A_build_json
 
 
-def execute_a7_tekla(state: WorkflowState) -> WorkflowState:
+def execute_a6_tekla(state: WorkflowState) -> WorkflowState:
     from orchestration.state import fail_workflow
     try:
         if not A6A_build_json._tekla_request_matches(state):

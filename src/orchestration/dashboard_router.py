@@ -3,7 +3,7 @@ router.py
 
 FastAPI router exposing endpoints for the Agentic Workflow.
 Includes:
-- POST /api/v2/agentic/run       -> Executes the 8-agent LangGraph pipeline with loops
+- POST /api/v2/agentic/run       -> Executes the 7-agent LangGraph pipeline with loops
 - GET  /api/v2/agentic/runs/{id} -> Fetches live run state and agent logs
 - POST /api/v2/agentic/accept/{id} -> Human Gate 3 sign-off
 """
@@ -29,7 +29,7 @@ ACTIVE_RUN_ID = None
 @router.post("/run")
 async def start_agentic_run(payload: Dict[str, Any]):
     """
-    Kicks off the autonomous 8-agent design workflow.
+    Kicks off the autonomous 7-agent design workflow.
     Executes Loop A, Loop B, and Loop C automatically, populating all software results.
     State is persisted to durable SQLite.
     """

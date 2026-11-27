@@ -41,7 +41,7 @@ from agents.A3_generate_structure import (
 )
 from agents.A4_staad import grade_staad_results
 from agents.A5_idea_statica import grade_joint_check_summary
-from agents.A5_idea_statica.package_validation import run_a6_package_validator
+from agents.A5_idea_statica.package_validation import run_package_validator
 from orchestration.workflow import run_agentic_workflow
 from agents.A7_reporting import accept_gate3
 from services.workflow_store import SqliteWorkflowStore
@@ -282,8 +282,8 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
              patch("agents.A5_idea_statica.package_validation.grade_staad_results",
                    return_value=GraderResult(passed=True, summary="OK")):
             state.staad_results["candidate_signature"] = "current"
-            res = run_a6_package_validator(state)
-        self.assertEqual(res.agent_statuses.get("A6", {}).get("status"), "REVISING")
+            res = run_package_validator(state)
+        self.assertEqual(res.agent_statuses.get("A5c", {}).get("status"), "REVISING")
         self.assertEqual(res.loop_c_count, 1)
         self.assertEqual(res.validation_report.get("recovery_target"), "a5_ideastatica_analyzer")
 
@@ -298,7 +298,7 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
         )
         with patch.object(audit, "frame_signature", return_value="current"), \
              patch.object(audit, "grade_staad_results", return_value=GraderResult(passed=True, summary="OK")):
-            audit.run_a6_package_validator(state)
+            audit.run_package_validator(state)
         self.assertEqual(state.status, "FAILED")
         self.assertIn("does not belong to the current frame", state.error)
         self.assertFalse(state.validation_report["passed"])
@@ -313,8 +313,8 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
         )
         with patch.object(audit, "frame_signature", return_value="current"), \
              patch.object(audit, "grade_staad_results", return_value=GraderResult(passed=True, summary="OK")):
-            audit.run_a6_package_validator(joint_only)
-        self.assertEqual(joint_only.agent_statuses["A6"]["status"], "REVISING")
+            audit.run_package_validator(joint_only)
+        self.assertEqual(joint_only.agent_statuses["A5c"]["status"], "REVISING")
         self.assertEqual(joint_only.validation_report["recovery_target"], "a5_ideastatica_analyzer")
 
         no_groups = WorkflowState(
@@ -325,7 +325,7 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
         )
         with patch.object(audit, "frame_signature", return_value="current"), \
              patch.object(audit, "grade_staad_results", return_value=GraderResult(passed=True, summary="OK")):
-            audit.run_a6_package_validator(no_groups)
+            audit.run_package_validator(no_groups)
         self.assertEqual(no_groups.status, "FAILED")
         self.assertIn("No connection groups returned by STAAD", no_groups.error)
         self.assertEqual(no_groups.loop_c_count, 0)
@@ -347,16 +347,16 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
             validation_report={"recovery_target": "a3_frame_generator"},
         )
         def invalid_audit(candidate, *, agent_id):
-            candidate.agent_statuses["A6"] = {"status": "REVISING"}
+            candidate.agent_statuses["A5c"] = {"status": "REVISING"}
             return candidate
 
-        with patch.object(orchestrator, "run_a6_package_validator", side_effect=invalid_audit), \
+        with patch.object(orchestrator, "run_package_validator", side_effect=invalid_audit), \
              patch.object(orchestrator, "_sync_state"), patch.object(orchestrator, "guarded"), \
              patch.object(orchestrator, "deep_agents_enabled", return_value=False):
-            result = asyncio.run(orchestrator.node_a6(state))
+            result = asyncio.run(orchestrator.node_package_audit(state))
         self.assertEqual(result.status, "FAILED")
         self.assertIn("recovery is invalid", result.error)
-        self.assertEqual(orchestrator.route_after_a6(result), "__end__")
+        self.assertEqual(orchestrator.route_after_package_audit(result), "__end__")
 
     def test_idea_routes_to_tekla_only_after_package_audit_passes(self):
         from orchestration.workflow import route_after_a5
@@ -380,7 +380,7 @@ class TestEnhancedAgenticWorkflow(unittest.TestCase):
         state = WorkflowState(
             run_id="gate", status="PAUSED_AT_GATE3",
             validation_report={"passed": True},
-            agent_statuses={"A7": {"status": "PASSED"}, "A8": {"status": "AWAITING_APPROVAL"}},
+            agent_statuses={"A6": {"status": "PASSED"}, "A7": {"status": "AWAITING_APPROVAL"}},
             final_report={"gate3_status": "PENDING_ENGINEER_ACCEPTANCE"},
         )
         with patch.object(orchestrator, "_sync_state"):

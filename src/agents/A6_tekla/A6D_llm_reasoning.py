@@ -7,7 +7,7 @@ from . import A6A_build_json, A6B_trigger_api, A6C_check_publication
 from .publication_corrections import decide_tekla_outcome
 
 
-def decide_a7_tekla(state: WorkflowState) -> WorkflowState:
+def decide_a6_tekla(state: WorkflowState) -> WorkflowState:
     from services.correction_advisor import choose_correction
     from agents.A6_tekla.publication_corrections import decide_tekla_outcome
     state, ready = decide_tekla_outcome(
@@ -33,13 +33,13 @@ def decide_a7_tekla(state: WorkflowState) -> WorkflowState:
     return state
 
 
-def run_a7_tekla_modeler(state: WorkflowState) -> WorkflowState:
+def run_a6_tekla_modeler(state: WorkflowState) -> WorkflowState:
     """Run the existing synchronous publication entry point."""
     state.tekla_retry_count = 0
     state.tekla_retry_history = []
     try:
         while True:
-            for operation in (A6A_build_json.prepare_a7_tekla, A6B_trigger_api.execute_a7_tekla, A6C_check_publication.evaluate_a7_tekla, decide_a7_tekla):
+            for operation in (A6A_build_json.prepare_a6_tekla, A6B_trigger_api.execute_a6_tekla, A6C_check_publication.evaluate_a6_tekla, decide_a6_tekla):
                 state = operation(state)
                 if state.status == "FAILED":
                     break
@@ -50,7 +50,7 @@ def run_a7_tekla_modeler(state: WorkflowState) -> WorkflowState:
         state.tekla_request.clear()
 
 
-async def run_a7_staged(state: WorkflowState) -> WorkflowState:
+async def run_a6_staged(state: WorkflowState) -> WorkflowState:
     from agents.A6_tekla.graph import run_tekla_graph
     state.tekla_retry_count = 0
     state.tekla_retry_history = []

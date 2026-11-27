@@ -8,8 +8,6 @@ def substage(label):
         @wraps(operation)
         async def run(graph_state):
             workflow = graph_state["workflow"]
-            if workflow.layout_version != 2:
-                return await operation(graph_state)
             from orchestration.workflow import _sync_state
             workflow.substage_statuses[label] = {"status": "RUNNING"}
             _sync_state(workflow)

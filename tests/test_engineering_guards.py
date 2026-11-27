@@ -314,7 +314,7 @@ class EngineeringGuardTests(unittest.TestCase):
         state.frame_candidate = {"members": [{"name": "column"}]}
         state.validation_report = {"passed": True}
         with patch.object(a7, "send_to_tekla", return_value={"created": 1, "failed": 1, "errors": ["connection failed"]}):
-            a7_d.run_a7_tekla_modeler(state)
+            a7_d.run_a6_tekla_modeler(state)
         self.assertEqual(state.status, "FAILED")
 
     def test_idea_subgraph_reuses_verified_groups_and_runs_on_worker_thread(self):
@@ -341,7 +341,7 @@ class EngineeringGuardTests(unittest.TestCase):
         from agents.A5_idea_statica.graph import run_idea_graph
         from orchestration.workflow import route_after_a5
         state = self.state()
-        state.layout_version = 2
+
         calls = []
 
         def solve(request):
@@ -360,7 +360,7 @@ class EngineeringGuardTests(unittest.TestCase):
 
         with patch.object(a5_a, "_connection_payload", side_effect=payload), \
              patch.object(a5_b, "design_joint", side_effect=solve), \
-             patch.object(package, "run_a6_package_validator", side_effect=audit):
+             patch.object(package, "run_package_validator", side_effect=audit):
             result = asyncio.run(run_idea_graph(state, audit_package=True))
         self.assertEqual(result.agent_statuses["A5"]["status"], "REVISING")
         self.assertEqual(result.substage_statuses["A5c"]["status"], "REVISING")
@@ -408,17 +408,17 @@ class EngineeringGuardTests(unittest.TestCase):
             return {"created": 1, "verified_members": 1, "failed": 0}
 
         with patch.object(a7, "send_to_tekla", side_effect=publish):
-            result = asyncio.run(a7_d.run_a7_staged(state))
-        self.assertEqual(result.agent_statuses["A7"]["status"], "PASSED")
+            result = asyncio.run(a7_d.run_a6_staged(state))
+        self.assertEqual(result.agent_statuses["A6"]["status"], "PASSED")
         self.assertFalse(result.tekla_request)
 
         stale = self.state()
         stale.frame_candidate = {"members": [{"name": "column"}]}
         stale.validation_report = {"passed": True}
-        a7_a.prepare_a7_tekla(stale)
+        a7_a.prepare_a6_tekla(stale)
         stale.frame_candidate["members"].append({"name": "beam"})
         with patch.object(a7, "send_to_tekla") as send:
-            a7.execute_a7_tekla(stale)
+            a7.execute_a6_tekla(stale)
         self.assertEqual(stale.status, "FAILED")
         send.assert_not_called()
 
@@ -430,7 +430,7 @@ class EngineeringGuardTests(unittest.TestCase):
         with patch.object(a7, "send_to_tekla",
                           return_value={"created": 1, "verified_members": 1, "failed": 0, "simulation": True}) as send, \
              patch("services.correction_advisor.choose_correction") as advisor:
-            result = asyncio.run(a7_d.run_a7_staged(state))
+            result = asyncio.run(a7_d.run_a6_staged(state))
         self.assertEqual(result.status, "FAILED")
         self.assertIn("simulation output", result.error)
         self.assertEqual(send.call_count, 1)
@@ -450,7 +450,7 @@ class EngineeringGuardTests(unittest.TestCase):
         ):
             with self.subTest(native_result=native_result):
                 state = self.state()
-                state.layout_version = 2
+
                 state.max_tekla_retries = 1
                 state.frame_candidate = {"members": [{"name": "column"}]}
                 state.validation_report = {"passed": True}
@@ -459,10 +459,10 @@ class EngineeringGuardTests(unittest.TestCase):
                     candidate.agent_statuses[agent_id] = {"status": "PASSED"}
                     return candidate
 
-                with patch.object(package, "run_a6_package_validator", side_effect=revalidate), \
+                with patch.object(package, "run_package_validator", side_effect=revalidate), \
                      patch("services.correction_advisor.choose_correction", return_value={"id": "retry_publish"}) as advisor, \
                      patch.object(a7, "send_to_tekla", return_value=native_result) as send:
-                    result = asyncio.run(a7_d.run_a7_staged(state))
+                    result = asyncio.run(a7_d.run_a6_staged(state))
                 self.assertEqual(result.status, "FAILED")
                 self.assertIn("retry limit reached", result.error)
                 self.assertTrue(result.tekla_grader_result.corrective_action_needed)
@@ -491,7 +491,7 @@ class EngineeringGuardTests(unittest.TestCase):
         )
         self.assertFalse(ready)
         self.assertNotEqual(result.status, "FAILED")
-        self.assertEqual(result.agent_statuses["A7"]["status"], "REVISING")
+        self.assertEqual(result.agent_statuses["A6"]["status"], "REVISING")
         self.assertEqual(result.tekla_retry_history[0]["phase"], "fabrication_readback")
         advisor.assert_called_once()
 
@@ -502,7 +502,7 @@ class EngineeringGuardTests(unittest.TestCase):
         state.validation_report = {"passed": True}
         with patch("services.correction_advisor.choose_correction") as advisor, \
              patch.object(a7, "send_to_tekla", side_effect=RuntimeError("write interrupted")) as send:
-            result = asyncio.run(a7_d.run_a7_staged(state))
+            result = asyncio.run(a7_d.run_a6_staged(state))
         self.assertEqual(result.status, "FAILED")
         self.assertIn("publication may be partial", result.error)
         self.assertEqual(send.call_count, 1)
@@ -513,7 +513,7 @@ class EngineeringGuardTests(unittest.TestCase):
         from agents.A5_idea_statica import package_validation as package
         from agents.A6_tekla import A6A_build_json as a7_a, A6B_trigger_api as a7, A6D_llm_reasoning as a7_d
         state = self.state()
-        state.layout_version = 2
+
         state.frame_candidate = {"members": [{"name": "column"}]}
         state.validation_report = {"passed": True}
 
@@ -521,13 +521,13 @@ class EngineeringGuardTests(unittest.TestCase):
             candidate.agent_statuses[agent_id] = {"status": "PASSED"}
             return candidate
 
-        with patch.object(package, "run_a6_package_validator", side_effect=revalidate) as audit, \
+        with patch.object(package, "run_package_validator", side_effect=revalidate) as audit, \
              patch("services.correction_advisor.choose_correction", return_value={"id": "retry_publish"}), \
              patch.object(a7, "send_to_tekla", side_effect=[
                  a7.TeklaPrePublicationConnectionError("connection unavailable"),
                  {"created": 1, "verified_members": 1, "failed": 0},
              ]) as send:
-            result = asyncio.run(a7_d.run_a7_staged(state))
+            result = asyncio.run(a7_d.run_a6_staged(state))
         self.assertEqual(result.agent_statuses["A6"]["status"], "PASSED")
         self.assertEqual(result.substage_statuses["A6a"]["status"], "PASSED")
         self.assertEqual(result.substage_statuses["A6d"]["status"], "PASSED")
@@ -560,11 +560,11 @@ class EngineeringGuardTests(unittest.TestCase):
             candidate.agent_statuses[agent_id] = {"status": "PASSED"}
             return candidate
 
-        with patch.object(package, "run_a6_package_validator", side_effect=revalidate), \
+        with patch.object(package, "run_package_validator", side_effect=revalidate), \
              patch("services.correction_advisor.choose_correction", return_value={"id": "retry_publish"}), \
              patch.object(a7, "send_to_tekla",
                           side_effect=a7.TeklaPrePublicationConnectionError("connection unavailable")) as send:
-            result = asyncio.run(a7_d.run_a7_staged(state))
+            result = asyncio.run(a7_d.run_a6_staged(state))
         self.assertEqual(result.status, "FAILED")
         self.assertEqual(result.tekla_retry_count, 5)
         self.assertEqual(send.call_count, 6)
@@ -578,7 +578,7 @@ class EngineeringGuardTests(unittest.TestCase):
         with patch("services.correction_advisor.choose_correction", return_value={"id": "stop"}), \
              patch.object(a7, "send_to_tekla",
                           side_effect=a7.TeklaPrePublicationConnectionError("connection unavailable")) as send:
-            result = asyncio.run(a7_d.run_a7_staged(state))
+            result = asyncio.run(a7_d.run_a6_staged(state))
         self.assertEqual(result.status, "FAILED")
         self.assertEqual(result.tekla_retry_count, 0)
         self.assertEqual(send.call_count, 1)
@@ -588,7 +588,7 @@ class EngineeringGuardTests(unittest.TestCase):
         from agents.A5_idea_statica import package_validation as package
         from agents.A6_tekla import A6A_build_json as a7_a, A6B_trigger_api as a7, A6D_llm_reasoning as a7_d
         state = self.state()
-        state.layout_version = 2
+
         state.frame_candidate = {"members": [{"name": "column"}]}
         state.validation_report = {"passed": True}
 
@@ -597,11 +597,11 @@ class EngineeringGuardTests(unittest.TestCase):
             candidate.agent_statuses[agent_id] = {"status": "REVISING"}
             return candidate
 
-        with patch.object(package, "run_a6_package_validator", side_effect=revalidate), \
+        with patch.object(package, "run_package_validator", side_effect=revalidate), \
              patch("services.correction_advisor.choose_correction", return_value={"id": "retry_publish"}), \
              patch.object(a7, "send_to_tekla",
                           side_effect=a7.TeklaPrePublicationConnectionError("connection unavailable")) as send:
-            result = asyncio.run(a7_d.run_a7_staged(state))
+            result = asyncio.run(a7_d.run_a6_staged(state))
         self.assertEqual(result.status, "FAILED")
         self.assertEqual(send.call_count, 1)
         self.assertIn("failed revalidation", result.error)
@@ -725,7 +725,7 @@ class EngineeringGuardTests(unittest.TestCase):
         from orchestration.workflow import route_after_a5
 
         state = self.state()
-        state.layout_version = 2
+
         state.active_operation_params = {"first": [{"key": "EP_d", "expression": "0.016"}]}
         state.joint_grader_results = {"first": GraderResult(passed=True, summary="ok")}
         state.ideastatica_results = {"first": {"status": "PASSED", "check_summary": {"passed": True}}}
@@ -738,7 +738,7 @@ class EngineeringGuardTests(unittest.TestCase):
 
         with patch.object(a5_a, "_connection_payload", side_effect=payload), \
              patch.object(a5_b, "design_joint", return_value=joint_result()), \
-             patch.object(package, "run_a6_package_validator", side_effect=audit_revising), \
+             patch.object(package, "run_package_validator", side_effect=audit_revising), \
              patch("services.correction_advisor.choose_correction", return_value={"id": "stop"}) as advisor:
             stopped = asyncio.run(run_idea_graph(state, audit_package=True))
         self.assertEqual(stopped.status, "FAILED")

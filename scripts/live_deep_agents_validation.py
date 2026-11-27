@@ -1,4 +1,4 @@
-"""Run real A1-A8 Deep Agents on isolated 8x5 models, then restore open models.
+"""Run real A1-A7 Deep Agents on isolated 8x5 models, then restore open models.
 
 Requires the desktop software and configured GPT credentials. No mocks or gate
 acceptance. Results, native models and per-agent evidence stay in output_exports.
@@ -73,7 +73,7 @@ def export(state, folder):
     fields = {"A1": ["grid_config", "load_config"], "A2": ["readiness"], "A3": ["frame_candidate"],
               "A4": ["staad_results", "frame_grader_result", "loop_a_history"],
               "A5": ["ideastatica_results", "joint_grader_results", "loop_b_history"],
-              "A6": ["validation_report", "loop_c_history"], "A7": ["tekla_results"], "A8": ["final_report"]}
+              "A5c": ["validation_report", "loop_c_history"], "A6": ["tekla_results"], "A7": ["final_report"]}
     for agent, keys in fields.items():
         target = folder / "agents" / agent;target.mkdir(parents=True, exist_ok=True)
         payload = {"run_id": state.run_id, "status": data["agent_statuses"].get(agent),

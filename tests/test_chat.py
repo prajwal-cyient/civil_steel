@@ -158,7 +158,7 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_frame_evidence_blocks_idea_and_publication(self):
         for action in ("design_connections", "publish_to_tekla"):
             state = WorkflowState(run_id="invalid", status="RUNNING", agent_statuses={"A3": {"status": "PASSED"}})
-            with patch("orchestration.workflow.node_a5", new_callable=AsyncMock) as a5, patch("orchestration.workflow.node_a7", new_callable=AsyncMock) as a7:
+            with patch("orchestration.workflow.node_a5", new_callable=AsyncMock) as a5, patch("orchestration.workflow.node_a6", new_callable=AsyncMock) as a7:
                 result = await run_chat_action(state, action)
                 a5.assert_not_awaited(); a7.assert_not_awaited()
                 self.assertEqual(result.status, "FAILED")
@@ -175,18 +175,18 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
             s.loop_b_count = 1
             return s
         async def a6(s):
-            calls.append("A6")
+            calls.append("A5c")
             s.loop_c_count = 1
-            s.agent_statuses["A6"] = {"status": "REVISING" if calls.count("A6") == 1 else "PASSED"}
-            s.validation_report = {"passed": calls.count("A6") > 1, "recovery_target": "a5_ideastatica_analyzer"}
+            s.agent_statuses["A5c"] = {"status": "REVISING" if calls.count("A5c") == 1 else "PASSED"}
+            s.validation_report = {"passed": calls.count("A5c") > 1, "recovery_target": "a5_ideastatica_analyzer"}
             return s
-        async def a7(s): calls.append("A7"); return s
-        async def a8(s): calls.append("A8"); s.status = "PAUSED_AT_GATE3"; return s
-        with patch("orchestration.workflow.node_a5", side_effect=a5), patch("orchestration.workflow.node_a6", side_effect=a6), \
-             patch("orchestration.workflow.node_a7", side_effect=a7), patch("orchestration.workflow.node_a8", side_effect=a8), \
-             patch("orchestration.workflow.route_after_a6", return_value="a5_ideastatica_analyzer"):
+        async def a7(s): calls.append("A6"); return s
+        async def a8(s): calls.append("A7"); s.status = "PAUSED_AT_GATE3"; return s
+        with patch("orchestration.workflow.node_a5", side_effect=a5), patch("orchestration.workflow.node_package_audit", side_effect=a6), \
+             patch("orchestration.workflow.node_a6", side_effect=a7), patch("orchestration.workflow.node_a7", side_effect=a8), \
+             patch("orchestration.workflow.route_after_package_audit", return_value="a5_ideastatica_analyzer"):
             result = await run_chat_action(state, "publish_to_tekla")
-        self.assertEqual(calls, ["A6", "A5", "A5", "A6", "A7", "A8"])
+        self.assertEqual(calls, ["A5c", "A5", "A5", "A5c", "A6", "A7"])
         self.assertEqual(result.status, "PAUSED_AT_GATE3")
         self.assertFalse(result.gate3_approved)
 
@@ -198,13 +198,13 @@ class ChatTests(unittest.IsolatedAsyncioTestCase):
         state.staad_results["candidate_signature"] = frame_signature(state)
 
         async def a6(candidate):
-            candidate.agent_statuses["A6"] = {"status": "REVISING"}
+            candidate.agent_statuses["A5c"] = {"status": "REVISING"}
             candidate.validation_report = {"recovery_target": "a3_frame_generator"}
             return candidate
 
-        with patch("orchestration.workflow.node_a6", side_effect=a6), \
+        with patch("orchestration.workflow.node_package_audit", side_effect=a6), \
              patch("orchestration.workflow.node_a3", new_callable=AsyncMock) as a3, \
-             patch("orchestration.workflow.node_a7", new_callable=AsyncMock) as a7:
+             patch("orchestration.workflow.node_a6", new_callable=AsyncMock) as a7:
             result = await run_chat_action(state, "publish_to_tekla")
         self.assertEqual(result.status, "FAILED")
         self.assertIn("recovery is invalid", result.error)
@@ -261,7 +261,7 @@ class ChatApiTests(unittest.TestCase):
         turn['run_id'] = 'run_11111111'  # Previous completed tool; still stale during the next action.
         self.store.save_turn(turn)
         with patch.object(self.module, 'WORKFLOW_STORE', workflows):
-            for number, agent in enumerate(('A3', 'A4', 'A5', 'A6'), 2):
+            for number, agent in enumerate(('A3', 'A4', 'A5', 'A5c'), 2):
                 run_id = 'run_' + str(number) * 8
                 workflows.save_state(WorkflowState(run_id=run_id, status='RUNNING', current_agent=agent))
                 session['run_id'] = run_id

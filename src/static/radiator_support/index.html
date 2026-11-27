@@ -295,14 +295,23 @@
   .agentic-status-pill.ok { background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #6ee7b7; }
   .agentic-status-pill.error { background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #fca5a5; white-space: pre-wrap; }
 
-  /* Agent Tracker Bar (Top of Viewport) */
-  #agent-tracker-bar {
+  #viewport-overlays {
     position: absolute;
     top: 14px;
     left: 14px;
     right: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+
+  /* Agent Tracker Bar (Top of Viewport) */
+  #agent-tracker-bar {
+    position: relative;
     z-index: 10;
     display: flex;
+    pointer-events: auto;
     align-items: center;
     gap: 6px;
     background: rgba(11, 28, 44, 0.92);
@@ -328,27 +337,9 @@
   .agent-step .step-num { font-size: 11px; font-weight: 700; color: #94a3b8; font-family: var(--font-head); }
   .agent-step .step-label { font-size: 10px; color: #64748b; margin-top: 2px; }
   .agent-step .step-time { font: 500 11px var(--font-mono, monospace); font-variant-numeric: tabular-nums; color: var(--paper-ink-dim); margin-top: 4px; }
-  .agent-step .substeps { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 4px; font-size: 9px; }
-  .agent-step .substeps span { color: #94a3b8; }
-  .agent-step .substeps .running { color: #60a5fa; }
-  .agent-step .substeps .passed { color: #34d399; }
-  .agent-step .substeps .revising { color: #fbbf24; }
-  .agent-step .substeps .failed { color: #f87171; }
   .agent-step[hidden] { display: none; }
   .agent-step.running .step-time { color: #93c5fd; }
   .agent-step.passed .step-time { color: #6ee7b7; }
-  .agent-step .step-badge {
-    display: none;
-    font-size: 9px;
-    font-weight: 700;
-    color: #fef08a;
-    background: rgba(202, 138, 4, 0.4);
-    border: 1px solid #eab308;
-    padding: 1px 4px;
-    border-radius: 3px;
-    margin-top: 3px;
-    white-space: nowrap;
-  }
   .agent-step.running { background: rgba(59, 130, 246, 0.15); border-color: #3b82f6; }
   .agent-step.running .step-num { color: #60a5fa; }
   .agent-step.running .step-label { color: #93c5fd; }
@@ -418,15 +409,13 @@
   #viewport { width: 100%; height: 100%; display: block; }
 
   #hud {
-    position: absolute;
-    top: 74px;
-    right: 16px;
+    position: relative;
+    align-self: flex-end;
     background: rgba(7, 26, 43, 0.88);
     border: 1px solid var(--line);
     border-radius: 4px;
     padding: 12px 16px;
-    width: 250px;
-    min-width: 240px;
+    width: min(250px, 100%);
     font-size: 12px;
     backdrop-filter: blur(8px);
     z-index: 5;
@@ -604,7 +593,6 @@
     #right-pane { height: 65vh; min-height: 430px; }
     #results-pane, #results-pane:not(:has(.result-panel[open])) { width: 100%; max-width: none; border-left: 0; }
     #legend { gap: 8px; flex-wrap: wrap; bottom: auto; top: 12px; left: 12px; right: 12px; }
-    #hud { top: 65px; right: 12px; }
   }
 </style>
 </head>
@@ -827,15 +815,22 @@
   </div>
 
   <div id="right-pane">
-    <!-- 8-Agent Autonomous Workflow Status Tracker Bar -->
-    <div id="agent-tracker-bar">
-      <div class="agent-step" id="step-A1"><span class="step-num">A1</span><span class="step-label">Brief</span><span class="step-time" id="timer-A1">00:00</span></div>
-      <div class="agent-step" id="step-A2"><span class="step-num">A2</span><span class="step-label">Ready</span><span class="step-time" id="timer-A2">00:00</span></div>
-      <div class="agent-step" id="step-A3"><span class="step-num">A3</span><span class="step-label">Frame</span><span class="step-time" id="timer-A3">00:00</span><span class="substeps" id="substeps-A3"></span></div>
-      <div class="agent-step" id="step-A4"><span class="step-num">A4</span><span class="step-label">STAAD</span><span class="step-badge" id="badge-A4"></span><span class="step-time" id="timer-A4">00:00</span><span class="substeps" id="substeps-A4"></span></div>
-      <div class="agent-step" id="step-A5"><span class="step-num">A5</span><span class="step-label" id="label-A5">IDEA + audit</span><span class="step-badge" id="badge-A5"></span><span class="step-time" id="timer-A5">00:00</span><span class="substeps" id="substeps-A5"></span></div>
-      <div class="agent-step" id="step-A6"><span class="step-num">A6</span><span class="step-label" id="label-A6">Tekla</span><span class="step-time" id="timer-A6">00:00</span><span class="substeps" id="substeps-A6"></span></div>
-      <div class="agent-step" id="step-A7"><span class="step-num">A7</span><span class="step-label" id="label-A7">Report</span><span class="step-time" id="timer-A7">00:00</span></div>
+    <div id="viewport-overlays">
+      <div id="agent-tracker-bar">
+        <div class="agent-step" id="step-A1"><span class="step-num">A1</span><span class="step-label">Brief</span><span class="step-time" id="timer-A1">00:00</span></div>
+        <div class="agent-step" id="step-A2"><span class="step-num">A2</span><span class="step-label">Ready</span><span class="step-time" id="timer-A2">00:00</span></div>
+        <div class="agent-step" id="step-A3"><span class="step-num">A3</span><span class="step-label">Frame</span><span class="step-time" id="timer-A3">00:00</span></div>
+        <div class="agent-step" id="step-A4"><span class="step-num">A4</span><span class="step-label">STAAD</span><span class="step-time" id="timer-A4">00:00</span></div>
+        <div class="agent-step" id="step-A5"><span class="step-num">A5</span><span class="step-label">IDEA</span><span class="step-time" id="timer-A5">00:00</span></div>
+        <div class="agent-step" id="step-A6"><span class="step-num">A6</span><span class="step-label">Tekla</span><span class="step-time" id="timer-A6">00:00</span></div>
+        <div class="agent-step" id="step-A7"><span class="step-num">A7</span><span class="step-label">Report</span><span class="step-time" id="timer-A7">00:00</span></div>
+      </div>
+
+      <div id="hud" style="display:none;">
+        <h2>Summary</h2>
+        <div class="total" id="hud-total">0 <span>members</span></div>
+        <div id="hud-breakdown"></div>
+      </div>
     </div>
 
     <!-- Gate 3 Final Acceptance Banner -->
@@ -852,12 +847,6 @@
 
     <canvas id="viewport"></canvas>
     <div id="empty-hint">NO STRUCTURE LOADED<br>Configure parameters and click Generate Structure</div>
-
-    <div id="hud" style="display:none;">
-      <h2>Summary</h2>
-      <div class="total" id="hud-total">0 <span>members</span></div>
-      <div id="hud-breakdown"></div>
-    </div>
 
     <div id="legend" style="display:none;">
       <div class="item"><span class="swatch" style="background:#4a90d9;"></span>Column</div>
@@ -1924,7 +1913,7 @@ function resetAgenticPresentation() {
   document.getElementById('hud').style.display = 'none';
   document.getElementById('legend').style.display = 'none';
   if (gate3Banner) gate3Banner.style.display = 'none';
-  updateAgentSteps({}, 0, {});
+  updateAgentSteps({});
 }
 
 function resetRunView() {
@@ -1963,23 +1952,8 @@ async function loadSavedRunChoices() {
   updateActionControls();
 }
 
-function updateAgentSteps(agentStatuses, loopA, loopB, timings = {}, workflowStatus = '', substages = {}) {
+function updateAgentSteps(agentStatuses, timings = {}, workflowStatus = '') {
   window.AgentTimers?.update(timings, agentStatuses, workflowStatus);
-  document.getElementById('label-A5').textContent = 'IDEA + audit';
-  document.getElementById('label-A6').textContent = 'Tekla';
-  document.getElementById('label-A7').textContent = 'Report';
-  for (const [stage, letters] of Object.entries({A3: 'ab', A4: 'abcd', A5: 'abcd', A6: 'abcd'})) {
-    const container = document.getElementById(`substeps-${stage}`);
-    container.replaceChildren();
-    for (const letter of letters) {
-      const label = `${stage}${letter}`;
-      const item = document.createElement('span');
-      item.textContent = label;
-      item.className = (substages[label]?.status || 'pending').toLowerCase();
-      item.title = `${label}: ${substages[label]?.status || 'NOT RUN'}`;
-      container.append(item);
-    }
-  }
   const steps = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7'];
   for (const step of steps) {
     const el = document.getElementById(`step-${step}`);
@@ -1998,28 +1972,6 @@ function updateAgentSteps(agentStatuses, loopA, loopB, timings = {}, workflowSta
       el.classList.add('failed');
     } else if (statusData.status === 'AWAITING_APPROVAL') {
       el.classList.add('awaiting');
-    }
-  }
-
-  // Update loop badges
-  const badgeA4 = document.getElementById('badge-A4');
-  if (badgeA4) {
-    if (loopA > 0) {
-      badgeA4.style.display = 'inline-block';
-      badgeA4.textContent = `Loop A: #${loopA}`;
-    } else {
-      badgeA4.style.display = 'none';
-    }
-  }
-
-  const badgeA5 = document.getElementById('badge-A5');
-  if (badgeA5) {
-    const totalLoopB = Object.values(loopB || {}).reduce((a, b) => a + b, 0);
-    if (totalLoopB > 0) {
-      badgeA5.style.display = 'inline-block';
-      badgeA5.textContent = `Loop B: #${totalLoopB}`;
-    } else {
-      badgeA5.style.display = 'none';
     }
   }
 }
@@ -2044,7 +1996,7 @@ function renderUnverifiedPreview(data, runId = null) {
 function renderAgenticRunState(state, { active = ['RUNNING', 'INITIALIZED'].includes(state.status) } = {}) {
   if (state.readiness?.preview_only) {
     renderUnverifiedPreview(state.frame_candidate, state.run_id);
-    updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {}, state.agent_timings || {}, state.status, state.substage_statuses || {});
+    updateAgentSteps(state.agent_statuses || {}, state.agent_timings || {}, state.status);
     setAgenticBusy(active);
     return;
   }
@@ -2055,7 +2007,7 @@ function renderAgenticRunState(state, { active = ['RUNNING', 'INITIALIZED'].incl
   if (gate3Banner) gate3Banner.style.display = 'none';
 
   // Update tracker UI with final state
-  updateAgentSteps(state.agent_statuses || {}, state.loop_a_count || 0, state.loop_b_count || {}, state.agent_timings || {}, state.status, state.substage_statuses || {});
+  updateAgentSteps(state.agent_statuses || {}, state.agent_timings || {}, state.status);
 
   // 1. Update 3D Viewer & Members
   const frameKey = `${state.run_id}:${state.design_generation || 0}`;
@@ -2192,7 +2144,7 @@ async function restoreSavedAgenticRun(requestedRunId = null) {
       const restarted = syncServerBoot(response);
       active = response.ok ? await response.json() : null;
       if (viewVersion !== agenticViewVersion) return;
-      if ((restarted || reload) && !active?.run_id) {
+      if (restarted) {
         clearStaleLocationState();
         resetAgenticPresentation();
         currentAgenticRunId = null;
@@ -2201,7 +2153,7 @@ async function restoreSavedAgenticRun(requestedRunId = null) {
         window.structuralChatBridge?.resetChat?.();
         return;
       }
-      if (!runId || ((restarted || reload) && active?.run_id)) runId = active?.run_id;
+      if (!runId) runId = active?.run_id;
     }
     if (!runId || viewVersion !== agenticViewVersion) return;
     resetAgenticPresentation();
@@ -2216,7 +2168,7 @@ async function restoreSavedAgenticRun(requestedRunId = null) {
       const restarted = syncServerBoot(activeResponse);
       const live = activeResponse.ok ? await activeResponse.json() : null;
       if (viewVersion !== agenticViewVersion) return;
-      if (!requestedRunId && restarted && live?.run_id !== runId) {
+      if (!requestedRunId && restarted) {
         clearStaleLocationState();
         resetAgenticPresentation();
         currentAgenticRunId = null;
@@ -2263,7 +2215,7 @@ if (agenticRunBtn) {
     if (gate3Banner) gate3Banner.style.display = 'none';
 
     // Reset steps
-    updateAgentSteps({}, 0, {});
+    updateAgentSteps({});
 
     let polling = false;
     let finished = false;

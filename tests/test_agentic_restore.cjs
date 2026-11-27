@@ -55,23 +55,23 @@ function state(agent = 'A3', overrides = {}) {
 }
 const staadResult = () => ({ created: 1, candidate_signature: 'verified-frame', member_data_by_id: { 900001: { name: 'column', start: 1, end: 2 } } });
 
-test('all runs display the single A1-A7 layout and actual substage progress', () => {
+test('A1-A7 cards show only the ID, label and timer while receiving live timing updates', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'static', 'radiator_support', 'index.html'), 'utf8');
+  const cards = [...html.matchAll(/<div class="agent-step" id="step-(A\d+)">(.*?)<\/div>/g)];
+  assert.deepEqual(cards.map(([, id]) => id), ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7']);
+  for (const [, id, content] of cards) {
+    assert.match(content, new RegExp(`^<span class="step-num">${id}</span><span class="step-label">[^<]+</span><span class="step-time" id="timer-${id}">00:00</span>$`));
+  }
+
   const ui = setup();
-  ui.context.renderAgenticRunState(state('A6', {
-    layout_version: 2,
+  const updates = [];
+  ui.context.window.AgentTimers = { update: (...args) => updates.push(args) };
+  const run = state('A6', {
+    agent_timings: { A6: { elapsed_seconds: 7 } },
     substage_statuses: { A6a: { status: 'PASSED' }, A6b: { status: 'RUNNING' } },
-  }));
-  assert.equal(ui.element('label-A6').textContent, 'Tekla');
-  assert.equal(ui.element('label-A5').textContent, 'IDEA + audit');
-  assert.equal(ui.element('label-A7').textContent, 'Report');
-  assert.equal(ui.element('substeps-A6').children[0].className, 'passed');
-  assert.equal(ui.element('substeps-A6').children[1].className, 'running');
-  assert.equal(ui.element('substeps-A6').children[2].className, 'pending');
-  ui.context.renderAgenticRunState(state('A7', { run_id: 'run_saved_other' }));
-  assert.equal(ui.element('label-A6').textContent, 'Tekla');
-  assert.equal(ui.element('label-A7').textContent, 'Report');
-  assert.equal(ui.element('substeps-A6').children.length, 4);
-  assert.ok(!fs.readFileSync(path.join(__dirname, '..', 'src', 'static', 'radiator_support', 'index.html'), 'utf8').includes('id="step-A8"'));
+  });
+  ui.context.renderAgenticRunState(run);
+  assert.deepEqual(updates, [[run.agent_timings, run.agent_statuses, run.status]]);
 });
 
 function chatBridge(ui) {
@@ -314,11 +314,12 @@ test('new run keeps the existing request payload, renders polling updates and ig
   assert.equal(ui.calls.filter(([, options]) => options?.method === 'POST').length, 1);
 });
 
-test('browser reload clears stale run, chat query params, and chat storage when idle', async () => {
-  const storage = { structuralChatSession: 'chat_old', structuralDashboardBootId: 'boot_1' };
+test('browser reload restores A7 sign-off and chat on the same server boot', async () => {
+  const storage = { structuralChatSession: 'chat_saved', structuralDashboardBootId: 'boot_1' };
   let resetCalls = 0;
   const ui = setup({
-    search: '?run_id=run_old&chat=chat_old',
+    states: [state('A7', { status: 'PAUSED_AT_GATE3' })],
+    search: '?run_id=run_saved&chat=chat_saved',
     storage,
     performance: { getEntriesByType: () => [{ type: 'reload' }] },
     active: null,
@@ -326,12 +327,49 @@ test('browser reload clears stale run, chat query params, and chat storage when 
   });
   ui.context.window.structuralChatBridge = { resetChat() { resetCalls += 1; } };
   await ui.context.restoreSavedAgenticRun();
+  assert.equal(ui.geometry.length, 1);
+  assert.equal(ui.element('gate3-banner').style.display, 'flex');
+  assert.equal(ui.element('gate3-accept-btn').disabled, false);
+  assert.equal(resetCalls, 0);
+  assert.equal(storage.structuralChatSession, 'chat_saved');
+  assert.match(ui.urls.at(-1), /run_id=run_saved&chat=chat_saved/);
+  assert.ok(ui.calls.every(([, options]) => options === undefined));
+});
+
+test('browser reload reconnects to a running job and shows sign-off when it finishes', async () => {
+  const live = state('A5');
+  const ui = setup({
+    states: [live, state('A7', { status: 'PAUSED_AT_GATE3' })],
+    search: '?run_id=run_saved',
+    storage: { structuralDashboardBootId: 'boot_1' },
+    performance: { getEntriesByType: () => [{ type: 'reload' }] },
+    active: [live, live, null],
+    activeHeaders: { 'X-Server-Boot-Id': 'boot_1' },
+  });
+  let renderedWhileRunning = false;
+  ui.context.setTimeout = callback => {
+    renderedWhileRunning = ui.geometry.length === 1 && ui.element('agentic-run-btn').disabled;
+    callback();
+  };
+  await ui.context.restoreSavedAgenticRun();
+  assert.equal(renderedWhileRunning, true);
+  assert.equal(ui.element('gate3-banner').style.display, 'flex');
+  assert.equal(ui.element('active-run-id').textContent, 'Run: run_saved');
+  assert.ok(ui.calls.every(([, options]) => options === undefined));
+});
+
+test('browser reload after a server restart clears the previous run selection', async () => {
+  const ui = setup({
+    search: '?run_id=run_saved',
+    storage: { structuralDashboardBootId: 'boot_old' },
+    performance: { getEntriesByType: () => [{ type: 'reload' }] },
+    activeHeaders: { 'X-Server-Boot-Id': 'boot_new' },
+  });
+  await ui.context.restoreSavedAgenticRun();
   assert.equal(ui.geometry.length, 0);
-  assert.equal(resetCalls, 1);
-  assert.equal(storage.structuralChatSession, undefined);
-  assert.ok(!ui.urls.at(-1).includes('run_id='));
-  assert.ok(!ui.urls.at(-1).includes('chat='));
-  assert.equal(ui.calls.filter(([u]) => u.includes('/runs/')).length, 0);
+  assert.equal(ui.element('active-run-id').hidden, true);
+  assert.doesNotMatch(ui.urls.at(-1), /run_id=/);
+  assert.equal(ui.calls.filter(([url]) => url.includes('/runs/')).length, 0);
 });
 
 test('server restart clears stale URL run_id and localStorage session even on direct navigation', async () => {
